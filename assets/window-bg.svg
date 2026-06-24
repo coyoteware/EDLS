@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1040" width="1400" height="1040"
+     preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <!-- Starfield gradient mask -->
+    <radialGradient id="star-mask" cx="50%" cy="40%" r="60%">
+      <stop offset="0%"   stop-color="white" stop-opacity="0.9"/>
+      <stop offset="80%"  stop-color="white" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Central warm cockpit glow -->
+    <radialGradient id="cockpit-glow" cx="50%" cy="35%" r="45%">
+      <stop offset="0%"   stop-color="#C8760A" stop-opacity="0.10"/>
+      <stop offset="40%"  stop-color="#C8760A" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#090905" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Edge vignette -->
+    <radialGradient id="vignette" cx="50%" cy="50%" r="75%">
+      <stop offset="0%"   stop-color="#090905" stop-opacity="0"/>
+      <stop offset="70%"  stop-color="#090905" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#060504" stop-opacity="0.85"/>
+    </radialGradient>
+
+    <!-- Bottom vignette for ground effect -->
+    <linearGradient id="bottom-vignette" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#090905" stop-opacity="0"/>
+      <stop offset="70%"  stop-color="#090905" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#060403" stop-opacity="0.7"/>
+    </linearGradient>
+
+    <!-- Very faint nebula-like color wash -->
+    <radialGradient id="nebula-1" cx="20%" cy="25%" r="30%">
+      <stop offset="0%"   stop-color="#1A0E24" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#090905" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="nebula-2" cx="80%" cy="70%" r="28%">
+      <stop offset="0%"   stop-color="#0A1220" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#090905" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Hex tile pattern — brighter than other assets, it IS the wallpaper -->
+    <pattern id="hexPat" x="0" y="0" width="60" height="104" patternUnits="userSpaceOnUse">
+      <polygon points="30,2 58,17 58,47 30,62 2,47 2,17"
+               fill="none" stroke="#C8760A" stroke-width="0.8" opacity="0.13"/>
+      <polygon points="30,54 58,69 58,99 30,114 2,99 2,69"
+               fill="none" stroke="#C8760A" stroke-width="0.8" opacity="0.13"/>
+    </pattern>
+
+    <!-- Scan line pattern -->
+    <pattern id="scan" x="0" y="0" width="1" height="3" patternUnits="userSpaceOnUse">
+      <rect width="1400" height="1" y="0" fill="black" opacity="0.04"/>
+    </pattern>
+  </defs>
+
+  <!-- ── Deep space base ── -->
+  <rect width="1400" height="1040" fill="#090905"/>
+
+  <!-- Subtle nebula color clouds -->
+  <rect width="1400" height="1040" fill="url(#nebula-1)"/>
+  <rect width="1400" height="1040" fill="url(#nebula-2)"/>
+
+  <!-- ── Hex grid ── -->
+  <rect width="1400" height="1040" fill="url(#hexPat)" opacity="1"/>
+
+  <!-- ── Star field ── -->
+  <!-- Brighter stars -->
+  <g fill="#FFFFFF">
+    <circle cx="112"  cy="68"  r="1.5" opacity="0.7"/>
+    <circle cx="287"  cy="134" r="1.2" opacity="0.6"/>
+    <circle cx="453"  cy="42"  r="1.8" opacity="0.8"/>
+    <circle cx="621"  cy="189" r="1.0" opacity="0.55"/>
+    <circle cx="789"  cy="58"  r="1.4" opacity="0.65"/>
+    <circle cx="934"  cy="112" r="1.6" opacity="0.7"/>
+    <circle cx="1078" cy="37"  r="1.2" opacity="0.6"/>
+    <circle cx="1234" cy="95"  r="1.9" opacity="0.75"/>
+    <circle cx="1367" cy="161" r="1.1" opacity="0.55"/>
+    <circle cx="56"   cy="223" r="1.3" opacity="0.6"/>
+    <circle cx="198"  cy="308" r="1.0" opacity="0.5"/>
+    <circle cx="342"  cy="267" r="1.7" opacity="0.65"/>
+    <circle cx="511"  cy="318" r="1.1" opacity="0.55"/>
+    <circle cx="678"  cy="292" r="0.9" opacity="0.5"/>
+    <circle cx="845"  cy="341" r="1.4" opacity="0.6"/>
+    <circle cx="1012" cy="278" r="1.0" opacity="0.5"/>
+    <circle cx="1156" cy="215" r="1.6" opacity="0.65"/>
+    <circle cx="1310" cy="348" r="1.2" opacity="0.55"/>
+    <circle cx="76"   cy="418" r="0.8" opacity="0.45"/>
+    <circle cx="223"  cy="489" r="1.1" opacity="0.5"/>
+    <circle cx="389"  cy="452" r="1.5" opacity="0.6"/>
+    <circle cx="567"  cy="512" r="0.9" opacity="0.45"/>
+    <circle cx="734"  cy="478" r="1.3" opacity="0.55"/>
+    <circle cx="901"  cy="521" r="0.8" opacity="0.4"/>
+    <circle cx="1067" cy="467" r="1.2" opacity="0.5"/>
+    <circle cx="1245" cy="534" r="1.0" opacity="0.45"/>
+    <circle cx="1389" cy="489" r="0.7" opacity="0.4"/>
+  </g>
+
+  <!-- Dimmer/smaller stars -->
+  <g fill="#E8D0A0" opacity="0.35">
+    <circle cx="167"  cy="89"  r="0.8"/>
+    <circle cx="334"  cy="156" r="0.6"/>
+    <circle cx="501"  cy="71"  r="0.9"/>
+    <circle cx="668"  cy="213" r="0.7"/>
+    <circle cx="835"  cy="89"  r="0.8"/>
+    <circle cx="1002" cy="147" r="0.6"/>
+    <circle cx="1169" cy="62"  r="0.9"/>
+    <circle cx="1336" cy="178" r="0.7"/>
+    <circle cx="89"   cy="289" r="0.8"/>
+    <circle cx="256"  cy="334" r="0.6"/>
+    <circle cx="423"  cy="301" r="0.7"/>
+    <circle cx="590"  cy="367" r="0.8"/>
+    <circle cx="757"  cy="312" r="0.6"/>
+    <circle cx="924"  cy="378" r="0.9"/>
+    <circle cx="1091" cy="323" r="0.7"/>
+    <circle cx="1258" cy="389" r="0.8"/>
+    <circle cx="134"  cy="445" r="0.6"/>
+    <circle cx="301"  cy="512" r="0.7"/>
+    <circle cx="468"  cy="478" r="0.8"/>
+    <circle cx="635"  cy="534" r="0.6"/>
+    <circle cx="802"  cy="501" r="0.9"/>
+    <circle cx="969"  cy="545" r="0.7"/>
+    <circle cx="1136" cy="490" r="0.8"/>
+    <circle cx="1303" cy="556" r="0.6"/>
+    <circle cx="1370" cy="423" r="0.7"/>
+    <circle cx="44"   cy="167" r="0.6"/>
+    <circle cx="778"  cy="134" r="0.7"/>
+    <circle cx="1112" cy="189" r="0.6"/>
+    <circle cx="445"  cy="145" r="0.8"/>
+  </g>
+
+  <!-- Warm-tinted stars (close to amber) -->
+  <g fill="#D4A055" opacity="0.2">
+    <circle cx="234"  cy="178" r="1.2"/>
+    <circle cx="712"  cy="134" r="1.0"/>
+    <circle cx="1089" cy="256" r="1.1"/>
+    <circle cx="356"  cy="412" r="0.9"/>
+    <circle cx="923"  cy="367" r="1.0"/>
+  </g>
+
+  <!-- ── Cockpit warm glow (ambient interior light) ── -->
+  <rect width="1400" height="1040" fill="url(#cockpit-glow)"/>
+
+  <!-- ── Scan line overlay ── -->
+  <rect width="1400" height="1040" fill="url(#scan)"/>
+
+  <!-- ── Vignette ── -->
+  <rect width="1400" height="1040" fill="url(#vignette)"/>
+  <rect width="1400" height="1040" fill="url(#bottom-vignette)"/>
+
+  <!-- ── Corner bracket decorations ── -->
+  <g stroke="#4A3A20" stroke-width="1" fill="none" opacity="0.5">
+    <!-- TL -->
+    <polyline points="16,48 16,16 48,16"/>
+    <polyline points="22,48 22,22 48,22"/>
+    <!-- TR -->
+    <polyline points="1384,48 1384,16 1352,16"/>
+    <polyline points="1378,48 1378,22 1352,22"/>
+    <!-- BL -->
+    <polyline points="16,992 16,1024 48,1024"/>
+    <polyline points="22,992 22,1018 48,1018"/>
+    <!-- BR -->
+    <polyline points="1384,992 1384,1024 1352,1024"/>
+    <polyline points="1378,992 1378,1018 1352,1018"/>
+  </g>
+
+  <!-- Corner hex accents -->
+  <g fill="none" stroke="#4A3A20" stroke-width="1" opacity="0.3">
+    <polygon points="64,16 80,7 96,16 96,34 80,43 64,34"/>
+    <polygon points="1304,16 1320,7 1336,16 1336,34 1320,43 1304,34"/>
+    <polygon points="64,1006 80,997 96,1006 96,1024 80,1033 64,1024"/>
+    <polygon points="1304,1006 1320,997 1336,1006 1336,1024 1320,1033 1304,1024"/>
+  </g>
+
+  <!-- ── Subtle horizontal scan accent line (near top) ── -->
+  <line x1="0" y1="1" x2="1400" y2="1"
+        stroke="#C8760A" stroke-width="0.5" opacity="0.12"/>
+
+</svg>

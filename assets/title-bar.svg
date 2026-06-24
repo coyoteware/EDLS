@@ -1,0 +1,205 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 96" width="1600" height="96"
+     preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <filter id="glow-soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glow-line" x="-5%" y="-200%" width="110%" height="500%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <!-- Panel base gradient -->
+    <linearGradient id="panel-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#120E07"/>
+      <stop offset="50%"  stop-color="#0D0A05"/>
+      <stop offset="100%" stop-color="#090705"/>
+    </linearGradient>
+
+    <!-- Top border glow gradient -->
+    <linearGradient id="top-border" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#C8760A" stop-opacity="0"/>
+      <stop offset="10%"  stop-color="#FFB700" stop-opacity="0.8"/>
+      <stop offset="30%"  stop-color="#FFB700" stop-opacity="1"/>
+      <stop offset="50%"  stop-color="#FFE066" stop-opacity="1"/>
+      <stop offset="70%"  stop-color="#FFB700" stop-opacity="1"/>
+      <stop offset="90%"  stop-color="#FFB700" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#C8760A" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Bottom border gradient -->
+    <linearGradient id="bot-border" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#C8760A" stop-opacity="0"/>
+      <stop offset="8%"   stop-color="#C8760A" stop-opacity="0.6"/>
+      <stop offset="50%"  stop-color="#C8760A" stop-opacity="0.4"/>
+      <stop offset="92%"  stop-color="#C8760A" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#C8760A" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Left edge fade for decoration clusters -->
+    <linearGradient id="left-fade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#FFB700" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#FFB700" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="right-fade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#FFB700" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#FFB700" stop-opacity="0.15"/>
+    </linearGradient>
+
+    <!-- Center ambient warm glow -->
+    <radialGradient id="center-glow" cx="50%" cy="50%" r="35%">
+      <stop offset="0%"   stop-color="#C8760A" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#090705" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Hex tile pattern -->
+    <pattern id="hexPat" x="0" y="0" width="60" height="104" patternUnits="userSpaceOnUse">
+      <polygon points="30,2 58,17 58,47 30,62 2,47 2,17"
+               fill="none" stroke="#C8760A" stroke-width="0.6" opacity="0.18"/>
+      <polygon points="30,54 58,69 58,99 30,114 2,99 2,69"
+               fill="none" stroke="#C8760A" stroke-width="0.6" opacity="0.18"/>
+    </pattern>
+  </defs>
+
+  <!-- ── Base panel ── -->
+  <rect width="1600" height="96" fill="url(#panel-bg)"/>
+
+  <!-- Hex grid texture -->
+  <rect width="1600" height="96" fill="url(#hexPat)" opacity="0.6"/>
+
+  <!-- Center warm glow -->
+  <rect width="1600" height="96" fill="url(#center-glow)"/>
+
+  <!-- ── Top & Bottom borders ── -->
+  <rect x="0" y="0"  width="1600" height="2.5" fill="url(#top-border)" filter="url(#glow-line)"/>
+  <rect x="0" y="93" width="1600" height="1"   fill="url(#bot-border)"/>
+
+  <!-- ── Left decoration cluster ── -->
+  <!-- Background fade -->
+  <rect x="0" y="0" width="280" height="96" fill="url(#left-fade)"/>
+
+  <!-- Top-left corner bracket -->
+  <g stroke="#C8760A" stroke-width="1.5" fill="none" opacity="0.75">
+    <polyline points="14,8 14,24"/>   <!-- vertical leg -->
+    <polyline points="14,8 38,8"/>    <!-- horizontal leg -->
+  </g>
+  <g stroke="#FFB700" stroke-width="0.5" fill="none" opacity="0.5">
+    <polyline points="18,12 18,24"/> <!-- inner vertical -->
+    <polyline points="18,12 38,12"/> <!-- inner horizontal -->
+  </g>
+
+  <!-- Bottom-left corner bracket -->
+  <g stroke="#C8760A" stroke-width="1.5" fill="none" opacity="0.75">
+    <polyline points="14,88 14,72"/> 
+    <polyline points="14,88 38,88"/>
+  </g>
+
+  <!-- Left converging horizontal lines -->
+  <!-- Line 1 (top) -->
+  <line x1="0" y1="30" x2="240" y2="30" stroke="#C8760A" stroke-width="0.8" opacity="0.35"/>
+  <!-- Line 2 (mid) -->
+  <line x1="0" y1="48" x2="310" y2="48" stroke="#C8760A" stroke-width="0.5" opacity="0.2"/>
+  <!-- Line 3 (bottom) -->
+  <line x1="0" y1="66" x2="240" y2="66" stroke="#C8760A" stroke-width="0.8" opacity="0.35"/>
+
+  <!-- Brighter accent line -->
+  <line x1="0" y1="48" x2="180" y2="48" stroke="#FFB700" stroke-width="1" opacity="0.3"
+        filter="url(#glow-line)"/>
+
+  <!-- Diamond terminal on left cluster -->
+  <polygon points="268,48 282,40 296,48 282,56"
+           fill="none" stroke="#FFB700" stroke-width="1.5" opacity="0.7"
+           filter="url(#glow-soft)"/>
+  <polygon points="274,48 282,44 290,48 282,52"
+           fill="#C8760A" opacity="0.5" filter="url(#glow-soft)"/>
+  <!-- Leader line to diamond -->
+  <line x1="240" y1="48" x2="268" y2="48" stroke="#C8760A" stroke-width="0.8" opacity="0.4"/>
+
+  <!-- Small perpendicular ticks on left lines -->
+  <g stroke="#C8760A" stroke-width="0.8" opacity="0.4">
+    <line x1="80"  y1="27" x2="80"  y2="33"/>
+    <line x1="140" y1="27" x2="140" y2="33"/>
+    <line x1="190" y1="27" x2="190" y2="33"/>
+    <line x1="80"  y1="63" x2="80"  y2="69"/>
+    <line x1="140" y1="63" x2="140" y2="69"/>
+    <line x1="190" y1="63" x2="190" y2="69"/>
+  </g>
+
+  <!-- ── Right decoration cluster (mirror of left) ── -->
+  <rect x="1320" y="0" width="280" height="96" fill="url(#right-fade)"/>
+
+  <!-- Top-right corner bracket -->
+  <g stroke="#C8760A" stroke-width="1.5" fill="none" opacity="0.75">
+    <polyline points="1586,8 1586,24"/>
+    <polyline points="1586,8 1562,8"/>
+  </g>
+  <g stroke="#FFB700" stroke-width="0.5" fill="none" opacity="0.5">
+    <polyline points="1582,12 1582,24"/>
+    <polyline points="1582,12 1562,12"/>
+  </g>
+
+  <!-- Bottom-right corner bracket -->
+  <g stroke="#C8760A" stroke-width="1.5" fill="none" opacity="0.75">
+    <polyline points="1586,88 1586,72"/>
+    <polyline points="1586,88 1562,88"/>
+  </g>
+
+  <!-- Right converging lines -->
+  <line x1="1600" y1="30" x2="1360" y2="30" stroke="#C8760A" stroke-width="0.8" opacity="0.35"/>
+  <line x1="1600" y1="48" x2="1290" y2="48" stroke="#C8760A" stroke-width="0.5" opacity="0.2"/>
+  <line x1="1600" y1="66" x2="1360" y2="66" stroke="#C8760A" stroke-width="0.8" opacity="0.35"/>
+  <line x1="1600" y1="48" x2="1420" y2="48" stroke="#FFB700" stroke-width="1" opacity="0.3"
+        filter="url(#glow-line)"/>
+
+  <!-- Diamond terminal on right cluster -->
+  <polygon points="1332,48 1318,40 1304,48 1318,56"
+           fill="none" stroke="#FFB700" stroke-width="1.5" opacity="0.7"
+           filter="url(#glow-soft)"/>
+  <polygon points="1326,48 1318,44 1310,48 1318,52"
+           fill="#C8760A" opacity="0.5" filter="url(#glow-soft)"/>
+  <line x1="1360" y1="48" x2="1332" y2="48" stroke="#C8760A" stroke-width="0.8" opacity="0.4"/>
+
+  <!-- Right ticks -->
+  <g stroke="#C8760A" stroke-width="0.8" opacity="0.4">
+    <line x1="1520" y1="27" x2="1520" y2="33"/>
+    <line x1="1460" y1="27" x2="1460" y2="33"/>
+    <line x1="1410" y1="27" x2="1410" y2="33"/>
+    <line x1="1520" y1="63" x2="1520" y2="69"/>
+    <line x1="1460" y1="63" x2="1460" y2="69"/>
+    <line x1="1410" y1="63" x2="1410" y2="69"/>
+  </g>
+
+  <!-- ── Center accent (flanking the text area) ── -->
+  <!-- Left-center -->
+  <line x1="310" y1="48" x2="560" y2="48" stroke="#C8760A" stroke-width="0.4" opacity="0.15"/>
+  <line x1="540" y1="44" x2="560" y2="48" stroke="#C8760A" stroke-width="1" opacity="0.3"/>
+  <line x1="540" y1="52" x2="560" y2="48" stroke="#C8760A" stroke-width="1" opacity="0.3"/>
+
+  <!-- Right-center mirror -->
+  <line x1="1290" y1="48" x2="1040" y2="48" stroke="#C8760A" stroke-width="0.4" opacity="0.15"/>
+  <line x1="1060" y1="44" x2="1040" y2="48" stroke="#C8760A" stroke-width="1" opacity="0.3"/>
+  <line x1="1060" y1="52" x2="1040" y2="48" stroke="#C8760A" stroke-width="1" opacity="0.3"/>
+
+  <!-- ── Scan-line layer ── -->
+  <rect width="1600" height="96"
+        fill="none"
+        style="fill: transparent;"
+        opacity="0"/>
+  <!-- (scan lines baked into panel via subtle alternating fills - handled by CSS in HTML) -->
+
+  <!-- Small hex accent shapes in the corners -->
+  <!-- TL hex -->
+  <polygon points="52,14 62,8 72,14 72,26 62,32 52,26"
+           fill="none" stroke="#C8760A" stroke-width="0.8" opacity="0.18"/>
+  <!-- TR hex -->
+  <polygon points="1528,14 1538,8 1548,14 1548,26 1538,32 1528,26"
+           fill="none" stroke="#C8760A" stroke-width="0.8" opacity="0.18"/>
+  <!-- BL hex -->
+  <polygon points="52,64 62,58 72,64 72,76 62,82 52,76"
+           fill="none" stroke="#C8760A" stroke-width="0.8" opacity="0.18"/>
+  <!-- BR hex -->
+  <polygon points="1528,64 1538,58 1548,64 1548,76 1538,82 1528,76"
+           fill="none" stroke="#C8760A" stroke-width="0.8" opacity="0.18"/>
+
+</svg>
