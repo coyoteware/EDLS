@@ -56,8 +56,10 @@ hard rule that earns its keep: **core logic has zero GUI imports.**
 - `window-bg.png` — the real background (starfield/nebula/dot-matrix + corner
   brackets), painted scaled-to-cover in `Background`. Replaced a hand-drawn hex grid.
 - `title-bar.png` (wide header frame, chevrons framing an empty center) and
-  `outpost.png` (amber station icon) — **NOT yet integrated.** Reserved for the
-  header redesign (see Next).
+  `outpost.png` (amber station icon) — **integrated** into the header via the
+  `TitleBanner` widget (banner scaled to width, outpost at left, title centred;
+  the old drawn ◆ diamonds + separator were removed so decoration doesn't double
+  up). The `.svg` versions remain as vector sources.
 - `icon.ico` — window/app icon, wired up.
 
 ## Verification workflow (important — match this rigor)
@@ -88,10 +90,8 @@ Three coupled items, intentionally held so Andrew can eyeball iterations:
    current 4-column status grid + horizontal button bar is landscape; portrait
    likely wants ~2 columns and a wrapped/stacked button bar. Don't bolt the
    aspect lock on without the relayout or it'll look cramped.
-2. **`title-bar.png` header redesign** — use it as the header banner; its chevrons
-   frame the center where the title text goes. Drop the current drawn ◆ diamonds /
-   separator so decorations don't double up. Watch the 14.5:1 aspect (very thin).
-3. **`outpost.png`** placement in the header (amber station icon, left side).
+2. ~~`title-bar.png` header redesign~~ — **done** (see `TitleBanner` in ui.py).
+3. ~~`outpost.png` placement in the header~~ — **done** (left side of the banner).
 Settings dialog stays 1:1 / its own size.
 
 ## How Andrew works (calibrate to this)

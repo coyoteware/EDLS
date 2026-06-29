@@ -255,15 +255,15 @@ class StatusCard(ChamferedFrame):
         self._name = descriptor.name
         self._wide = wide
         self._state = AppState.OFFLINE
-        self.setMinimumHeight(90 if wide else 104)
+        self.setMinimumHeight(90)
         if wide:
             self.setMinimumWidth(200)
 
         vbox = QVBoxLayout(self)
-        vbox.setSpacing(3)
+        vbox.setSpacing(4)
         vbox.setContentsMargins(10, 8, 10, 8)
 
-        # header row: dot + name
+        # header row: dot + name (+ inline status on the compact cards)
         hdr = QHBoxLayout()
         hdr.setSpacing(7)
         self.dot = PulsingDot(C_INACT, self)
@@ -275,33 +275,32 @@ class StatusCard(ChamferedFrame):
         name_lbl.setStyleSheet(f"color: {C_NAME.name()}; letter-spacing: 1px;")
         hdr.addWidget(self.dot)
         hdr.addWidget(name_lbl, 1)
-        vbox.addLayout(hdr)
 
-        # state label
+        # state label — right-justified. The PID line is gone (PIDs are in the
+        # activity log); on compact cards the status moves up beside the name to
+        # cut a row of clutter, while the featured Elite card keeps it big below.
         self.state_lbl = QLabel(AppState.OFFLINE.label)
+        self.state_lbl.setStyleSheet(f"color: {C_INACT.name()};")
+        self.state_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
         if wide:
-            self.state_lbl.setFont(font_display(18, QFont.Weight.Normal))
+            self.state_lbl.setFont(font_mono(16))
+            vbox.addLayout(hdr)
+            vbox.addWidget(self.state_lbl)
+            vbox.addStretch(1)
+            self.ctrl_btn = None
         else:
             self.state_lbl.setFont(font_mono(12))
-        self.state_lbl.setStyleSheet(f"color: {C_INACT.name()};")
-        vbox.addWidget(self.state_lbl)
-
-        # PID sub-label
-        self.pid_lbl = QLabel("")
-        self.pid_lbl.setFont(font_mono(10))
-        self.pid_lbl.setStyleSheet(f"color: {C_TMID.name()};")
-        vbox.addWidget(self.pid_lbl)
-
-        # per-card start/stop button
-        if not wide:
+            hdr.addWidget(self.state_lbl, 0, Qt.AlignmentFlag.AlignTop)
+            vbox.addLayout(hdr)
+            vbox.addStretch(1)
             self.ctrl_btn = QPushButton("START")
             self.ctrl_btn.setFont(font_display(7))
             self.ctrl_btn.setFixedHeight(20)
             self.ctrl_btn.setStyleSheet(_btn_ctrl_style(active=False))
             self.ctrl_btn.clicked.connect(self._on_ctrl)
             vbox.addWidget(self.ctrl_btn)
-        else:
-            self.ctrl_btn = None
 
         self.update_state(AppState.OFFLINE, None)
 
@@ -317,7 +316,6 @@ class StatusCard(ChamferedFrame):
         self.dot.set_color(dot_col, pulse=pulse)
         self.state_lbl.setText(state.label)
         self.state_lbl.setStyleSheet(f"color: {label_col.name()};")
-        self.pid_lbl.setText(f"PID {pid}" if pid else "")
 
         if self.ctrl_btn:
             is_running = state.is_running
@@ -501,40 +499,88 @@ def _glyph_icon(char: str, color: QColor, px: int = BTN_ICON) -> QIcon:
     return QIcon(pm)
 
 
+# ── Header banner ─────────────────────────────────────────────────────────────
+class TitleBanner(QWidget):
+    """Paints title-bar.png (the wide chamfered frame with the framing chevrons)
+    scaled to the panel width, with the outpost station icon at the left and the
+    suite title centred in the empty span the chevrons bracket. Everything is
+    drawn in paintEvent so the overlay positions are exact regardless of layout.
+    Falls back to a plain amber-edged strip if the banner asset is missing, so
+    the app always runs."""
+
+    # title-bar.png is ~3200×220 — a very wide ~14.5:1 frame.
+    _ASPECT = 3200 / 220
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._banner = QPixmap(os.path.join(ASSETS_DIR, "title-bar.png"))
+        self._outpost = QPixmap(os.path.join(ASSETS_DIR, "outpost.png"))
+        self._scaled: Optional[QPixmap] = None
+        self._scaled_for = -1
+        self.setMinimumHeight(50)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        # Lock height to the banner's aspect so the frame art never distorts.
+        if not self._banner.isNull() and self.width() > 0:
+            h = max(50, min(round(self.width() / self._ASPECT), 88))
+            if h != self.height():
+                self.setFixedHeight(h)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        rect = self.rect()
+
+        if not self._banner.isNull():
+            if self._scaled_for != rect.width():
+                self._scaled = self._banner.scaled(
+                    rect.width(), rect.height(),
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+                self._scaled_for = rect.width()
+            p.drawPixmap(0, 0, self._scaled)
+        else:
+            p.fillRect(rect, QColor("#0E0A04"))
+            p.setPen(QPen(C_AMBER, 1))
+            p.drawRect(rect.adjusted(0, 0, -1, -1))
+
+        # Outpost station icon at the left, vertically centred inside the frame.
+        if not self._outpost.isNull():
+            icon = self._outpost.scaledToHeight(
+                int(rect.height() * 0.60),
+                Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(22, (rect.height() - icon.height()) // 2, icon)
+
+        # Suite title, centred between the framing chevrons. Size scales with the
+        # banner height so it fills the bar rather than floating thin in the middle.
+        f = font_display(13, QFont.Weight.ExtraBold)
+        f.setPixelSize(max(20, int(rect.height() * 0.46)))
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 122)
+        p.setFont(f)
+        p.setPen(C_GOLD)
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                   "ELITE : DANGEROUS  ·  LAUNCH SUITE")
+        p.end()
+
+
 # ── Header panel ──────────────────────────────────────────────────────────────
-class HeaderPanel(ChamferedFrame):
+class HeaderPanel(QWidget):
+    """The title banner plus the CMDR identity row beneath it. The banner art
+    (title-bar.png + outpost.png) carries the framing decoration, so the old
+    hand-drawn ◆ diamonds and separator line are gone — they'd double up with
+    the frame's own brackets and chevrons."""
+
     def __init__(self, cmdr_name: str,
                  parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent, chamfer=24,
-                         bg=QColor("#0E0A04"),
-                         border=C_AMBER,
-                         glow_color=C_AMBER)
+        super().__init__(parent)
         vbox = QVBoxLayout(self)
-        vbox.setSpacing(6)
-        vbox.setContentsMargins(24, 16, 24, 14)
+        vbox.setSpacing(8)
+        vbox.setContentsMargins(0, 0, 0, 0)
 
-        # title row: ◆  ELITE : DANGEROUS · LAUNCH SUITE  ◆
-        title_row = QHBoxLayout()
-        title_row.setSpacing(12)
-        title_row.addStretch()
-        for part in ("◆", "ELITE : DANGEROUS  ·  LAUNCH SUITE", "◆"):
-            lbl = QLabel(part)
-            if part == "◆":
-                lbl.setFont(font_display(10))
-                lbl.setStyleSheet(f"color: {C_GOLD.name()};")
-            else:
-                lbl.setFont(font_display(13, QFont.Weight.ExtraBold))
-                lbl.setStyleSheet(
-                    f"color: {C_GOLD.name()}; letter-spacing: 4px;")
-            title_row.addWidget(lbl)
-        title_row.addStretch()
-        vbox.addLayout(title_row)
-
-        # separator
-        sep = QFrame()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background: {C_AMBER.name()}; opacity: 0.4;")
-        vbox.addWidget(sep)
+        self._banner = TitleBanner()
+        vbox.addWidget(self._banner)
 
         # CMDR row
         cmdr_row = QHBoxLayout()

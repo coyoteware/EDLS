@@ -43,7 +43,8 @@ apps, monitors the game, tears tools down on exit. Python/PySide6 rewrite of a
 - `EUROCAPS.TTF` — font family name **"Euro Caps"** (space). Primary UI font.
   Use `font-family: 'Euro Caps'` in QSS (single quotes).
 - `window-bg.png` — background, painted scaled-to-cover in `Background`.
-- `title-bar.png`, `outpost.png` — **not yet integrated** (reserved for header redesign).
+- `title-bar.png`, `outpost.png` — **integrated** in the header via `TitleBanner`
+  (banner scaled to width, outpost icon at left, title centred). `.svg`s are sources.
 - `icon.ico` — wired up.
 
 ## Palette (ui.py module-level constants)
@@ -59,10 +60,8 @@ apps, monitors the game, tears tools down on exit. Python/PySide6 rewrite of a
 - ButtonBar is a plain QWidget (no panel frame)
 
 ## Deferred / next up
-1. **title-bar.png header redesign** — use as header banner; chevrons frame the
-   title. Drop the drawn ◆ diamonds/separator to avoid doubling. Aspect ~14.5:1.
-2. **outpost.png** in header (amber station icon, left side).
-3. **Portrait aspect-ratio lock** (~2:1) + portrait relayout (2-col grid, stacked
+1. ~~title-bar.png / outpost.png header redesign~~ — **done** (`TitleBanner`).
+2. **Portrait aspect-ratio lock** (~2:1) + portrait relayout (2-col grid, stacked
    buttons). Don't add the lock without the relayout or it'll look cramped.
 Settings dialog stays 1:1 / its own size.
 

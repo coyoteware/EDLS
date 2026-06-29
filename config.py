@@ -32,7 +32,7 @@ SETTINGS_VERSION = 1
 
 # Display version, shown in the UI and used for the build's file metadata.
 # Single source of truth (replaces the original $script:AppVersion).
-APP_VERSION = "0.9.5"
+APP_VERSION = "1.1.0"
 
 # All persistent state lives under %LOCALAPPDATA%\EDLS (with a ~ fallback so the
 # module is importable/testable on non-Windows dev machines).
