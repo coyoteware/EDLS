@@ -103,6 +103,9 @@ LOG_COLORS: dict[str, QColor] = {
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
 
+# Where the "report issue" credit link points (the GitHub issues page).
+ISSUES_URL = "https://github.com/coyoteware/EDLS-py/issues"
+
 
 # ── Font helpers ──────────────────────────────────────────────────────────────
 # Euro Caps (the ED-style display face) is the primary UI font, loaded from
@@ -740,11 +743,11 @@ class ButtonBar(QWidget):
         l1 = QLabel("CMDR Coyote Bongwater (and Claude)")
         l1.setFont(font_mono(9))
         l1.setStyleSheet(f"color: {C_TDIM.name()};")
-        l2 = QLabel(f"{version}  ·  <a href='#' style='color:{C_TMID.name()};'>"
-                    "report issue</a>")
+        l2 = QLabel(f"{version}  ·  <a href='{ISSUES_URL}' "
+                    f"style='color:{C_TMID.name()};'>report issue</a>")
         l2.setFont(font_mono(9))
         l2.setStyleSheet(f"color: {C_TDIM.name()};")
-        l2.setOpenExternalLinks(False)
+        l2.setOpenExternalLinks(True)
         cred_vbox.addWidget(l1)
         cred_vbox.addWidget(l2)
         hbox.addLayout(cred_vbox)

@@ -92,7 +92,7 @@ full Epic Games launcher installed.
 
 ```powershell
 # 1. Clone the repo
-git clone https://github.com/coyotebw/EDLS-py.git
+git clone https://github.com/coyoteware/EDLS-py.git
 cd EDLS-py
 
 # 2. (Recommended) create a virtual environment
