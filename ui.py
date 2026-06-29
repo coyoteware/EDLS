@@ -53,52 +53,127 @@ from PySide6.QtWidgets import (
 )
 
 import config
-from config import AppDescriptor, AppState, Settings, ShutdownScope
+from config import AppDescriptor, AppState, Settings, ShutdownScope, Theme
 
 # ── Palette ──────────────────────────────────────────────────────────────────
+# Two complete palettes (dark, and a light "day mode"). Every colour below is
+# themed by apply_theme() EXCEPT C_GOLD, which always stays gold because it's
+# only ever drawn on dark surfaces (the title banner, the dark action buttons,
+# the dark settings dialog). Widgets bake colours into stylesheets at build
+# time, so a live theme switch must rebuild the window content afterwards
+# (MainWindow._on_settings_saved does).
+C_GOLD   = QColor("#FFB700")    # fixed accent — dark surfaces only
+
+# Live globals = the dark-theme values; apply_theme() rebinds them.
 C_DARK   = QColor("#090905")
 C_PANEL  = QColor("#0D0B07")
 C_BORDER = QColor("#1C1208")
-C_AMBER  = QColor("#C8760A")
-C_GOLD   = QColor("#FFB700")
-C_ORANGE = QColor("#FF8C1A")
+C_AMBER  = QColor("#C8760A")    # primary text / amber accent
+C_ORANGE = QColor("#FF8C1A")    # active accent
 C_DIM    = QColor("#4A3A20")
-C_TMID   = QColor("#A07A3A")
-C_TDIM   = QColor("#6A5030")
+C_TMID   = QColor("#A07A3A")    # secondary text
+C_TDIM   = QColor("#6A5030")    # tertiary text
 C_GREEN  = QColor("#3DCC6A")
 C_RED    = QColor("#CC3D3D")
 C_INACT  = QColor("#454545")
-C_NAME   = QColor("#C8860A")
+C_NAME   = QColor("#C8860A")    # app-name labels
+C_CMDR   = QColor("#FF8C1A")    # CMDR identity name in the header
+C_SUCCESS = QColor("#FFB700")   # success log lines
+C_LOGDIM  = QColor("#5A4A2A")   # dim log lines
 # Semi-transparent panel fill so the window background shows through (status/log).
 C_PANEL_T = QColor(13, 11, 7, 115)
+# Card surfaces (themed): pulled out of StatusCard so the theme can swap them.
+CARD_BG = QColor(10, 8, 4, 188)
+CARD_BORDER = QColor("#1A1208")
+CARD_BORDER_OFF = QColor("#181818")
+# Window background image filename (themed: dark art vs. light day-mode art).
+BG_IMAGE = "window-bg.png"
+
+# True while the light "day mode" is active. Used by the few widgets whose colours
+# are picked by branch (the card buttons, the settings dialog) rather than a
+# single themed constant.
+IS_LIGHT = False
+
+_THEMED_NAMES = (
+    "C_DARK", "C_PANEL", "C_BORDER", "C_AMBER", "C_ORANGE", "C_DIM",
+    "C_TMID", "C_TDIM", "C_GREEN", "C_RED", "C_INACT", "C_NAME", "C_CMDR",
+    "C_SUCCESS", "C_LOGDIM", "C_PANEL_T", "CARD_BG", "CARD_BORDER",
+    "CARD_BORDER_OFF", "BG_IMAGE",
+)
+# Dark palette references the literals above (single source; no value drift).
+_DARK_PALETTE = {name: globals()[name] for name in _THEMED_NAMES}
+
+# Light "day mode": dark slate text on a cool light-grey HUD. Orange is kept ONLY
+# as an accent (active states, dots); green/red status colours are darkened so
+# they read on light; panels/cards become light translucent surfaces and the
+# background swaps to a cool light asset.
+_LIGHT_PALETTE = {
+    "C_DARK":   QColor("#D7DBE0"),   # window base (cool light grey)
+    "C_PANEL":  QColor("#C8CDD4"),
+    "C_BORDER": QColor("#A6AEB9"),
+    "C_AMBER":  QColor("#252C36"),   # primary text -> dark slate
+    "C_ORANGE": QColor("#C25E0A"),   # accent orange (kept)
+    "C_DIM":    QColor("#AEB6C0"),
+    "C_TMID":   QColor("#586573"),   # secondary text
+    "C_TDIM":   QColor("#7E8893"),   # tertiary text
+    "C_GREEN":  QColor("#1E9E4C"),   # online (darker for light bg)
+    "C_RED":    QColor("#C0322B"),
+    "C_INACT":  QColor("#9AA2AC"),   # offline grey
+    "C_NAME":   QColor("#2A313B"),   # app names -> dark
+    "C_CMDR":   QColor("#243042"),   # CMDR name -> dark slate (readable on light)
+    "C_SUCCESS": QColor("#B5560C"),  # success log -> deep orange
+    "C_LOGDIM": QColor("#98A0A8"),
+    "C_PANEL_T": QColor(255, 255, 255, 96),    # light translucent panels
+    "CARD_BG":  QColor(255, 255, 255, 150),    # light cards
+    "CARD_BORDER": QColor("#B4BCC6"),
+    "CARD_BORDER_OFF": QColor("#C6CCD4"),
+    "BG_IMAGE": "window-bg-light.png",
+}
+
+# State → (label_colour, dot_colour) and log-level → colour. Rebuilt on each
+# theme switch since they reference themed colours.
+STATE_COLORS: dict = {}
+LOG_COLORS: dict = {}
+
+
+def _build_color_maps() -> None:
+    global STATE_COLORS, LOG_COLORS
+    STATE_COLORS = {
+        AppState.ONLINE:    (C_GREEN,  C_GREEN),
+        AppState.RUNNING:   (C_GREEN,  C_GREEN),
+        AppState.LAUNCHING: (C_ORANGE, C_ORANGE),
+        AppState.WAITING:   (C_ORANGE, C_ORANGE),
+        AppState.OFFLINE:   (C_INACT,  C_INACT),
+        AppState.NOT_FOUND: (C_INACT,  C_INACT),
+        AppState.FAILED:    (C_RED,    C_RED),
+        AppState.STOPPED:   (C_INACT,  C_INACT),
+        AppState.CLOSED:    (C_INACT,  C_INACT),
+    }
+    LOG_COLORS = {
+        "success": C_SUCCESS,
+        "default": C_AMBER,
+        "warning": C_ORANGE,
+        "error":   C_RED,
+        "dim":     C_LOGDIM,
+        "info":    C_AMBER,
+    }
+
+
+def apply_theme(theme: Theme) -> None:
+    """Rebind the palette globals + colour maps to the chosen Theme. Call before
+    building (or rebuilding) the window content."""
+    globals().update(
+        _LIGHT_PALETTE if theme is Theme.LIGHT else _DARK_PALETTE)
+    globals()["IS_LIGHT"] = theme is Theme.LIGHT
+    _build_color_maps()
+
+
+_build_color_maps()   # seed the maps for the default (dark) palette
 
 # Friendly card labels that differ from the registry/identifier name. Presentation
 # only — the descriptor.name is still the key for status routing and settings.
 _DISPLAY_NAMES = {
     "OdysseyMaterials": "Odyssey Mats Helper",
-}
-
-# State → (label_colour, dot_colour)
-STATE_COLORS: dict[AppState, tuple[QColor, QColor]] = {
-    AppState.ONLINE:    (C_GREEN,  C_GREEN),
-    AppState.RUNNING:   (C_GREEN,  C_GREEN),
-    AppState.LAUNCHING: (C_AMBER,  C_ORANGE),
-    AppState.WAITING:   (C_AMBER,  C_AMBER),
-    AppState.OFFLINE:   (C_INACT,  C_INACT),
-    AppState.NOT_FOUND: (C_INACT,  C_INACT),
-    AppState.FAILED:    (C_RED,    C_RED),
-    AppState.STOPPED:   (C_INACT,  C_INACT),
-    AppState.CLOSED:    (C_INACT,  C_INACT),
-}
-
-# Log level → colour
-LOG_COLORS: dict[str, QColor] = {
-    "success": C_GOLD,
-    "default": C_AMBER,
-    "warning": C_ORANGE,
-    "error":   C_RED,
-    "dim":     QColor("#5A4A2A"),
-    "info":    C_AMBER,
 }
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
@@ -149,14 +224,15 @@ class ChamferedFrame(QFrame):
         self,
         parent: Optional[QWidget] = None,
         chamfer: int = 14,
-        bg: QColor = C_PANEL,
-        border: QColor = C_BORDER,
+        bg: Optional[QColor] = None,
+        border: Optional[QColor] = None,
         glow_color: Optional[QColor] = None,
     ) -> None:
         super().__init__(parent)
         self._chamfer = chamfer
-        self._bg = bg
-        self._border = border
+        # Resolve defaults from the live (themed) globals, not import-time values.
+        self._bg = bg if bg is not None else C_PANEL
+        self._border = border if border is not None else C_BORDER
         self._glow = glow_color
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
         self.setContentsMargins(12, 10, 12, 10)
@@ -244,6 +320,36 @@ class PulsingDot(QWidget):
         p.end()
 
 
+# ── Eliding label ─────────────────────────────────────────────────────────────
+class ElidingLabel(QLabel):
+    """QLabel that truncates with an ellipsis to its current width instead of
+    wrapping or forcing the layout wider. Used for card names so a long name
+    yields space to the inline status text rather than colliding with it."""
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._full = text
+        # Ignored width => the label takes the space the layout leaves it (after
+        # the status label) and elides into it, rather than demanding its full
+        # natural width.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored,
+                           QSizePolicy.Policy.Preferred)
+        super().setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._full = text
+        self._relayout()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _relayout(self) -> None:
+        elided = self.fontMetrics().elidedText(
+            self._full, Qt.TextElideMode.ElideRight, max(0, self.width()))
+        super().setText(elided)
+
+
 # ── Status card ───────────────────────────────────────────────────────────────
 class StatusCard(ChamferedFrame):
     """One app's status tile. Wired to engine.on_status."""
@@ -254,7 +360,7 @@ class StatusCard(ChamferedFrame):
                  wide: bool = False,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent, chamfer=10,
-                         bg=QColor(10, 8, 4, 188), border=QColor("#1A1208"))
+                         bg=CARD_BG, border=CARD_BORDER)
         self._name = descriptor.name
         self._wide = wide
         self._state = AppState.OFFLINE
@@ -272,8 +378,7 @@ class StatusCard(ChamferedFrame):
         self.dot = PulsingDot(C_INACT, self)
         self.dot.set_color(C_INACT, pulse=False)
         display = _DISPLAY_NAMES.get(descriptor.name, descriptor.name)
-        name_lbl = QLabel(display.upper())
-        name_lbl.setWordWrap(True)
+        name_lbl = ElidingLabel(display.upper())
         name_lbl.setFont(font_body(10, QFont.Weight.DemiBold))
         name_lbl.setStyleSheet(f"color: {C_NAME.name()}; letter-spacing: 1px;")
         hdr.addWidget(self.dot)
@@ -333,7 +438,7 @@ class StatusCard(ChamferedFrame):
         elif state in (AppState.FAILED,):
             self._border = QColor(204, 61, 61, 76)
         else:
-            self._border = QColor("#181818")
+            self._border = CARD_BORDER_OFF
         self.update()
 
 
@@ -468,15 +573,23 @@ class ChamferedButton(QPushButton):
 
 
 def _btn_ctrl_style(active: bool = False) -> str:
+    base = ("QPushButton {{ font-family: 'Euro Caps'; font-size: 7px;"
+            " font-weight:700; letter-spacing:1px; border:1px solid {bd};"
+            " color:{fg}; background:{bg}; padding: 0 4px; }}"
+            " QPushButton:hover {{ border-color:{bdh}; color:{fgh}; }}")
+    if IS_LIGHT:
+        # Bright buttons for the light cards: filled green STOP, light grey START.
+        if active:
+            return base.format(bd="#3FA85F", fg="#1C6B36", bg="#CDEED7",
+                               bdh="#2E9E55", fgh="#15592C")
+        return base.format(bd="#B4BCC6", fg="#5A6573", bg="#E9EDF1",
+                           bdh="#C25E0A", fgh="#C25E0A")
+    # Dark theme (original).
     if active:
-        return ("QPushButton { font-family: 'Euro Caps'; font-size: 7px; font-weight:700;"
-                " letter-spacing:1px; border:1px solid #226622; color:#44AA44;"
-                " background:#0D1A0D; padding: 0 4px; }"
-                " QPushButton:hover { border-color:#44AA44; color:#66CC66; }")
-    return ("QPushButton { font-family: 'Euro Caps'; font-size: 7px; font-weight:700;"
-            " letter-spacing:1px; border:1px solid #1E1E1E; color:#484848;"
-            " background:#0C0C0C; padding: 0 4px; }"
-            " QPushButton:hover { border-color:#C8760A; color:#C8760A; }")
+        return base.format(bd="#226622", fg="#44AA44", bg="#0D1A0D",
+                           bdh="#44AA44", fgh="#66CC66")
+    return base.format(bd="#1E1E1E", fg="#484848", bg="#0C0C0C",
+                       bdh="#C8760A", fgh="#C8760A")
 
 
 # Icon size for the bottom-bar buttons (~40% larger than the old inline glyphs).
@@ -600,7 +713,7 @@ class HeaderPanel(QWidget):
         self.cmdr_lbl = QLabel(cmdr_name.upper())
         self.cmdr_lbl.setFont(font_body(12, QFont.Weight.DemiBold))
         self.cmdr_lbl.setStyleSheet(
-            f"color: {C_ORANGE.name()}; letter-spacing: 4px;")
+            f"color: {C_CMDR.name()}; letter-spacing: 4px;")
         cmdr_row.addWidget(self.cmdr_lbl)
         cmdr_row.addStretch()
         vbox.addLayout(cmdr_row)
@@ -799,11 +912,23 @@ class Background(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._pix = QPixmap(os.path.join(ASSETS_DIR, "window-bg.png"))
+        self._pix = QPixmap()
+        self._loaded: Optional[str] = None
         self._scaled: Optional[QPixmap] = None
         self._scaled_for: Optional[QSize] = None
 
+    def _ensure_pixmap(self) -> None:
+        """(Re)load the themed background image if the active theme changed it.
+        The widget persists across theme switches, so this is how it repaints
+        with the right asset after apply_theme()."""
+        if self._loaded != BG_IMAGE:
+            self._pix = QPixmap(os.path.join(ASSETS_DIR, BG_IMAGE))
+            self._loaded = BG_IMAGE
+            self._scaled = None
+            self._scaled_for = None
+
     def paintEvent(self, _event) -> None:  # noqa: N802
+        self._ensure_pixmap()
         p = QPainter(self)
         p.fillRect(self.rect(), C_DARK)
         if not self._pix.isNull():
@@ -816,6 +941,75 @@ class Background(QWidget):
             x = (self.width() - self._scaled.width()) // 2
             y = (self.height() - self._scaled.height()) // 2
             p.drawPixmap(x, y, self._scaled)
+        p.end()
+
+
+# ── Toggle switch ─────────────────────────────────────────────────────────────
+class ToggleSwitch(QWidget):
+    """An iOS-style sliding switch: a rounded track with a circular knob that
+    animates between off (grey) and on (amber). Exposes a QCheckBox-like API
+    (isChecked / setChecked / toggled) so it drops in for a checkbox."""
+
+    toggled = Signal(bool)
+
+    def __init__(self, checked: bool = False,
+                 parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._checked = checked
+        self._pos = 1.0 if checked else 0.0   # knob travel, 0 (off) .. 1 (on)
+        self.setFixedSize(50, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._anim = QPropertyAnimation(self, b"knobPos", self)
+        self._anim.setDuration(150)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+    def isChecked(self) -> bool:  # noqa: N802
+        return self._checked
+
+    def setChecked(self, on: bool) -> None:  # noqa: N802
+        if on == self._checked:
+            return
+        self._checked = on
+        self._anim.stop()
+        self._anim.setStartValue(self._pos)
+        self._anim.setEndValue(1.0 if on else 0.0)
+        self._anim.start()
+        self.toggled.emit(on)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setChecked(not self._checked)
+        super().mousePressEvent(event)
+
+    def _get_pos(self) -> float:
+        return self._pos
+
+    def _set_pos(self, v: float) -> None:
+        self._pos = v
+        self.update()
+
+    knobPos = Property(float, _get_pos, _set_pos)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect().adjusted(1, 1, -1, -1)
+        radius = r.height() / 2.0
+
+        off, on = QColor("#8A929C"), QColor("#C25E0A")
+        t = self._pos
+        track = QColor(int(off.red()   + (on.red()   - off.red())   * t),
+                       int(off.green() + (on.green() - off.green()) * t),
+                       int(off.blue()  + (on.blue()  - off.blue())  * t))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(track)
+        p.drawRoundedRect(r, radius, radius)
+
+        margin = 3
+        d = r.height() - 2 * margin
+        x = r.left() + margin + int(self._pos * (r.width() - d - 2 * margin))
+        p.setBrush(QColor("#FFFFFF"))
+        p.drawEllipse(x, r.top() + margin, d, d)
         p.end()
 
 
@@ -833,22 +1027,33 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("EDLS — First-Time Setup" if first_run else "EDLS — Settings")
         self.setModal(True)
         self.setMinimumSize(620, 500)
+        # The dialog follows the active theme: a dark amber popover in dark mode,
+        # a light slate-on-grey one in day mode. (_fg = body text, _amber = accent,
+        # _gold = highlight.)
+        if settings.theme is Theme.LIGHT:
+            _bg, _fg, _field, _border = "#E6E9ED", "#252C36", "#FFFFFF", "#B4BCC6"
+            _amber, _gold, _field_fg = "#C25E0A", "#C25E0A", "#252C36"
+            _head_bg, _head_fg, _grid, _btn_bg = "#DCE0E5", "#5A6573", "#D0D5DB", "#DCE0E5"
+        else:
+            _bg, _fg, _field, _border = "#0C0C0F", "#C8760A", "#0A0A0D", "#252530"
+            _amber, _gold, _field_fg = "#C8760A", "#FFB700", "#FFB700"
+            _head_bg, _head_fg, _grid, _btn_bg = "#111114", "#666670", "#1A1A20", "#111114"
         self.setStyleSheet(f"""
-            QDialog   {{ background: #0C0C0F; color: {C_AMBER.name()}; }}
-            QLabel    {{ color: {C_AMBER.name()}; }}
-            QLineEdit {{ background: #0A0A0D; color: {C_GOLD.name()};
-                         border: 1px solid #252530; padding: 4px 6px; }}
-            QCheckBox {{ color: {C_AMBER.name()}; spacing: 6px; }}
-            QCheckBox::indicator {{ width:13px; height:13px; border:1px solid #252530;
-                                    background:#0A0A0D; }}
-            QCheckBox::indicator:checked {{ background: {C_AMBER.name()}; }}
-            QTableWidget {{ background:#0A0A0D; color:{C_AMBER.name()};
-                            gridline-color:#1A1A20; border:1px solid #252530; }}
-            QHeaderView::section {{ background:#111114; color:#666670;
+            QDialog   {{ background: {_bg}; color: {_fg}; }}
+            QLabel    {{ color: {_fg}; }}
+            QLineEdit {{ background: {_field}; color: {_field_fg};
+                         border: 1px solid {_border}; padding: 4px 6px; }}
+            QCheckBox {{ color: {_fg}; spacing: 6px; }}
+            QCheckBox::indicator {{ width:13px; height:13px; border:1px solid {_border};
+                                    background:{_field}; }}
+            QCheckBox::indicator:checked {{ background: {_amber}; }}
+            QTableWidget {{ background:{_field}; color:{_fg};
+                            gridline-color:{_grid}; border:1px solid {_border}; }}
+            QHeaderView::section {{ background:{_head_bg}; color:{_head_fg};
                                     border:none; padding:4px; font-size:9px; }}
-            QPushButton {{ background:#111114; color:{C_AMBER.name()};
-                           border:1px solid #252530; padding:4px 12px; }}
-            QPushButton:hover {{ border-color:{C_AMBER.name()}; color:{C_GOLD.name()}; }}
+            QPushButton {{ background:{_btn_bg}; color:{_fg};
+                           border:1px solid {_border}; padding:4px 12px; }}
+            QPushButton:hover {{ border-color:{_amber}; color:{_gold}; }}
         """)
 
         vbox = QVBoxLayout(self)
@@ -858,7 +1063,7 @@ class SettingsDialog(QDialog):
         if first_run:
             welcome = QLabel("Welcome to EDLS, CMDR")
             welcome.setFont(font_display(14))
-            welcome.setStyleSheet(f"color: {C_GOLD.name()};")
+            welcome.setStyleSheet(f"color: {_gold};")
             vbox.addWidget(welcome)
             desc = QLabel(
                 "Select which companion apps to enable on launch. "
@@ -867,7 +1072,7 @@ class SettingsDialog(QDialog):
             )
             desc.setWordWrap(True)
             desc.setFont(font_mono(10))
-            desc.setStyleSheet(f"color: {C_AMBER.name()};")
+            desc.setStyleSheet(f"color: {_fg};")
             vbox.addWidget(desc)
         else:
             hdr = QLabel("S E T T I N G S")
@@ -882,17 +1087,25 @@ class SettingsDialog(QDialog):
         cmdr_row.addWidget(self.cmdr_edit, 1)
         vbox.addLayout(cmdr_row)
 
-        # Show inactive checkbox
-        self.chk_inactive = QCheckBox("Show status cards for inactive apps")
-        self.chk_inactive.setChecked(settings.show_inactive_cards)
-        vbox.addWidget(self.chk_inactive)
+        # Boolean options as sliding toggles (label left, switch right).
+        def _toggle_row(text: str, checked: bool) -> ToggleSwitch:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(text))
+            row.addStretch()
+            tog = ToggleSwitch(checked)
+            row.addWidget(tog)
+            vbox.addLayout(row)
+            return tog
 
-        # Shutdown scope
-        self.chk_scope = QCheckBox(
-            "Shutdown closes all enabled apps (not just those EDLS launched)")
-        self.chk_scope.setChecked(
+        self.toggle_inactive = _toggle_row(
+            "Show status cards for inactive apps",
+            settings.show_inactive_cards)
+        self.toggle_scope = _toggle_row(
+            "Shutdown closes all enabled apps (not just those EDLS launched)",
             settings.shutdown_scope is ShutdownScope.ALL_ENABLED)
-        vbox.addWidget(self.chk_scope)
+        self.toggle_light = _toggle_row(
+            "Light theme (day mode for washed-out monitors)",
+            settings.theme is Theme.LIGHT)
 
         # App table
         self.table = QTableWidget(len(settings.apps), 4)
@@ -986,10 +1199,11 @@ class SettingsDialog(QDialog):
         updated = replace(
             self._settings,
             cmdr_name=self.cmdr_edit.text().strip() or self._settings.cmdr_name,
-            show_inactive_cards=self.chk_inactive.isChecked(),
+            show_inactive_cards=self.toggle_inactive.isChecked(),
             shutdown_scope=(ShutdownScope.ALL_ENABLED
-                            if self.chk_scope.isChecked()
+                            if self.toggle_scope.isChecked()
                             else ShutdownScope.LAUNCHED_ONLY),
+            theme=Theme.LIGHT if self.toggle_light.isChecked() else Theme.DARK,
             apps=new_apps,
             removed_defaults=removed,
             setup_complete=True,
@@ -1022,12 +1236,30 @@ class MainWindow(QMainWindow):
         # Wire engine.dispatch to the GUI thread
         self._invoker = _Invoker()
         engine.dispatch = self._invoker.invoke
+        self._busy = False   # tracked so a theme rebuild can restore button state
 
-        # Background
+        # Background persists across theme switches (it repaints from the themed
+        # globals); only the central content is rebuilt on a theme change.
         self._bg = Background(self)
         self._bg.setGeometry(self.rect())
 
-        # Central widget
+        # Engine signals are connected ONCE, to wrappers that delegate to the
+        # current child widgets — so rebuilding content (theme switch) doesn't
+        # leave dangling connections to deleted panels.
+        engine.on_log.connect(self._on_log)
+        engine.on_status.connect(self._on_status)
+        engine.on_busy.connect(self._on_busy)
+
+        self._build_content()
+
+        self._log.append("Elite: Dangerous Launch Suite ready.", "success")
+        if settings.auto_start:
+            self._log.append("Auto-start enabled — launching...", "dim")
+
+    def _build_content(self) -> None:
+        """Build (or rebuild) the central widget and its panels from the current
+        settings + active theme. Replacing the central widget deletes the old one
+        and its children, so a theme switch is just: apply_theme() then this."""
         central = QWidget()
         self.setCentralWidget(central)
         central.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -1038,7 +1270,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(18, 18, 18, 14)
 
         # Header
-        self._header = HeaderPanel(settings.cmdr_name)
+        self._header = HeaderPanel(self._settings.cmdr_name)
         root.addWidget(self._header)
 
         # Status + Log in a draggable splitter
@@ -1048,7 +1280,7 @@ class MainWindow(QMainWindow):
             "QSplitter::handle:vertical { background: transparent; }"
         )
         self._status = StatusPanel(
-            [a for a in settings.apps if a.enabled])
+            [a for a in self._settings.apps if a.enabled])
         self._status.start_stop_clicked.connect(self._on_start_stop)
         self._log = LogPanel()
         self._splitter.addWidget(self._status)
@@ -1058,21 +1290,13 @@ class MainWindow(QMainWindow):
         root.addWidget(self._splitter, 1)
 
         # Button bar
-        self._btns = ButtonBar(config.APP_VERSION, settings.auto_start)
-        self._btns.shutdown_clicked.connect(engine.manual_shutdown)
+        self._btns = ButtonBar(config.APP_VERSION, self._settings.auto_start)
+        self._btns.shutdown_clicked.connect(self._engine.manual_shutdown)
         self._btns.autostart_toggled.connect(self._on_autostart)
         self._btns.settings_clicked.connect(self._open_settings)
-        self._btns.launch_clicked.connect(engine.launch)
+        self._btns.launch_clicked.connect(self._engine.launch)
+        self._btns.set_busy(self._busy)
         root.addWidget(self._btns)
-
-        # Engine signals
-        engine.on_log.connect(self._on_log)
-        engine.on_status.connect(self._on_status)
-        engine.on_busy.connect(self._btns.set_busy)
-
-        self._log.append("Elite: Dangerous Launch Suite ready.", "success")
-        if settings.auto_start:
-            self._log.append("Auto-start enabled — launching...", "dim")
 
     def _play_boot_animation(self) -> None:
         """Staggered fade-up of the four panels. Runs once, after the layout has
@@ -1129,6 +1353,11 @@ class MainWindow(QMainWindow):
                    pid: Optional[int]) -> None:
         self._status.update_card(key, state, pid)
 
+    @Slot(bool)
+    def _on_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self._btns.set_busy(busy)
+
     @Slot(str, bool)
     def _on_start_stop(self, name: str, is_running: bool) -> None:
         if is_running:
@@ -1152,9 +1381,25 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_settings_saved(self, updated: Settings) -> None:
+        theme_changed = updated.theme != self._settings.theme
         self._settings = updated
         config.save_settings(updated)
         self._engine.settings = updated
+
+        if theme_changed:
+            # A theme switch must rebuild all content so every baked-in
+            # stylesheet picks up the new palette. Carry the activity log across
+            # the swap (its per-line accent colours are theme-independent).
+            log_html = self._log.log.toHtml()
+            apply_theme(updated.theme)
+            _apply_app_palette()
+            self._build_content()
+            self._log.log.setHtml(log_html)
+            sb = self._log.log.verticalScrollBar()
+            sb.setValue(sb.maximum())
+            self._bg.update()
+            return
+
         self._header.set_cmdr(updated.cmdr_name)
         # Rebuild the status panel with the new app list
         old_status = self._status
@@ -1188,6 +1433,21 @@ class _Invoker(QWidget):
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
+def _apply_app_palette() -> None:
+    """Push the active theme's structural colours into the QApplication palette
+    (the default surface colour for any widget that doesn't style itself).
+    Re-called on a live theme switch."""
+    app = QApplication.instance()
+    if app is None:
+        return
+    pal = QPalette()
+    pal.setColor(QPalette.ColorRole.Window,     C_DARK)
+    pal.setColor(QPalette.ColorRole.WindowText, C_ORANGE)
+    pal.setColor(QPalette.ColorRole.Base,       C_PANEL)
+    pal.setColor(QPalette.ColorRole.Text,       C_AMBER)
+    app.setPalette(pal)
+
+
 def run(engine, settings: Settings) -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Elite: Dangerous Launch Suite")
@@ -1195,13 +1455,10 @@ def run(engine, settings: Settings) -> int:
     if os.path.exists(_icon):
         app.setWindowIcon(QIcon(_icon))
 
-    # Global palette: everything defaults to our dark background
-    pal = QPalette()
-    pal.setColor(QPalette.ColorRole.Window,     C_DARK)
-    pal.setColor(QPalette.ColorRole.WindowText, C_ORANGE)
-    pal.setColor(QPalette.ColorRole.Base,       C_PANEL)
-    pal.setColor(QPalette.ColorRole.Text,       C_AMBER)
-    app.setPalette(pal)
+    # Activate the saved theme before any widget is built, then seed the global
+    # palette from it.
+    apply_theme(settings.theme)
+    _apply_app_palette()
 
     _load_fonts()
 

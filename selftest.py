@@ -102,6 +102,14 @@ def main():
     run("settings dialog (first-run) build + save",
         lambda: settings_dialog(True))
 
+    def theme_switch():
+        from dataclasses import replace
+        # Drive a live light/dark switch both ways through the real save path,
+        # which calls apply_theme() + rebuilds all content.
+        win._on_settings_saved(replace(settings, theme=config.Theme.LIGHT))
+        win._on_settings_saved(replace(settings, theme=config.Theme.DARK))
+    run("light/dark theme switch + content rebuild", theme_switch)
+
     def pump_events():
         QTimer.singleShot(60, app.quit)
         app.exec()

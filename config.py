@@ -75,6 +75,16 @@ class ShutdownScope(Enum):
     ALL_ENABLED = "all_enabled"       # any enabled companion app that's running
 
 
+class Theme(Enum):
+    """UI colour scheme (a user setting -- see Settings.theme). DARK is the
+    original near-black HUD; LIGHT is a cool light-grey "day mode" (dark text,
+    orange accents) for cheap / low-contrast monitors where the dark theme reads
+    as a black void. The actual colours live in ui.py; this just records the
+    choice."""
+    DARK = "dark"
+    LIGHT = "light"
+
+
 # =============================================================================
 # App descriptor + path resolution
 # =============================================================================
@@ -168,6 +178,7 @@ class Settings:
     auto_start: bool = False
     show_inactive_cards: bool = True
     shutdown_scope: ShutdownScope = ShutdownScope.LAUNCHED_ONLY
+    theme: Theme = Theme.DARK
     apps: list[AppDescriptor] = field(default_factory=list)
     removed_defaults: list[str] = field(default_factory=list)
 
@@ -202,6 +213,13 @@ def _parse_scope(value) -> ShutdownScope:
         return ShutdownScope.LAUNCHED_ONLY
 
 
+def _parse_theme(value) -> Theme:
+    try:
+        return Theme(value)
+    except ValueError:
+        return Theme.DARK
+
+
 def _from_dict(raw: dict) -> Settings:
     return Settings(
         cmdr_name=raw.get("cmdr_name", Settings.cmdr_name),
@@ -210,6 +228,7 @@ def _from_dict(raw: dict) -> Settings:
         auto_start=bool(raw.get("auto_start", False)),
         show_inactive_cards=bool(raw.get("show_inactive_cards", True)),
         shutdown_scope=_parse_scope(raw.get("shutdown_scope")),
+        theme=_parse_theme(raw.get("theme")),
         apps=[_app_from_dict(d) for d in raw.get("apps", [])],
         removed_defaults=list(raw.get("removed_defaults", [])),
     )
@@ -266,6 +285,7 @@ def save_settings(s: Settings) -> None:
         "auto_start": s.auto_start,
         "show_inactive_cards": s.show_inactive_cards,
         "shutdown_scope": s.shutdown_scope.value,
+        "theme": s.theme.value,
         "removed_defaults": s.removed_defaults,
         "apps": [
             {"name": a.name, "process": a.process_name,
