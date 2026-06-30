@@ -26,6 +26,7 @@ Contract with main.py:
     engine.on_log.connect(...)       (message: str, level: str)
     engine.on_status.connect(...)    (key: str, state: AppState, pid: int | None)
     engine.on_busy.connect(...)      (busy: bool)
+    engine.on_quit.connect(...)      ()  -- a full session ended; close the app
 """
 from __future__ import annotations
 
@@ -67,7 +68,7 @@ from theme import (
     IS_LIGHT, CHAMFER_CARD, CHAMFER_PANEL, PULSE_MS,
     BOOT_DURATION, BOOT_OFFSET, BOOT_STAGGER,
     CARD_BORDER_ONLINE, CARD_BORDER_LAUNCHING, CARD_BORDER_FAILED,
-    TOGGLE_OFF, TOGGLE_ON,
+    TOGGLE_OFF, TOGGLE_ON, TRACK_BANNER,
     font_display, font_body, font_mono, power_icon,
 )
 
@@ -641,7 +642,7 @@ class TitleBanner(QWidget):
             p.drawPixmap(22, (r.height() - icon.height()) // 2, icon)
         f = font_display(13, QFont.Weight.ExtraBold)
         f.setPixelSize(max(20, int(r.height() * 0.46)))
-        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 122)
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, TRACK_BANNER)
         p.setFont(f)
         p.setPen(BANNER_ACCENT)
         p.drawText(r, Qt.AlignmentFlag.AlignCenter,
@@ -1288,6 +1289,7 @@ class MainWindow(QMainWindow):
         engine.on_log.connect(self._on_log)
         engine.on_status.connect(self._on_status)
         engine.on_busy.connect(self._on_busy)
+        engine.on_quit.connect(self._on_quit)
 
         self._build_content()
 
@@ -1396,6 +1398,10 @@ class MainWindow(QMainWindow):
     def _on_busy(self, busy: bool) -> None:
         self._busy = busy
         self._btns.set_busy(busy)
+
+    @Slot()
+    def _on_quit(self) -> None:
+        self.close()
 
     @Slot(str, bool)
     def _on_start_stop(self, name: str, is_running: bool) -> None:

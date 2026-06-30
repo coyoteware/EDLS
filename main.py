@@ -56,7 +56,8 @@ except ImportError:  # pragma: no cover - non-Windows dev machines
 #   ShutdownScope (Enum): LAUNCHED_ONLY | ALL_ENABLED
 #   AppDescriptor: .name .process_name .enabled  +  .resolve_path() -> str | None
 #   Settings: .cmdr_name .elite_app_id .setup_complete .auto_start
-#             .show_inactive_cards .shutdown_scope .apps (list[AppDescriptor])
+#             .show_inactive_cards .shutdown_scope .theme .apps (list[AppDescriptor])
+#             .removed_defaults (list[str])
 #   load_settings() -> Settings
 #   save_settings(settings) -> None
 #
@@ -232,6 +233,7 @@ class Engine:
         self.on_log = Signal()      # (message: str, level: str)
         self.on_status = Signal()   # (key: str, state: AppState, pid: int | None)
         self.on_busy = Signal()     # (busy: bool)  -> toggle the LAUNCH button
+        self.on_quit = Signal()     # ()  -> close the app: a full session ended
 
         # The view injects a function that runs a callable on the GUI thread.
         # Default runs inline, which is correct for headless use and tests.
@@ -252,6 +254,9 @@ class Engine:
 
     def _busy(self, busy: bool) -> None:
         self.dispatch(lambda: self.on_busy.emit(busy))
+
+    def _quit(self) -> None:
+        self.dispatch(lambda: self.on_quit.emit())
 
     @property
     def enabled_apps(self) -> list[AppDescriptor]:
@@ -321,6 +326,7 @@ class Engine:
                 return
             self._shutdown(self.settings.shutdown_scope)
             self._log("Farewell, CMDR. o7", "success")
+            self._quit()   # session's done: Elite exited and tools are torn down
         except Exception as exc:
             log.exception("Launch sequence crashed")
             self._log(f"Unexpected error: {exc}", "error")
