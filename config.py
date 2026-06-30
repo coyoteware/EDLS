@@ -41,6 +41,14 @@ DATA_DIR = os.path.join(_LOCALAPPDATA, "EDLS")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 LOG_FILE = os.path.join(DATA_DIR, "launcher.log")
 
+# Status-card keys + process names for the two rows that aren't companion apps
+# (Steam, Elite itself). Shared here so main.py (routing) and ui.py (the
+# placeholder cards) can't drift apart by hand-duplicating these strings.
+KEY_STEAM = "Steam"
+KEY_ELITE = "Elite"
+STEAM_PROCESS = "steam.exe"
+ELITE_PROCESS = "EliteDangerous64.exe"
+
 
 # =============================================================================
 # Shared vocabulary
@@ -164,7 +172,7 @@ REGISTRY: list[AppDescriptor] = [
                   r"%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe"),
 ]
 
-_REGISTRY_BY_NAME = {a.name: a for a in REGISTRY}
+REGISTRY_BY_NAME = {a.name: a for a in REGISTRY}
 
 
 # =============================================================================
@@ -189,13 +197,13 @@ def _clone_registry() -> list[AppDescriptor]:
     return [replace(a) for a in REGISTRY]
 
 
-def _default_settings() -> Settings:
+def default_settings() -> Settings:
     return Settings(apps=_clone_registry())
 
 
 def _app_from_dict(d: dict) -> AppDescriptor:
     name = d.get("name", "")
-    reg = _REGISTRY_BY_NAME.get(name)
+    reg = REGISTRY_BY_NAME.get(name)
     return AppDescriptor(
         name=name,
         process_name=d.get("process", ""),
@@ -252,7 +260,7 @@ def load_settings() -> Settings:
     os.makedirs(DATA_DIR, exist_ok=True)
 
     if not os.path.exists(SETTINGS_FILE):
-        s = _default_settings()
+        s = default_settings()
         save_settings(s)
         return s
 
@@ -261,7 +269,7 @@ def load_settings() -> Settings:
             raw = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
         log.warning("settings.json unreadable (%s); recreating from defaults", exc)
-        s = _default_settings()
+        s = default_settings()
         save_settings(s)
         return s
 
@@ -310,5 +318,5 @@ def recompute_removed_defaults(apps: list[AppDescriptor],
     _merge_new_defaults. Lives here to keep all RemovedDefaults bookkeeping in
     one place; the settings dialog calls it on save."""
     kept = {a.name for a in apps}
-    newly_removed = [name for name in _REGISTRY_BY_NAME if name not in kept]
+    newly_removed = [name for name in REGISTRY_BY_NAME if name not in kept]
     return sorted(set(previously_removed) | set(newly_removed))

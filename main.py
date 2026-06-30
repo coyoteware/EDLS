@@ -34,7 +34,10 @@ from typing import Callable, Optional
 import psutil
 
 import config
-from config import AppDescriptor, AppState, Settings, ShutdownScope
+from config import (
+    AppDescriptor, AppState, Settings, ShutdownScope,
+    KEY_STEAM, KEY_ELITE, STEAM_PROCESS, ELITE_PROCESS,
+)
 
 try:
     import winreg  # Windows-only, used for the Steam preflight check
@@ -53,7 +56,8 @@ except ImportError:  # pragma: no cover - non-Windows dev machines
 #   ShutdownScope (Enum): LAUNCHED_ONLY | ALL_ENABLED
 #   AppDescriptor: .name .process_name .enabled  +  .resolve_path() -> str | None
 #   Settings: .cmdr_name .elite_app_id .setup_complete .auto_start
-#             .show_inactive_cards .shutdown_scope .apps (list[AppDescriptor])
+#             .show_inactive_cards .shutdown_scope .theme .apps (list[AppDescriptor])
+#             .removed_defaults (list[str])
 #   load_settings() -> Settings
 #   save_settings(settings) -> None
 #
@@ -68,12 +72,6 @@ except ImportError:  # pragma: no cover - non-Windows dev machines
 # =============================================================================
 
 STEAM_REG_KEY = r"Software\Valve\Steam"
-ELITE_PROCESS = "EliteDangerous64.exe"
-STEAM_PROCESS = "steam.exe"
-
-# Status-card keys for the two rows that aren't companion apps.
-KEY_STEAM = "Steam"
-KEY_ELITE = "Elite"
 
 log = logging.getLogger("edls")
 
@@ -125,38 +123,70 @@ class ProcessManager:
 
     def __init__(self) -> None:
         self.launched: dict[str, int] = {}   # app name -> pid we started
+        # `launched` is read/written from the engine's worker thread, the
+        # manual_shutdown() thread, and the GUI thread (start_app/stop_app on
+        # card clicks) -- guard every mutation/snapshot so those can't interleave.
+        self._lock = threading.Lock()
+
+    def launched_names(self) -> set[str]:
+        """Thread-safe snapshot of the app names we've launched."""
+        with self._lock:
+            return set(self.launched)
+
+    @classmethod
+    def find(cls, process_name: str) -> Optional[psutil.Process]:
+        """First running process matching `process_name` (with or without .exe)."""
+        return cls.find_many([process_name]).get(process_name)
 
     @staticmethod
-    def find(process_name: str) -> Optional[psutil.Process]:
-        """First running process matching `process_name` (with or without .exe)."""
-        target = process_name.lower()
-        target_exe = target if target.endswith(".exe") else target + ".exe"
+    def find_many(process_names) -> dict[str, psutil.Process]:
+        """Resolve several process names in a single process_iter() pass --
+        used by the monitor loop so checking N apps costs one system scan per
+        tick instead of N. Keyed by the original (un-lowercased) name passed in."""
+        wanted: dict[str, str] = {}   # lowercased candidate -> original name
+        for name in process_names:
+            key = name.lower()
+            wanted.setdefault(key, name)
+            if not key.endswith(".exe"):
+                wanted.setdefault(key + ".exe", name)
+
+        found: dict[str, psutil.Process] = {}
+        if not wanted:
+            return found
         for proc in psutil.process_iter(["name"]):
             try:
                 name = (proc.info["name"] or "").lower()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-            if name in (target, target_exe):
-                return proc
-        return None
+            original = wanted.get(name)
+            if original and original not in found:
+                found[original] = proc
+        return found
 
     def is_running(self, descriptor: AppDescriptor) -> Optional[psutil.Process]:
         return self.find(descriptor.process_name)
 
-    def launch(self, descriptor: AppDescriptor) -> Optional[psutil.Process]:
+    def launch(self, descriptor: AppDescriptor,
+               resolved_path: Optional[str] = None) -> Optional[psutil.Process]:
         """Launch the app if it isn't already up. Returns the process (existing
-        or new) or None on failure. Records it as ours for scoped shutdown."""
+        or new) or None on failure. Records it as ours for scoped shutdown.
+        `resolved_path`, if given, is used instead of re-resolving the
+        descriptor's path -- callers that already resolved it (e.g. to check
+        existence) skip a redundant lookup, which matters for resolvers like
+        SrvSurvey's that walk a directory tree."""
         existing = self.find(descriptor.process_name)
         if existing:
-            self.launched[descriptor.name] = existing.pid
+            with self._lock:
+                self.launched[descriptor.name] = existing.pid
             return existing
 
-        path = descriptor.resolve_path()
+        path = resolved_path if resolved_path is not None else descriptor.resolve_path()
         if not path or not os.path.exists(path):
             return None
         try:
             popen = subprocess.Popen([path], cwd=os.path.dirname(path) or None)
-            self.launched[descriptor.name] = popen.pid
+            with self._lock:
+                self.launched[descriptor.name] = popen.pid
             return psutil.Process(popen.pid)
         except (OSError, psutil.Error) as exc:
             log.warning("Failed to launch %s: %s", descriptor.name, exc)
@@ -165,8 +195,9 @@ class ProcessManager:
     def stop(self, descriptor: AppDescriptor) -> bool:
         """Kill a single app, by our tracked PID first, then by process name.
         Returns True if something was actually killed."""
+        with self._lock:
+            pid = self.launched.get(descriptor.name)
         proc: Optional[psutil.Process] = None
-        pid = self.launched.get(descriptor.name)
         if pid:
             try:
                 proc = psutil.Process(pid)
@@ -182,7 +213,8 @@ class ProcessManager:
                 killed = True
             except psutil.Error as exc:
                 log.warning("Failed to stop %s: %s", descriptor.name, exc)
-        self.launched.pop(descriptor.name, None)
+        with self._lock:
+            self.launched.pop(descriptor.name, None)
         return killed
 
 
@@ -201,12 +233,14 @@ class Engine:
         self.on_log = Signal()      # (message: str, level: str)
         self.on_status = Signal()   # (key: str, state: AppState, pid: int | None)
         self.on_busy = Signal()     # (busy: bool)  -> toggle the LAUNCH button
+        self.on_quit = Signal()     # ()  -> close the app: a full session ended
 
         # The view injects a function that runs a callable on the GUI thread.
         # Default runs inline, which is correct for headless use and tests.
         self.dispatch: Callable[[Callable], None] = lambda fn: fn()
 
         self._thread: Optional[threading.Thread] = None
+        self._shutdown_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
 
     # ---- signal helpers (everything outbound goes through dispatch) ----
@@ -220,6 +254,9 @@ class Engine:
 
     def _busy(self, busy: bool) -> None:
         self.dispatch(lambda: self.on_busy.emit(busy))
+
+    def _quit(self) -> None:
+        self.dispatch(lambda: self.on_quit.emit())
 
     @property
     def enabled_apps(self) -> list[AppDescriptor]:
@@ -240,9 +277,12 @@ class Engine:
 
     def manual_shutdown(self) -> None:
         """SHUTDOWN button. Honors the user's shutdown_scope setting."""
-        threading.Thread(
+        if self._shutdown_thread and self._shutdown_thread.is_alive():
+            return   # already tearing down -- ignore a double-click
+        self._shutdown_thread = threading.Thread(
             target=self._shutdown, args=(self.settings.shutdown_scope,), daemon=True
-        ).start()
+        )
+        self._shutdown_thread.start()
 
     def start_app(self, name: str) -> None:
         desc = self._find_descriptor(name)
@@ -280,10 +320,14 @@ class Engine:
                 return
             launched = self._launch_tools()
             self._log("All systems nominal.", "success")
-            self._monitor(elite, launched)
+            if not self._monitor(elite, launched):
+                # The window was closed mid-session, not the game exiting --
+                # leave the game and tools running (see Engine.close()).
+                return
             self._shutdown(self.settings.shutdown_scope)
             self._log("Farewell, CMDR. o7", "success")
-        except Exception as exc:                       # item 13: never silent
+            self._quit()   # session's done: Elite exited and tools are torn down
+        except Exception as exc:
             log.exception("Launch sequence crashed")
             self._log(f"Unexpected error: {exc}", "error")
         finally:
@@ -341,13 +385,13 @@ class Engine:
                 continue  # already reported NOT_FOUND in preflight
             if self.pm.find(app.process_name):
                 self._log(f"{app.name} already running - skipping.", "dim")
-                proc = self.pm.launch(app)   # records the existing process
+                proc = self.pm.launch(app, resolved_path=path)   # records the existing process
                 self._status(app.name, AppState.ONLINE, proc.pid if proc else None)
                 launched.append(app)
                 continue
             self._log(f"Launching {app.name}...")
             self._status(app.name, AppState.LAUNCHING)
-            proc = self.pm.launch(app)
+            proc = self.pm.launch(app, resolved_path=path)
             if proc:
                 self._status(app.name, AppState.ONLINE, proc.pid)
                 self._log(f"{app.name} online. (PID {proc.pid})", "success")
@@ -357,24 +401,30 @@ class Engine:
                 self._status(app.name, AppState.FAILED)
         return launched
 
-    def _monitor(self, elite: psutil.Process, launched: list[AppDescriptor]) -> None:
+    def _monitor(self, elite: psutil.Process, launched: list[AppDescriptor]) -> bool:
+        """Watches Elite until it exits. Returns False (without touching status/
+        logs) if a stop was requested instead -- the caller distinguishes "game
+        exited" from "window closed" so it knows whether shutdown should run."""
         self._log("Monitoring Elite: Dangerous...", "dim")
         noted_offline: set[str] = set()
-        while elite.is_running() and not self._stop.is_set():
+        while elite.is_running():
             if self._sleep(2):
-                return
-            for app in launched:
-                if app.name in noted_offline:
-                    continue
-                if not self.pm.find(app.process_name):
-                    self._status(app.name, AppState.OFFLINE)
-                    noted_offline.add(app.name)
+                return False
+            pending = [a for a in launched if a.name not in noted_offline]
+            if pending:
+                running = self.pm.find_many(a.process_name for a in pending)
+                for app in pending:
+                    if app.process_name not in running:
+                        self._status(app.name, AppState.OFFLINE)
+                        noted_offline.add(app.name)
         self._status(KEY_ELITE, AppState.OFFLINE)
         self._log("Elite: Dangerous offline.")
+        return True
 
     def _shutdown(self, scope: ShutdownScope) -> None:
         if scope is ShutdownScope.LAUNCHED_ONLY:
-            targets = [a for a in self.settings.apps if a.name in self.pm.launched]
+            launched_names = self.pm.launched_names()
+            targets = [a for a in self.settings.apps if a.name in launched_names]
         else:  # ALL_ENABLED
             targets = self.enabled_apps
 

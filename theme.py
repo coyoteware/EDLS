@@ -1,11 +1,8 @@
 """
 EDLS — theme.py
 Single source of truth for the EDLS HUD palette, type metrics, and shape specs,
-extracted from the EDLS Design System. Drop this next to ui.py and replace the
-hand-maintained palette block at the top of ui.py with:
-
-    from theme import *                      # palette + maps + metrics
-    # then call apply_theme(settings.theme) before building window content
+extracted from the EDLS Design System. ui.py imports the names it needs from
+here and calls apply_theme(settings.theme) before building window content.
 
 Every value here is identical to the design system's tokens/*.css, so the web
 mockups and the Qt app stay in lockstep — change a colour in one place.
