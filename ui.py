@@ -26,6 +26,7 @@ Contract with main.py:
     engine.on_log.connect(...)       (message: str, level: str)
     engine.on_status.connect(...)    (key: str, state: AppState, pid: int | None)
     engine.on_busy.connect(...)      (busy: bool)
+    engine.on_quit.connect(...)      ()  -- a full session ended; close the app
 """
 from __future__ import annotations
 
@@ -53,7 +54,10 @@ from PySide6.QtWidgets import (
 )
 
 import config
-from config import AppDescriptor, AppState, Settings, ShutdownScope, Theme
+from config import (
+    AppDescriptor, AppState, Settings, ShutdownScope, Theme,
+    KEY_STEAM, KEY_ELITE, STEAM_PROCESS, ELITE_PROCESS,
+)
 
 import theme as _theme
 from theme import (
@@ -64,7 +68,7 @@ from theme import (
     IS_LIGHT, CHAMFER_CARD, CHAMFER_PANEL, PULSE_MS,
     BOOT_DURATION, BOOT_OFFSET, BOOT_STAGGER,
     CARD_BORDER_ONLINE, CARD_BORDER_LAUNCHING, CARD_BORDER_FAILED,
-    TOGGLE_OFF, TOGGLE_ON,
+    TOGGLE_OFF, TOGGLE_ON, TRACK_BANNER,
     font_display, font_body, font_mono, power_icon,
 )
 
@@ -141,7 +145,7 @@ class ChamferedFrame(QFrame):
     def __init__(
         self,
         parent: Optional[QWidget] = None,
-        chamfer: int = 14,
+        chamfer: int = CHAMFER_PANEL,
         bg: Optional[QColor] = None,
         border: Optional[QColor] = None,
         glow_color: Optional[QColor] = None,
@@ -221,7 +225,7 @@ class PulsingDot(QWidget):
             self._anim = QPropertyAnimation(self, b"dotOpacity", self)
             self._anim.setStartValue(1.0)
             self._anim.setEndValue(0.45)
-            self._anim.setDuration(1800)
+            self._anim.setDuration(PULSE_MS)
             self._anim.setEasingCurve(QEasingCurve.Type.SineCurve)
             self._anim.setLoopCount(-1)
             self._anim.start()
@@ -296,7 +300,7 @@ class StatusCard(ChamferedFrame):
     def __init__(self, descriptor: AppDescriptor,
                  wide: bool = False,
                  parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent, chamfer=10,
+        super().__init__(parent, chamfer=CHAMFER_CARD,
                          bg=CARD_BG, border=CARD_BORDER)
         self._name = descriptor.name
         self._wide = wide
@@ -390,11 +394,11 @@ class StatusCard(ChamferedFrame):
 
         # update border colour to match state
         if state in (AppState.ONLINE, AppState.RUNNING):
-            self._border = QColor(61, 204, 106, 72)
+            self._border = CARD_BORDER_ONLINE
         elif state in (AppState.LAUNCHING, AppState.WAITING):
-            self._border = QColor(200, 118, 10, 76)
+            self._border = CARD_BORDER_LAUNCHING
         elif state in (AppState.FAILED,):
-            self._border = QColor(204, 61, 61, 76)
+            self._border = CARD_BORDER_FAILED
         else:
             self._border = CARD_BORDER_OFF
         self.update()
@@ -470,7 +474,7 @@ class ChamferedButton(QPushButton):
     Hover/press/disabled states are handled entirely in paintEvent; no QSS."""
 
     def __init__(self, text: str = "", parent: Optional[QWidget] = None,
-                 chamfer: int = 10, **colors) -> None:
+                 chamfer: int = CHAMFER_CARD, **colors) -> None:
         super().__init__(text, parent)
         self._ch = chamfer
         self._c: dict = {}
@@ -638,7 +642,7 @@ class TitleBanner(QWidget):
             p.drawPixmap(22, (r.height() - icon.height()) // 2, icon)
         f = font_display(13, QFont.Weight.ExtraBold)
         f.setPixelSize(max(20, int(r.height() * 0.46)))
-        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 122)
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, TRACK_BANNER)
         p.setFont(f)
         p.setPen(BANNER_ACCENT)
         p.drawText(r, Qt.AlignmentFlag.AlignCenter,
@@ -684,17 +688,12 @@ class HeaderPanel(QWidget):
 
 
 # ── Status panel ──────────────────────────────────────────────────────────────
-KEY_STEAM     = "Steam"
-KEY_ELITE     = "Elite"
-STEAM_PROCESS = "steam"
-
-
 class StatusPanel(ChamferedFrame):
     start_stop_clicked = Signal(str, bool)
 
     def __init__(self, apps: list[AppDescriptor],
                  parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent, chamfer=14, bg=C_PANEL_T)
+        super().__init__(parent, chamfer=CHAMFER_PANEL, bg=C_PANEL_T)
         self.cards: dict[str, StatusCard] = {}
 
         vbox = QVBoxLayout(self)
@@ -729,7 +728,7 @@ class StatusPanel(ChamferedFrame):
         _add(steam)
 
         # Elite (double-wide)
-        elite_desc = AppDescriptor(KEY_ELITE, "EliteDangerous64")
+        elite_desc = AppDescriptor(KEY_ELITE, ELITE_PROCESS)
         elite = StatusCard(elite_desc, wide=True)
         self.cards[KEY_ELITE] = elite
         _add(elite, span=2)
@@ -763,7 +762,7 @@ class StatusPanel(ChamferedFrame):
 # ── Log panel ─────────────────────────────────────────────────────────────────
 class LogPanel(ChamferedFrame):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent, chamfer=14, bg=C_PANEL_T)
+        super().__init__(parent, chamfer=CHAMFER_PANEL, bg=C_PANEL_T)
         vbox = QVBoxLayout(self)
         vbox.setSpacing(0)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -836,11 +835,11 @@ class ButtonBar(QWidget):
         hbox.addLayout(cred_vbox)
         hbox.addStretch()
 
-        self.shutdown_btn  = ChamferedButton("SHUTDOWN",   chamfer=10, **_C_DANGER)
-        self.autostart_btn = ChamferedButton("AUTO START", chamfer=10,
+        self.shutdown_btn  = ChamferedButton("SHUTDOWN",   chamfer=CHAMFER_CARD, **_C_DANGER)
+        self.autostart_btn = ChamferedButton("AUTO START", chamfer=CHAMFER_CARD,
                                              **(_C_SECONDARY_ON if auto_start else _C_SECONDARY))
-        self.settings_btn  = ChamferedButton("SETTINGS",  chamfer=10, **_C_SECONDARY)
-        self.launch_btn    = ChamferedButton("LAUNCH",    chamfer=10, **_C_LAUNCH)
+        self.settings_btn  = ChamferedButton("SETTINGS",  chamfer=CHAMFER_CARD, **_C_SECONDARY)
+        self.launch_btn    = ChamferedButton("LAUNCH",    chamfer=CHAMFER_CARD, **_C_LAUNCH)
 
         self.shutdown_btn.setFont(font_display(9))
         self.autostart_btn.setFont(font_display(9))
@@ -966,7 +965,7 @@ class ToggleSwitch(QWidget):
         r = self.rect().adjusted(1, 1, -1, -1)
         radius = r.height() / 2.0
 
-        off, on = QColor("#8A929C"), QColor("#C25E0A")
+        off, on = TOGGLE_OFF, TOGGLE_ON
         t = self._pos
         track = QColor(int(off.red()   + (on.red()   - off.red())   * t),
                        int(off.green() + (on.green() - off.green()) * t),
@@ -1196,7 +1195,7 @@ class SettingsDialog(QDialog):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
-        defaults = config._default_settings()
+        defaults = config.default_settings()
         self.cmdr_edit.setText(defaults.cmdr_name)
         self.toggle_inactive.setChecked(defaults.show_inactive_cards)
         self.toggle_scope.setChecked(
@@ -1227,7 +1226,7 @@ class SettingsDialog(QDialog):
             name = _text(r, 1)
             if not name:
                 continue
-            reg = config._REGISTRY_BY_NAME.get(name)
+            reg = config.REGISTRY_BY_NAME.get(name)
             new_apps.append(AppDescriptor(
                 name=name,
                 process_name=_text(r, 2) or name,
@@ -1259,11 +1258,9 @@ class SettingsDialog(QDialog):
 # Subdued boot animation: each panel fades up a few px, staggered. Mirrors the
 # mockup's `bootIn` keyframe. Set BOOT_ENABLED = False for an instant show
 # (a stand-in for prefers-reduced-motion, which Qt has no native signal for).
-BOOT_ENABLED  = True
-BOOT_DURATION = 320   # ms per panel
-BOOT_OFFSET   = 6     # px upward rise
-BOOT_STAGGER  = 60    # ms between panels
-BOOT_TOTAL    = BOOT_STAGGER * 3 + BOOT_DURATION
+# Timings (BOOT_DURATION/OFFSET/STAGGER) come from theme.py.
+BOOT_ENABLED = True
+BOOT_TOTAL = BOOT_STAGGER * 3 + BOOT_DURATION
 
 
 class MainWindow(QMainWindow):
@@ -1292,6 +1289,7 @@ class MainWindow(QMainWindow):
         engine.on_log.connect(self._on_log)
         engine.on_status.connect(self._on_status)
         engine.on_busy.connect(self._on_busy)
+        engine.on_quit.connect(self._on_quit)
 
         self._build_content()
 
@@ -1400,6 +1398,10 @@ class MainWindow(QMainWindow):
     def _on_busy(self, busy: bool) -> None:
         self._busy = busy
         self._btns.set_busy(busy)
+
+    @Slot()
+    def _on_quit(self) -> None:
+        self.close()
 
     @Slot(str, bool)
     def _on_start_stop(self, name: str, is_running: bool) -> None:
