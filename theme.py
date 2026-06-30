@@ -62,13 +62,22 @@ CARD_BORDER_FAILED    = QColor(204, 61, 61, 76)
 TOGGLE_OFF = QColor("#8A929C")
 TOGGLE_ON  = QColor("#C25E0A")
 
+# ── Header banner (title-bar art) ───────────────────────────────────────────────
+# The banner art carries the framing chevrons; TitleBanner draws a fill behind it
+# (only visible where the art is transparent/missing), a top accent line, and the
+# suite title. Gold never themes, so light mode swaps in its own art + accent.
+BANNER_IMAGE  = "title-bar.png"
+BANNER_FILL   = QColor("#140E03")   # dark strip behind the banner art
+BANNER_ACCENT = C_GOLD              # top line + title text
+
 IS_LIGHT = False
 
 _THEMED_NAMES = (
     "C_DARK", "C_PANEL", "C_BORDER", "C_AMBER", "C_ORANGE", "C_DIM",
     "C_TMID", "C_TDIM", "C_GREEN", "C_RED", "C_INACT", "C_NAME", "C_CMDR",
     "C_SUCCESS", "C_LOGDIM", "C_PANEL_T", "CARD_BG", "CARD_BORDER",
-    "CARD_BORDER_OFF", "BG_IMAGE",
+    "CARD_BORDER_OFF", "BG_IMAGE", "BANNER_IMAGE", "BANNER_FILL",
+    "BANNER_ACCENT",
 )
 _DARK_PALETTE = {name: globals()[name] for name in _THEMED_NAMES}
 
@@ -94,6 +103,9 @@ _LIGHT_PALETTE = {
     "CARD_BORDER": QColor("#B4BCC6"),
     "CARD_BORDER_OFF": QColor("#C6CCD4"),
     "BG_IMAGE": "window-bg-light.png",
+    "BANNER_IMAGE": "title-bar-light.png",
+    "BANNER_FILL":  QColor("#C8CDD4"),   # silver strip matching the light art
+    "BANNER_ACCENT": QColor("#C25E0A"),  # orange accent (no gold on light)
 }
 
 

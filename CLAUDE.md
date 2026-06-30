@@ -1,7 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repo. For the longer-form design
-narrative and history, see `CLAUDE_BRIEFING.md`.
+Guidance for Claude Code when working in this repo.
 
 ## What this is
 EDLS — Elite: Dangerous Launch Suite. A Windows (10/11) desktop launcher that

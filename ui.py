@@ -17,8 +17,8 @@ QSS gaps and how we close them:
   text-shadow         → not available; compensated by bright base color
   ::before/::after    → extra QLabel / QFrame children placed in layouts
 
-Fonts: Orbitron (display) and Rajdhani (body) are loaded from assets/ if present,
-falling back to system monospace so the app is always runnable.
+Fonts: Euro Caps (display/body) and Share Tech Mono (terminal) are loaded from
+assets/ if present, falling back to system fonts so the app is always runnable.
 
 Contract with main.py:
     run(engine, settings) -> int
@@ -37,19 +37,19 @@ from typing import Optional
 
 from PySide6.QtCore import (
     QEasingCurve, QParallelAnimationGroup, QPoint, Property,
-    QPropertyAnimation, QRect, QSize, Qt, QTimer, Signal, Slot,
+    QPropertyAnimation, QRect, QSize, Qt, QTimer, QUrl, Signal, Slot,
 )
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontDatabase, QIcon,
-    QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon,
+    QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QIcon,
+    QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QGraphicsOpacityEffect,
+    QApplication, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
     QHBoxLayout, QLabel, QMainWindow, QSizePolicy,
     QSpacerItem, QSplitter, QStyle, QStyleOptionButton, QStylePainter,
     QTextEdit, QVBoxLayout, QWidget, QPushButton,
     QDialog, QCheckBox, QLineEdit, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QDialogButtonBox,
+    QHeaderView, QAbstractItemView, QDialogButtonBox, QMessageBox,
 )
 
 import config
@@ -60,7 +60,8 @@ from theme import (
     C_GOLD, C_DARK, C_PANEL, C_BORDER, C_AMBER, C_ORANGE, C_DIM,
     C_TMID, C_TDIM, C_GREEN, C_RED, C_INACT, C_NAME, C_CMDR,
     C_SUCCESS, C_LOGDIM, C_PANEL_T, CARD_BG, CARD_BORDER, CARD_BORDER_OFF,
-    BG_IMAGE, IS_LIGHT, CHAMFER_CARD, CHAMFER_PANEL, PULSE_MS,
+    BG_IMAGE, BANNER_IMAGE, BANNER_FILL, BANNER_ACCENT,
+    IS_LIGHT, CHAMFER_CARD, CHAMFER_PANEL, PULSE_MS,
     BOOT_DURATION, BOOT_OFFSET, BOOT_STAGGER,
     CARD_BORDER_ONLINE, CARD_BORDER_LAUNCHING, CARD_BORDER_FAILED,
     TOGGLE_OFF, TOGGLE_ON,
@@ -196,7 +197,9 @@ class PulsingDot(QWidget):
         super().__init__(parent)
         self._color = color
         self._opacity = 1.0
-        self.setFixedSize(10, 10)
+        # Canvas is larger than the 7px core so the emissive halo (drawn for live
+        # states) has room to bleed — the HUD's "backlit display" look.
+        self.setFixedSize(16, 16)
         self._anim: Optional[QPropertyAnimation] = None
 
     def _get_opacity(self) -> float:
@@ -229,11 +232,28 @@ class PulsingDot(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w = self.width()
+        cx = cy = w / 2.0
+        core = 7  # solid dot diameter (matches the old 7px core)
+
+        # Emissive halo: a soft radial bloom in the dot colour, only for live
+        # states (those that pulse). Modulated by the pulse opacity so the glow
+        # breathes with the dot. Offline/failed dots stay flat.
+        if self._anim is not None:
+            grad = QRadialGradient(cx, cy, w / 2.0)
+            c0 = QColor(self._color); c0.setAlphaF(0.65 * self._opacity)
+            c1 = QColor(self._color); c1.setAlphaF(0.0)
+            grad.setColorAt(0.0, c0)
+            grad.setColorAt(1.0, c1)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(grad))
+            p.drawEllipse(0, 0, w, w)
+
         color = QColor(self._color)
         color.setAlphaF(self._opacity)
         p.setBrush(QBrush(color))
         p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(2, 2, 7, 7)
+        p.drawEllipse(int(cx - core / 2), int(cy - core / 2), core, core)
         p.end()
 
 
@@ -309,8 +329,18 @@ class StatusCard(ChamferedFrame):
         self.state_lbl.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
+        # The featured (Elite) card's big value gets a real emissive glow — a
+        # zero-offset coloured blur behind the text — when the state is live,
+        # mirroring the design's `text-shadow: var(--glow-text)`.
+        self._value_glow: Optional[QGraphicsDropShadowEffect] = None
+
         if wide:
             self.state_lbl.setFont(font_mono(16))
+            self._value_glow = QGraphicsDropShadowEffect(self.state_lbl)
+            self._value_glow.setOffset(0, 0)
+            self._value_glow.setBlurRadius(18)
+            self._value_glow.setEnabled(False)
+            self.state_lbl.setGraphicsEffect(self._value_glow)
             vbox.addLayout(hdr)
             vbox.addWidget(self.state_lbl)
             vbox.addStretch(1)
@@ -341,6 +371,17 @@ class StatusCard(ChamferedFrame):
         self.dot.set_color(dot_col, pulse=pulse)
         self.state_lbl.setText(state.label)
         self.state_lbl.setStyleSheet(f"color: {label_col.name()};")
+
+        # Light the featured value's halo for live states; tint it to the state
+        # colour so a running value glows green, launching glows amber, etc.
+        if self._value_glow is not None:
+            if pulse:
+                glow = QColor(label_col)
+                glow.setAlpha(170)
+                self._value_glow.setColor(glow)
+                self._value_glow.setEnabled(True)
+            else:
+                self._value_glow.setEnabled(False)
 
         if self.ctrl_btn:
             is_running = state.is_running
@@ -532,6 +573,31 @@ def _glyph_icon(char: str, color: QColor, px: int = BTN_ICON) -> QIcon:
     return QIcon(pm)
 
 
+# Filled-badge text colour: always the canonical near-black so dark text stays
+# legible on any accent fill, in either theme (gold/orange never invert well to
+# the themed C_DARK). Outline badges use the accent itself.
+_BADGE_FILL_FG = "#090905"
+
+
+def make_badge(text: str, color: QColor, *, filled: bool = False) -> QLabel:
+    """The design-system Badge: a small bordered, tracked-caps HUD tag (the CMDR
+    identity tag is the canonical use). Outline by default; `filled` inverts to
+    dark text on the accent `color`. Tracking/padding mirror --tracking-wider
+    (0.14em) and the 2px/8px badge box."""
+    lbl = QLabel(text.upper())
+    f = font_display(7, QFont.Weight.DemiBold)
+    f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 114)  # --tracking-wider
+    lbl.setFont(f)
+    fg = _BADGE_FILL_FG if filled else color.name()
+    bg = color.name() if filled else "transparent"
+    lbl.setStyleSheet(
+        f"color:{fg}; background:{bg}; border:1px solid {color.name()};"
+        " padding:2px 8px;")
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
+    return lbl
+
+
 # ── Header banner ─────────────────────────────────────────────────────────────
 class TitleBanner(QWidget):
     """Paints title-bar.png (the wide chamfered frame with the framing chevrons)
@@ -546,7 +612,7 @@ class TitleBanner(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._banner = QPixmap(os.path.join(ASSETS_DIR, "title-bar.png"))
+        self._banner = QPixmap(os.path.join(ASSETS_DIR, BANNER_IMAGE))
         self._outpost = QPixmap(os.path.join(ASSETS_DIR, "outpost.png"))
         self._scaled: Optional[QPixmap] = None
         self._scaled_for = -1
@@ -564,8 +630,8 @@ class TitleBanner(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = self.rect()
-        p.fillRect(r, QColor("#140E03"))
-        p.fillRect(r.left(), r.top(), r.width(), 2, C_GOLD)
+        p.fillRect(r, BANNER_FILL)
+        p.fillRect(r.left(), r.top(), r.width(), 2, BANNER_ACCENT)
         if not self._outpost.isNull():
             icon = self._outpost.scaledToHeight(int(r.height() * 0.60),
                        Qt.TransformationMode.SmoothTransformation)
@@ -574,7 +640,7 @@ class TitleBanner(QWidget):
         f.setPixelSize(max(20, int(r.height() * 0.46)))
         f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 122)
         p.setFont(f)
-        p.setPen(C_GOLD)
+        p.setPen(BANNER_ACCENT)
         p.drawText(r, Qt.AlignmentFlag.AlignCenter,
                    "ELITE : DANGEROUS  ·  LAUNCH SUITE")
         p.end()
@@ -602,11 +668,7 @@ class HeaderPanel(QWidget):
         cmdr_row.setSpacing(10)
         cmdr_row.addStretch()
 
-        badge = QLabel("CMDR")
-        badge.setFont(font_display(7, QFont.Weight.DemiBold))
-        badge.setStyleSheet(
-            f"color: {C_AMBER.name()}; border: 1px solid {C_AMBER.name()};"
-            " padding: 2px 7px;")
+        badge = make_badge("CMDR", C_AMBER)
         cmdr_row.addWidget(badge)
 
         self.cmdr_lbl = QLabel(cmdr_name.upper())
@@ -755,13 +817,22 @@ class ButtonBar(QWidget):
         l1 = QLabel("CMDR Coyote Bongwater (and Claude)")
         l1.setFont(font_mono(9))
         l1.setStyleSheet(f"color: {C_TDIM.name()};")
-        l2 = QLabel(f"{version}  ·  <a href='{ISSUES_URL}' "
-                    f"style='color:{C_TMID.name()};'>report issue</a>")
-        l2.setFont(font_mono(9))
-        l2.setStyleSheet(f"color: {C_TDIM.name()};")
-        l2.setOpenExternalLinks(True)
         cred_vbox.addWidget(l1)
-        cred_vbox.addWidget(l2)
+
+        # Version chip (gold filled badge) + report-issue link. C_SUCCESS is the
+        # *themed* gold — gold on dark, orange in day mode — matching the design's
+        # "gold reads as orange on light surfaces" rule for the accent.
+        ver_row = QHBoxLayout()
+        ver_row.setSpacing(8)
+        ver_row.addWidget(make_badge(version, C_SUCCESS, filled=True))
+        issue = QLabel(f"<a href='{ISSUES_URL}' "
+                       f"style='color:{C_TMID.name()};'>report issue</a>")
+        issue.setFont(font_mono(9))
+        issue.setStyleSheet(f"color: {C_TDIM.name()};")
+        issue.setOpenExternalLinks(True)
+        ver_row.addWidget(issue)
+        ver_row.addStretch()
+        cred_vbox.addLayout(ver_row)
         hbox.addLayout(cred_vbox)
         hbox.addStretch()
 
@@ -932,24 +1003,33 @@ class SettingsDialog(QDialog):
         if settings.theme is Theme.LIGHT:
             _bg, _fg, _field, _border = "#E6E9ED", "#252C36", "#FFFFFF", "#B4BCC6"
             _amber, _gold, _field_fg = "#C25E0A", "#C25E0A", "#252C36"
-            _head_bg, _head_fg, _grid, _btn_bg = "#DCE0E5", "#5A6573", "#D0D5DB", "#DCE0E5"
+            _head_fg, _btn_bg = "#5A6573", "#DCE0E5"
+            _alt, _sel = "#EFF1F4", "#F0E3CC"
         else:
             _bg, _fg, _field, _border = "#0C0C0F", "#C8760A", "#0A0A0D", "#252530"
             _amber, _gold, _field_fg = "#C8760A", "#FFB700", "#FFB700"
-            _head_bg, _head_fg, _grid, _btn_bg = "#111114", "#666670", "#1A1A20", "#111114"
+            _head_fg, _btn_bg = "#666670", "#111114"
+            _alt, _sel = "#101014", "#1C1408"
+        # Dim brush for the secondary (process/path) cells, so the app NAME reads
+        # as primary and the rest recedes — mirrors the design's name/proc split.
+        self._row_dim = QColor(_head_fg)
         self.setStyleSheet(f"""
             QDialog   {{ background: {_bg}; color: {_fg}; }}
             QLabel    {{ color: {_fg}; }}
             QLineEdit {{ background: {_field}; color: {_field_fg};
                          border: 1px solid {_border}; padding: 4px 6px; }}
             QCheckBox {{ color: {_fg}; spacing: 6px; }}
-            QCheckBox::indicator {{ width:13px; height:13px; border:1px solid {_border};
+            QCheckBox::indicator {{ width:14px; height:14px; border:1px solid {_border};
                                     background:{_field}; }}
-            QCheckBox::indicator:checked {{ background: {_amber}; }}
+            QCheckBox::indicator:hover {{ border-color:{_amber}; }}
+            QCheckBox::indicator:checked {{ background:{_amber}; border-color:{_amber}; }}
             QTableWidget {{ background:{_field}; color:{_fg};
-                            gridline-color:{_grid}; border:1px solid {_border}; }}
-            QHeaderView::section {{ background:{_head_bg}; color:{_head_fg};
-                                    border:none; padding:4px; font-size:9px; }}
+                            alternate-background-color:{_alt};
+                            gridline-color:transparent; border:1px solid {_border};
+                            outline:none; }}
+            QTableWidget::item {{ padding:6px 8px; border:none; }}
+            QTableWidget::item:selected {{ background:{_sel}; color:{_gold}; }}
+            QTableCornerButton::section {{ background:{_field}; border:none; }}
             QPushButton {{ background:{_btn_bg}; color:{_fg};
                            border:1px solid {_border}; padding:4px 12px; }}
             QPushButton:hover {{ border-color:{_amber}; color:{_gold}; }}
@@ -1006,28 +1086,33 @@ class SettingsDialog(QDialog):
             "Light theme (day mode for washed-out monitors)",
             settings.theme is Theme.LIGHT)
 
-        # App table
-        self.table = QTableWidget(len(settings.apps), 4)
+        # Companion-app list. Styled as a flat HUD row-list rather than a grid:
+        # no column headers, no gridlines, zebra rows, hairline container.
+        apps_lbl = QLabel("C O M P A N I O N   A P P S")
+        apps_lbl.setFont(font_display(8))
+        apps_lbl.setStyleSheet(f"color: {_head_fg}; letter-spacing:3px;")
+        vbox.addWidget(apps_lbl)
+
+        self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["ON", "NAME", "PROCESS", "PATH"])
-        self.table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch)
+        hh = self.table.horizontalHeader()
+        hh.setVisible(False)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.setShowGrid(False)
+        self.table.setFrameShape(QFrame.Shape.NoFrame)
+        self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked)
         self.table.verticalHeader().setVisible(False)
-        for r, app in enumerate(settings.apps):
-            chk = QCheckBox()
-            chk.setChecked(app.enabled)
-            chk_cell = QWidget()
-            chk_layout = QHBoxLayout(chk_cell)
-            chk_layout.addWidget(chk)
-            chk_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            chk_layout.setContentsMargins(0, 0, 0, 0)
-            self.table.setCellWidget(r, 0, chk_cell)
-            self.table.setItem(r, 1, QTableWidgetItem(app.name))
-            self.table.setItem(r, 2, QTableWidgetItem(app.process_name))
-            self.table.setItem(r, 3, QTableWidgetItem(app.path or ""))
+        self.table.verticalHeader().setDefaultSectionSize(30)
+        self._populate_table(settings.apps)
         vbox.addWidget(self.table, 1)
 
         # add / remove buttons
@@ -1041,33 +1126,92 @@ class SettingsDialog(QDialog):
         tbl_btns.addStretch()
         vbox.addLayout(tbl_btns)
 
-        # OK / Cancel
+        # Bottom bar: utility buttons (reset + open log folder) on the left,
+        # Save / Cancel on the right. Reset/folder don't close the dialog.
+        reset_btn = QPushButton("RESET TO DEFAULT")
+        folder_btn = QPushButton("OPEN LOG FOLDER")
+        reset_btn.clicked.connect(self._reset_defaults)
+        folder_btn.clicked.connect(self._open_data_dir)
+
         btn_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save |
             QDialogButtonBox.StandardButton.Cancel)
         btn_box.accepted.connect(self._save)
         btn_box.rejected.connect(self.reject)
-        vbox.addWidget(btn_box)
 
-    def _add_row(self) -> None:
-        r = self.table.rowCount()
-        self.table.insertRow(r)
+        bottom = QHBoxLayout()
+        bottom.addWidget(reset_btn)
+        bottom.addWidget(folder_btn)
+        bottom.addStretch()
+        bottom.addWidget(btn_box)
+        vbox.addLayout(bottom)
+
+    def _set_row(self, r: int, name: str, process: str,
+                 path: str, enabled: bool) -> None:
+        """Fill an (already inserted) table row: a centred ON checkbox plus the
+        name/process/path cells. Shared by initial fill, + ADD, and reset."""
         chk = QCheckBox()
-        chk.setChecked(True)
+        chk.setChecked(enabled)
         cell = QWidget()
         cl = QHBoxLayout(cell)
         cl.addWidget(chk)
         cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cl.setContentsMargins(0, 0, 0, 0)
         self.table.setCellWidget(r, 0, cell)
-        self.table.setItem(r, 1, QTableWidgetItem("NewApp"))
-        self.table.setItem(r, 2, QTableWidgetItem("NewApp"))
-        self.table.setItem(r, 3, QTableWidgetItem(""))
+        self.table.setItem(r, 1, QTableWidgetItem(name))
+        proc_item = QTableWidgetItem(process)
+        path_item = QTableWidgetItem(path)
+        proc_item.setForeground(self._row_dim)
+        path_item.setForeground(self._row_dim)
+        self.table.setItem(r, 2, proc_item)
+        self.table.setItem(r, 3, path_item)
+
+    def _populate_table(self, apps: list[AppDescriptor]) -> None:
+        """Replace all table rows with the given app list."""
+        self.table.setRowCount(0)
+        for app in apps:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            self._set_row(r, app.name, app.process_name, app.path or "",
+                          app.enabled)
+
+    def _add_row(self) -> None:
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        self._set_row(r, "NewApp", "NewApp", "", True)
 
     def _remove_row(self) -> None:
         rows = self.table.selectedIndexes()
         if rows:
             self.table.removeRow(rows[0].row())
+
+    def _reset_defaults(self) -> None:
+        """Restore every field to factory defaults (CMDR name, toggles, and the
+        full default app list). Nothing is written until the user hits Save, so
+        this is reversible with Cancel."""
+        if QMessageBox.question(
+                self, "Reset to default",
+                "Reset all settings, apps, and config to their defaults?\n\n"
+                "Nothing is saved until you press Save.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        defaults = config._default_settings()
+        self.cmdr_edit.setText(defaults.cmdr_name)
+        self.toggle_inactive.setChecked(defaults.show_inactive_cards)
+        self.toggle_scope.setChecked(
+            defaults.shutdown_scope is ShutdownScope.ALL_ENABLED)
+        self.toggle_light.setChecked(defaults.theme is Theme.LIGHT)
+        self._populate_table(defaults.apps)
+        # Clear any suppressed defaults so the reset list isn't re-filtered on save.
+        self._settings = replace(self._settings, removed_defaults=[])
+
+    def _open_data_dir(self) -> None:
+        """Open the EDLS log/data directory (%LOCALAPPDATA%\\EDLS, where
+        launcher.log and settings.json live) in the file manager. Creates it
+        first so the button never fails on a fresh install."""
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(config.DATA_DIR))
 
     def _save(self) -> None:
         def _text(row: int, col: int) -> str:
