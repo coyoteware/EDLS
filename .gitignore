@@ -399,3 +399,6 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# EDLS design system reference — kept locally, not tracked for now
+/.claude/EDLS Design System/
