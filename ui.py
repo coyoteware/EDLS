@@ -55,80 +55,17 @@ from PySide6.QtWidgets import (
 import config
 from config import AppDescriptor, AppState, Settings, ShutdownScope, Theme
 
-# ── Palette ──────────────────────────────────────────────────────────────────
-# Two complete palettes (dark, and a light "day mode"). Every colour below is
-# themed by apply_theme() EXCEPT C_GOLD, which always stays gold because it's
-# only ever drawn on dark surfaces (the title banner, the dark action buttons,
-# the dark settings dialog). Widgets bake colours into stylesheets at build
-# time, so a live theme switch must rebuild the window content afterwards
-# (MainWindow._on_settings_saved does).
-C_GOLD   = QColor("#FFB700")    # fixed accent — dark surfaces only
-
-# Live globals = the dark-theme values; apply_theme() rebinds them.
-C_DARK   = QColor("#090905")
-C_PANEL  = QColor("#0D0B07")
-C_BORDER = QColor("#1C1208")
-C_AMBER  = QColor("#C8760A")    # primary text / amber accent
-C_ORANGE = QColor("#FF8C1A")    # active accent
-C_DIM    = QColor("#4A3A20")
-C_TMID   = QColor("#A07A3A")    # secondary text
-C_TDIM   = QColor("#6A5030")    # tertiary text
-C_GREEN  = QColor("#3DCC6A")
-C_RED    = QColor("#CC3D3D")
-C_INACT  = QColor("#454545")
-C_NAME   = QColor("#C8860A")    # app-name labels
-C_CMDR   = QColor("#FF8C1A")    # CMDR identity name in the header
-C_SUCCESS = QColor("#FFB700")   # success log lines
-C_LOGDIM  = QColor("#5A4A2A")   # dim log lines
-# Semi-transparent panel fill so the window background shows through (status/log).
-C_PANEL_T = QColor(13, 11, 7, 115)
-# Card surfaces (themed): pulled out of StatusCard so the theme can swap them.
-CARD_BG = QColor(10, 8, 4, 188)
-CARD_BORDER = QColor("#1A1208")
-CARD_BORDER_OFF = QColor("#181818")
-# Window background image filename (themed: dark art vs. light day-mode art).
-BG_IMAGE = "window-bg.png"
-
-# True while the light "day mode" is active. Used by the few widgets whose colours
-# are picked by branch (the card buttons, the settings dialog) rather than a
-# single themed constant.
-IS_LIGHT = False
-
-_THEMED_NAMES = (
-    "C_DARK", "C_PANEL", "C_BORDER", "C_AMBER", "C_ORANGE", "C_DIM",
-    "C_TMID", "C_TDIM", "C_GREEN", "C_RED", "C_INACT", "C_NAME", "C_CMDR",
-    "C_SUCCESS", "C_LOGDIM", "C_PANEL_T", "CARD_BG", "CARD_BORDER",
-    "CARD_BORDER_OFF", "BG_IMAGE",
+import theme as _theme
+from theme import (
+    C_GOLD, C_DARK, C_PANEL, C_BORDER, C_AMBER, C_ORANGE, C_DIM,
+    C_TMID, C_TDIM, C_GREEN, C_RED, C_INACT, C_NAME, C_CMDR,
+    C_SUCCESS, C_LOGDIM, C_PANEL_T, CARD_BG, CARD_BORDER, CARD_BORDER_OFF,
+    BG_IMAGE, IS_LIGHT, CHAMFER_CARD, CHAMFER_PANEL, PULSE_MS,
+    BOOT_DURATION, BOOT_OFFSET, BOOT_STAGGER,
+    CARD_BORDER_ONLINE, CARD_BORDER_LAUNCHING, CARD_BORDER_FAILED,
+    TOGGLE_OFF, TOGGLE_ON,
+    font_display, font_body, font_mono, power_icon,
 )
-# Dark palette references the literals above (single source; no value drift).
-_DARK_PALETTE = {name: globals()[name] for name in _THEMED_NAMES}
-
-# Light "day mode": dark slate text on a cool light-grey HUD. Orange is kept ONLY
-# as an accent (active states, dots); green/red status colours are darkened so
-# they read on light; panels/cards become light translucent surfaces and the
-# background swaps to a cool light asset.
-_LIGHT_PALETTE = {
-    "C_DARK":   QColor("#D7DBE0"),   # window base (cool light grey)
-    "C_PANEL":  QColor("#C8CDD4"),
-    "C_BORDER": QColor("#A6AEB9"),
-    "C_AMBER":  QColor("#252C36"),   # primary text -> dark slate
-    "C_ORANGE": QColor("#C25E0A"),   # accent orange (kept)
-    "C_DIM":    QColor("#AEB6C0"),
-    "C_TMID":   QColor("#586573"),   # secondary text
-    "C_TDIM":   QColor("#7E8893"),   # tertiary text
-    "C_GREEN":  QColor("#1E9E4C"),   # online (darker for light bg)
-    "C_RED":    QColor("#C0322B"),
-    "C_INACT":  QColor("#9AA2AC"),   # offline grey
-    "C_NAME":   QColor("#2A313B"),   # app names -> dark
-    "C_CMDR":   QColor("#243042"),   # CMDR name -> dark slate (readable on light)
-    "C_SUCCESS": QColor("#B5560C"),  # success log -> deep orange
-    "C_LOGDIM": QColor("#98A0A8"),
-    "C_PANEL_T": QColor(255, 255, 255, 96),    # light translucent panels
-    "CARD_BG":  QColor(255, 255, 255, 150),    # light cards
-    "CARD_BORDER": QColor("#B4BCC6"),
-    "CARD_BORDER_OFF": QColor("#C6CCD4"),
-    "BG_IMAGE": "window-bg-light.png",
-}
 
 # State → (label_colour, dot_colour) and log-level → colour. Rebuilt on each
 # theme switch since they reference themed colours.
@@ -162,9 +99,11 @@ def _build_color_maps() -> None:
 def apply_theme(theme: Theme) -> None:
     """Rebind the palette globals + colour maps to the chosen Theme. Call before
     building (or rebuilding) the window content."""
+    _theme.apply_theme(theme)
+    is_light = theme is Theme.LIGHT
     globals().update(
-        _LIGHT_PALETTE if theme is Theme.LIGHT else _DARK_PALETTE)
-    globals()["IS_LIGHT"] = theme is Theme.LIGHT
+        _theme._LIGHT_PALETTE if is_light else _theme._DARK_PALETTE)
+    globals()["IS_LIGHT"] = is_light
     _build_color_maps()
 
 
@@ -183,33 +122,11 @@ ISSUES_URL = "https://github.com/coyoteware/EDLS-py/issues"
 
 
 # ── Font helpers ──────────────────────────────────────────────────────────────
-# Euro Caps (the ED-style display face) is the primary UI font, loaded from
-# assets/. It's an all-caps face, which suits the HUD look since the labels are
-# uppercased anyway. The activity log keeps a monospace face for the terminal feel.
 def _load_fonts() -> None:
     for name in ("EUROCAPS.TTF", "ShareTechMono-Regular.ttf"):
         path = os.path.join(ASSETS_DIR, name)
         if os.path.exists(path):
             QFontDatabase.addApplicationFont(path)
-
-
-def font_display(size: int, weight: QFont.Weight = QFont.Weight.Bold) -> QFont:
-    f = QFont("Euro Caps", size, int(weight))
-    f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 108)
-    return f
-
-
-def font_body(size: int, weight: QFont.Weight = QFont.Weight.Medium) -> QFont:
-    f = QFont("Euro Caps", size, int(weight))
-    f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 104)
-    return f
-
-
-def font_mono(size: int) -> QFont:
-    f = QFont("Share Tech Mono", size)
-    if not f.exactMatch():
-        f = QFont("Consolas", size)
-    return f
 
 
 
@@ -646,37 +563,19 @@ class TitleBanner(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        rect = self.rect()
-
-        if not self._banner.isNull():
-            if self._scaled_for != rect.width():
-                self._scaled = self._banner.scaled(
-                    rect.width(), rect.height(),
-                    Qt.AspectRatioMode.IgnoreAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation)
-                self._scaled_for = rect.width()
-            p.drawPixmap(0, 0, self._scaled)
-        else:
-            p.fillRect(rect, QColor("#0E0A04"))
-            p.setPen(QPen(C_AMBER, 1))
-            p.drawRect(rect.adjusted(0, 0, -1, -1))
-
-        # Outpost station icon at the left, vertically centred inside the frame.
+        r = self.rect()
+        p.fillRect(r, QColor("#140E03"))
+        p.fillRect(r.left(), r.top(), r.width(), 2, C_GOLD)
         if not self._outpost.isNull():
-            icon = self._outpost.scaledToHeight(
-                int(rect.height() * 0.60),
-                Qt.TransformationMode.SmoothTransformation)
-            p.drawPixmap(22, (rect.height() - icon.height()) // 2, icon)
-
-        # Suite title, centred between the framing chevrons. Size scales with the
-        # banner height so it fills the bar rather than floating thin in the middle.
+            icon = self._outpost.scaledToHeight(int(r.height() * 0.60),
+                       Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(22, (r.height() - icon.height()) // 2, icon)
         f = font_display(13, QFont.Weight.ExtraBold)
-        f.setPixelSize(max(20, int(rect.height() * 0.46)))
+        f.setPixelSize(max(20, int(r.height() * 0.46)))
         f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 122)
         p.setFont(f)
         p.setPen(C_GOLD)
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter,
                    "ELITE : DANGEROUS  ·  LAUNCH SUITE")
         p.end()
 
@@ -877,7 +776,7 @@ class ButtonBar(QWidget):
         self.settings_btn.setFont(font_display(9))
         self.launch_btn.setFont(font_display(11))
 
-        self.shutdown_btn.setIcon(_glyph_icon("⏻", QColor("#B85555")))
+        self.shutdown_btn.setIcon(power_icon(QColor("#B85555")))
         self.autostart_btn.setIcon(_glyph_icon("⟳", C_ORANGE))
         self.settings_btn.setIcon(_glyph_icon("⚙", QColor("#9A9AA0")))
         self.launch_btn.setIcon(_glyph_icon("▶", C_GOLD))
