@@ -17,8 +17,8 @@ QSS gaps and how we close them:
   text-shadow         → not available; compensated by bright base color
   ::before/::after    → extra QLabel / QFrame children placed in layouts
 
-Fonts: Orbitron (display) and Rajdhani (body) are loaded from assets/ if present,
-falling back to system monospace so the app is always runnable.
+Fonts: Euro Caps (display/body) and Share Tech Mono (terminal) are loaded from
+assets/ if present, falling back to system fonts so the app is always runnable.
 
 Contract with main.py:
     run(engine, settings) -> int
@@ -26,6 +26,7 @@ Contract with main.py:
     engine.on_log.connect(...)       (message: str, level: str)
     engine.on_status.connect(...)    (key: str, state: AppState, pid: int | None)
     engine.on_busy.connect(...)      (busy: bool)
+    engine.on_quit.connect(...)      ()  -- a full session ended; close the app
 """
 from __future__ import annotations
 
@@ -37,98 +38,40 @@ from typing import Optional
 
 from PySide6.QtCore import (
     QEasingCurve, QParallelAnimationGroup, QPoint, Property,
-    QPropertyAnimation, QRect, QSize, Qt, QTimer, Signal, Slot,
+    QPropertyAnimation, QRect, QSize, Qt, QTimer, QUrl, Signal, Slot,
 )
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontDatabase, QIcon,
-    QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon,
+    QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QIcon,
+    QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QGraphicsOpacityEffect,
+    QApplication, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
     QHBoxLayout, QLabel, QMainWindow, QSizePolicy,
     QSpacerItem, QSplitter, QStyle, QStyleOptionButton, QStylePainter,
     QTextEdit, QVBoxLayout, QWidget, QPushButton,
     QDialog, QCheckBox, QLineEdit, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QDialogButtonBox,
+    QHeaderView, QAbstractItemView, QDialogButtonBox, QMessageBox,
+    QFileDialog,
 )
 
 import config
-from config import AppDescriptor, AppState, Settings, ShutdownScope, Theme
-
-# ── Palette ──────────────────────────────────────────────────────────────────
-# Two complete palettes (dark, and a light "day mode"). Every colour below is
-# themed by apply_theme() EXCEPT C_GOLD, which always stays gold because it's
-# only ever drawn on dark surfaces (the title banner, the dark action buttons,
-# the dark settings dialog). Widgets bake colours into stylesheets at build
-# time, so a live theme switch must rebuild the window content afterwards
-# (MainWindow._on_settings_saved does).
-C_GOLD   = QColor("#FFB700")    # fixed accent — dark surfaces only
-
-# Live globals = the dark-theme values; apply_theme() rebinds them.
-C_DARK   = QColor("#090905")
-C_PANEL  = QColor("#0D0B07")
-C_BORDER = QColor("#1C1208")
-C_AMBER  = QColor("#C8760A")    # primary text / amber accent
-C_ORANGE = QColor("#FF8C1A")    # active accent
-C_DIM    = QColor("#4A3A20")
-C_TMID   = QColor("#A07A3A")    # secondary text
-C_TDIM   = QColor("#6A5030")    # tertiary text
-C_GREEN  = QColor("#3DCC6A")
-C_RED    = QColor("#CC3D3D")
-C_INACT  = QColor("#454545")
-C_NAME   = QColor("#C8860A")    # app-name labels
-C_CMDR   = QColor("#FF8C1A")    # CMDR identity name in the header
-C_SUCCESS = QColor("#FFB700")   # success log lines
-C_LOGDIM  = QColor("#5A4A2A")   # dim log lines
-# Semi-transparent panel fill so the window background shows through (status/log).
-C_PANEL_T = QColor(13, 11, 7, 115)
-# Card surfaces (themed): pulled out of StatusCard so the theme can swap them.
-CARD_BG = QColor(10, 8, 4, 188)
-CARD_BORDER = QColor("#1A1208")
-CARD_BORDER_OFF = QColor("#181818")
-# Window background image filename (themed: dark art vs. light day-mode art).
-BG_IMAGE = "window-bg.png"
-
-# True while the light "day mode" is active. Used by the few widgets whose colours
-# are picked by branch (the card buttons, the settings dialog) rather than a
-# single themed constant.
-IS_LIGHT = False
-
-_THEMED_NAMES = (
-    "C_DARK", "C_PANEL", "C_BORDER", "C_AMBER", "C_ORANGE", "C_DIM",
-    "C_TMID", "C_TDIM", "C_GREEN", "C_RED", "C_INACT", "C_NAME", "C_CMDR",
-    "C_SUCCESS", "C_LOGDIM", "C_PANEL_T", "CARD_BG", "CARD_BORDER",
-    "CARD_BORDER_OFF", "BG_IMAGE",
+from config import (
+    AppDescriptor, AppState, Settings, ShutdownScope, Theme,
+    KEY_STEAM, KEY_ELITE, STEAM_PROCESS, ELITE_PROCESS,
 )
-# Dark palette references the literals above (single source; no value drift).
-_DARK_PALETTE = {name: globals()[name] for name in _THEMED_NAMES}
 
-# Light "day mode": dark slate text on a cool light-grey HUD. Orange is kept ONLY
-# as an accent (active states, dots); green/red status colours are darkened so
-# they read on light; panels/cards become light translucent surfaces and the
-# background swaps to a cool light asset.
-_LIGHT_PALETTE = {
-    "C_DARK":   QColor("#D7DBE0"),   # window base (cool light grey)
-    "C_PANEL":  QColor("#C8CDD4"),
-    "C_BORDER": QColor("#A6AEB9"),
-    "C_AMBER":  QColor("#252C36"),   # primary text -> dark slate
-    "C_ORANGE": QColor("#C25E0A"),   # accent orange (kept)
-    "C_DIM":    QColor("#AEB6C0"),
-    "C_TMID":   QColor("#586573"),   # secondary text
-    "C_TDIM":   QColor("#7E8893"),   # tertiary text
-    "C_GREEN":  QColor("#1E9E4C"),   # online (darker for light bg)
-    "C_RED":    QColor("#C0322B"),
-    "C_INACT":  QColor("#9AA2AC"),   # offline grey
-    "C_NAME":   QColor("#2A313B"),   # app names -> dark
-    "C_CMDR":   QColor("#243042"),   # CMDR name -> dark slate (readable on light)
-    "C_SUCCESS": QColor("#B5560C"),  # success log -> deep orange
-    "C_LOGDIM": QColor("#98A0A8"),
-    "C_PANEL_T": QColor(255, 255, 255, 96),    # light translucent panels
-    "CARD_BG":  QColor(255, 255, 255, 150),    # light cards
-    "CARD_BORDER": QColor("#B4BCC6"),
-    "CARD_BORDER_OFF": QColor("#C6CCD4"),
-    "BG_IMAGE": "window-bg-light.png",
-}
+import theme as _theme
+from theme import (
+    C_GOLD, C_DARK, C_PANEL, C_BORDER, C_AMBER, C_ORANGE, C_DIM,
+    C_TMID, C_TDIM, C_GREEN, C_RED, C_INACT, C_NAME, C_CMDR,
+    C_SUCCESS, C_LOGDIM, C_PANEL_T, CARD_BG, CARD_BORDER, CARD_BORDER_OFF,
+    BG_IMAGE, BANNER_IMAGE, BANNER_FILL, BANNER_ACCENT,
+    IS_LIGHT, CHAMFER_CARD, CHAMFER_PANEL, PULSE_MS,
+    BOOT_DURATION, BOOT_OFFSET, BOOT_STAGGER,
+    CARD_BORDER_ONLINE, CARD_BORDER_LAUNCHING, CARD_BORDER_FAILED,
+    TOGGLE_OFF, TOGGLE_ON, TRACK_BANNER,
+    font_display, font_body, font_mono, power_icon,
+)
 
 # State → (label_colour, dot_colour) and log-level → colour. Rebuilt on each
 # theme switch since they reference themed colours.
@@ -162,9 +105,11 @@ def _build_color_maps() -> None:
 def apply_theme(theme: Theme) -> None:
     """Rebind the palette globals + colour maps to the chosen Theme. Call before
     building (or rebuilding) the window content."""
+    _theme.apply_theme(theme)
+    is_light = theme is Theme.LIGHT
     globals().update(
-        _LIGHT_PALETTE if theme is Theme.LIGHT else _DARK_PALETTE)
-    globals()["IS_LIGHT"] = theme is Theme.LIGHT
+        _theme._LIGHT_PALETTE if is_light else _theme._DARK_PALETTE)
+    globals()["IS_LIGHT"] = is_light
     _build_color_maps()
 
 
@@ -183,33 +128,11 @@ ISSUES_URL = "https://github.com/coyoteware/EDLS-py/issues"
 
 
 # ── Font helpers ──────────────────────────────────────────────────────────────
-# Euro Caps (the ED-style display face) is the primary UI font, loaded from
-# assets/. It's an all-caps face, which suits the HUD look since the labels are
-# uppercased anyway. The activity log keeps a monospace face for the terminal feel.
 def _load_fonts() -> None:
     for name in ("EUROCAPS.TTF", "ShareTechMono-Regular.ttf"):
         path = os.path.join(ASSETS_DIR, name)
         if os.path.exists(path):
             QFontDatabase.addApplicationFont(path)
-
-
-def font_display(size: int, weight: QFont.Weight = QFont.Weight.Bold) -> QFont:
-    f = QFont("Euro Caps", size, int(weight))
-    f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 108)
-    return f
-
-
-def font_body(size: int, weight: QFont.Weight = QFont.Weight.Medium) -> QFont:
-    f = QFont("Euro Caps", size, int(weight))
-    f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 104)
-    return f
-
-
-def font_mono(size: int) -> QFont:
-    f = QFont("Share Tech Mono", size)
-    if not f.exactMatch():
-        f = QFont("Consolas", size)
-    return f
 
 
 
@@ -223,7 +146,7 @@ class ChamferedFrame(QFrame):
     def __init__(
         self,
         parent: Optional[QWidget] = None,
-        chamfer: int = 14,
+        chamfer: int = CHAMFER_PANEL,
         bg: Optional[QColor] = None,
         border: Optional[QColor] = None,
         glow_color: Optional[QColor] = None,
@@ -279,7 +202,9 @@ class PulsingDot(QWidget):
         super().__init__(parent)
         self._color = color
         self._opacity = 1.0
-        self.setFixedSize(10, 10)
+        # Canvas is larger than the 7px core so the emissive halo (drawn for live
+        # states) has room to bleed — the HUD's "backlit display" look.
+        self.setFixedSize(16, 16)
         self._anim: Optional[QPropertyAnimation] = None
 
     def _get_opacity(self) -> float:
@@ -301,7 +226,7 @@ class PulsingDot(QWidget):
             self._anim = QPropertyAnimation(self, b"dotOpacity", self)
             self._anim.setStartValue(1.0)
             self._anim.setEndValue(0.45)
-            self._anim.setDuration(1800)
+            self._anim.setDuration(PULSE_MS)
             self._anim.setEasingCurve(QEasingCurve.Type.SineCurve)
             self._anim.setLoopCount(-1)
             self._anim.start()
@@ -312,11 +237,28 @@ class PulsingDot(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w = self.width()
+        cx = cy = w / 2.0
+        core = 7  # solid dot diameter (matches the old 7px core)
+
+        # Emissive halo: a soft radial bloom in the dot colour, only for live
+        # states (those that pulse). Modulated by the pulse opacity so the glow
+        # breathes with the dot. Offline/failed dots stay flat.
+        if self._anim is not None:
+            grad = QRadialGradient(cx, cy, w / 2.0)
+            c0 = QColor(self._color); c0.setAlphaF(0.65 * self._opacity)
+            c1 = QColor(self._color); c1.setAlphaF(0.0)
+            grad.setColorAt(0.0, c0)
+            grad.setColorAt(1.0, c1)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(grad))
+            p.drawEllipse(0, 0, w, w)
+
         color = QColor(self._color)
         color.setAlphaF(self._opacity)
         p.setBrush(QBrush(color))
         p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(2, 2, 7, 7)
+        p.drawEllipse(int(cx - core / 2), int(cy - core / 2), core, core)
         p.end()
 
 
@@ -359,7 +301,7 @@ class StatusCard(ChamferedFrame):
     def __init__(self, descriptor: AppDescriptor,
                  wide: bool = False,
                  parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent, chamfer=10,
+        super().__init__(parent, chamfer=CHAMFER_CARD,
                          bg=CARD_BG, border=CARD_BORDER)
         self._name = descriptor.name
         self._wide = wide
@@ -392,8 +334,18 @@ class StatusCard(ChamferedFrame):
         self.state_lbl.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
+        # The featured (Elite) card's big value gets a real emissive glow — a
+        # zero-offset coloured blur behind the text — when the state is live,
+        # mirroring the design's `text-shadow: var(--glow-text)`.
+        self._value_glow: Optional[QGraphicsDropShadowEffect] = None
+
         if wide:
             self.state_lbl.setFont(font_mono(16))
+            self._value_glow = QGraphicsDropShadowEffect(self.state_lbl)
+            self._value_glow.setOffset(0, 0)
+            self._value_glow.setBlurRadius(18)
+            self._value_glow.setEnabled(False)
+            self.state_lbl.setGraphicsEffect(self._value_glow)
             vbox.addLayout(hdr)
             vbox.addWidget(self.state_lbl)
             vbox.addStretch(1)
@@ -425,6 +377,17 @@ class StatusCard(ChamferedFrame):
         self.state_lbl.setText(state.label)
         self.state_lbl.setStyleSheet(f"color: {label_col.name()};")
 
+        # Light the featured value's halo for live states; tint it to the state
+        # colour so a running value glows green, launching glows amber, etc.
+        if self._value_glow is not None:
+            if pulse:
+                glow = QColor(label_col)
+                glow.setAlpha(170)
+                self._value_glow.setColor(glow)
+                self._value_glow.setEnabled(True)
+            else:
+                self._value_glow.setEnabled(False)
+
         if self.ctrl_btn:
             is_running = state.is_running
             self.ctrl_btn.setText("STOP" if is_running else "START")
@@ -432,11 +395,11 @@ class StatusCard(ChamferedFrame):
 
         # update border colour to match state
         if state in (AppState.ONLINE, AppState.RUNNING):
-            self._border = QColor(61, 204, 106, 72)
+            self._border = CARD_BORDER_ONLINE
         elif state in (AppState.LAUNCHING, AppState.WAITING):
-            self._border = QColor(200, 118, 10, 76)
+            self._border = CARD_BORDER_LAUNCHING
         elif state in (AppState.FAILED,):
-            self._border = QColor(204, 61, 61, 76)
+            self._border = CARD_BORDER_FAILED
         else:
             self._border = CARD_BORDER_OFF
         self.update()
@@ -512,7 +475,7 @@ class ChamferedButton(QPushButton):
     Hover/press/disabled states are handled entirely in paintEvent; no QSS."""
 
     def __init__(self, text: str = "", parent: Optional[QWidget] = None,
-                 chamfer: int = 10, **colors) -> None:
+                 chamfer: int = CHAMFER_CARD, **colors) -> None:
         super().__init__(text, parent)
         self._ch = chamfer
         self._c: dict = {}
@@ -615,6 +578,31 @@ def _glyph_icon(char: str, color: QColor, px: int = BTN_ICON) -> QIcon:
     return QIcon(pm)
 
 
+# Filled-badge text colour: always the canonical near-black so dark text stays
+# legible on any accent fill, in either theme (gold/orange never invert well to
+# the themed C_DARK). Outline badges use the accent itself.
+_BADGE_FILL_FG = "#090905"
+
+
+def make_badge(text: str, color: QColor, *, filled: bool = False) -> QLabel:
+    """The design-system Badge: a small bordered, tracked-caps HUD tag (the CMDR
+    identity tag is the canonical use). Outline by default; `filled` inverts to
+    dark text on the accent `color`. Tracking/padding mirror --tracking-wider
+    (0.14em) and the 2px/8px badge box."""
+    lbl = QLabel(text.upper())
+    f = font_display(7, QFont.Weight.DemiBold)
+    f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 114)  # --tracking-wider
+    lbl.setFont(f)
+    fg = _BADGE_FILL_FG if filled else color.name()
+    bg = color.name() if filled else "transparent"
+    lbl.setStyleSheet(
+        f"color:{fg}; background:{bg}; border:1px solid {color.name()};"
+        " padding:2px 8px;")
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
+    return lbl
+
+
 # ── Header banner ─────────────────────────────────────────────────────────────
 class TitleBanner(QWidget):
     """Paints title-bar.png (the wide chamfered frame with the framing chevrons)
@@ -629,7 +617,7 @@ class TitleBanner(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._banner = QPixmap(os.path.join(ASSETS_DIR, "title-bar.png"))
+        self._banner = QPixmap(os.path.join(ASSETS_DIR, BANNER_IMAGE))
         self._outpost = QPixmap(os.path.join(ASSETS_DIR, "outpost.png"))
         self._scaled: Optional[QPixmap] = None
         self._scaled_for = -1
@@ -646,37 +634,20 @@ class TitleBanner(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        rect = self.rect()
-
-        if not self._banner.isNull():
-            if self._scaled_for != rect.width():
-                self._scaled = self._banner.scaled(
-                    rect.width(), rect.height(),
-                    Qt.AspectRatioMode.IgnoreAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation)
-                self._scaled_for = rect.width()
-            p.drawPixmap(0, 0, self._scaled)
-        else:
-            p.fillRect(rect, QColor("#0E0A04"))
-            p.setPen(QPen(C_AMBER, 1))
-            p.drawRect(rect.adjusted(0, 0, -1, -1))
-
-        # Outpost station icon at the left, vertically centred inside the frame.
+        r = self.rect()
+        p.fillRect(r, BANNER_FILL)
+        p.fillRect(r.left(), r.top(), r.width(), 2, BANNER_ACCENT)
         if not self._outpost.isNull():
-            icon = self._outpost.scaledToHeight(
-                int(rect.height() * 0.60),
-                Qt.TransformationMode.SmoothTransformation)
-            p.drawPixmap(22, (rect.height() - icon.height()) // 2, icon)
-
-        # Suite title, centred between the framing chevrons. Size scales with the
-        # banner height so it fills the bar rather than floating thin in the middle.
+            icon = self._outpost.scaledToHeight(int(r.height() * 0.60),
+                       Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(22, (r.height() - icon.height()) // 2, icon)
         f = font_display(13, QFont.Weight.ExtraBold)
-        f.setPixelSize(max(20, int(rect.height() * 0.46)))
-        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 122)
+        f.setPixelSize(max(20, int(r.height() * 0.46)))
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, TRACK_BANNER)
+        f.setKerning(False)   # even tracked caps; stop the font's LA pair from fusing
         p.setFont(f)
-        p.setPen(C_GOLD)
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+        p.setPen(BANNER_ACCENT)
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter,
                    "ELITE : DANGEROUS  ·  LAUNCH SUITE")
         p.end()
 
@@ -703,11 +674,7 @@ class HeaderPanel(QWidget):
         cmdr_row.setSpacing(10)
         cmdr_row.addStretch()
 
-        badge = QLabel("CMDR")
-        badge.setFont(font_display(7, QFont.Weight.DemiBold))
-        badge.setStyleSheet(
-            f"color: {C_AMBER.name()}; border: 1px solid {C_AMBER.name()};"
-            " padding: 2px 7px;")
+        badge = make_badge("CMDR", C_AMBER)
         cmdr_row.addWidget(badge)
 
         self.cmdr_lbl = QLabel(cmdr_name.upper())
@@ -723,17 +690,12 @@ class HeaderPanel(QWidget):
 
 
 # ── Status panel ──────────────────────────────────────────────────────────────
-KEY_STEAM     = "Steam"
-KEY_ELITE     = "Elite"
-STEAM_PROCESS = "steam"
-
-
 class StatusPanel(ChamferedFrame):
     start_stop_clicked = Signal(str, bool)
 
     def __init__(self, apps: list[AppDescriptor],
                  parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent, chamfer=14, bg=C_PANEL_T)
+        super().__init__(parent, chamfer=CHAMFER_PANEL, bg=C_PANEL_T)
         self.cards: dict[str, StatusCard] = {}
 
         vbox = QVBoxLayout(self)
@@ -768,7 +730,7 @@ class StatusPanel(ChamferedFrame):
         _add(steam)
 
         # Elite (double-wide)
-        elite_desc = AppDescriptor(KEY_ELITE, "EliteDangerous64")
+        elite_desc = AppDescriptor(KEY_ELITE, ELITE_PROCESS)
         elite = StatusCard(elite_desc, wide=True)
         self.cards[KEY_ELITE] = elite
         _add(elite, span=2)
@@ -802,7 +764,7 @@ class StatusPanel(ChamferedFrame):
 # ── Log panel ─────────────────────────────────────────────────────────────────
 class LogPanel(ChamferedFrame):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent, chamfer=14, bg=C_PANEL_T)
+        super().__init__(parent, chamfer=CHAMFER_PANEL, bg=C_PANEL_T)
         vbox = QVBoxLayout(self)
         vbox.setSpacing(0)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -856,28 +818,37 @@ class ButtonBar(QWidget):
         l1 = QLabel("CMDR Coyote Bongwater (and Claude)")
         l1.setFont(font_mono(9))
         l1.setStyleSheet(f"color: {C_TDIM.name()};")
-        l2 = QLabel(f"{version}  ·  <a href='{ISSUES_URL}' "
-                    f"style='color:{C_TMID.name()};'>report issue</a>")
-        l2.setFont(font_mono(9))
-        l2.setStyleSheet(f"color: {C_TDIM.name()};")
-        l2.setOpenExternalLinks(True)
         cred_vbox.addWidget(l1)
-        cred_vbox.addWidget(l2)
+
+        # Version chip (gold filled badge) + report-issue link. C_SUCCESS is the
+        # *themed* gold — gold on dark, orange in day mode — matching the design's
+        # "gold reads as orange on light surfaces" rule for the accent.
+        ver_row = QHBoxLayout()
+        ver_row.setSpacing(8)
+        ver_row.addWidget(make_badge(version, C_SUCCESS, filled=True))
+        issue = QLabel(f"<a href='{ISSUES_URL}' "
+                       f"style='color:{C_TMID.name()};'>report issue</a>")
+        issue.setFont(font_mono(9))
+        issue.setStyleSheet(f"color: {C_TDIM.name()};")
+        issue.setOpenExternalLinks(True)
+        ver_row.addWidget(issue)
+        ver_row.addStretch()
+        cred_vbox.addLayout(ver_row)
         hbox.addLayout(cred_vbox)
         hbox.addStretch()
 
-        self.shutdown_btn  = ChamferedButton("SHUTDOWN",   chamfer=10, **_C_DANGER)
-        self.autostart_btn = ChamferedButton("AUTO START", chamfer=10,
+        self.shutdown_btn  = ChamferedButton("SHUTDOWN",   chamfer=CHAMFER_CARD, **_C_DANGER)
+        self.autostart_btn = ChamferedButton("AUTO START", chamfer=CHAMFER_CARD,
                                              **(_C_SECONDARY_ON if auto_start else _C_SECONDARY))
-        self.settings_btn  = ChamferedButton("SETTINGS",  chamfer=10, **_C_SECONDARY)
-        self.launch_btn    = ChamferedButton("LAUNCH",    chamfer=10, **_C_LAUNCH)
+        self.settings_btn  = ChamferedButton("SETTINGS",  chamfer=CHAMFER_CARD, **_C_SECONDARY)
+        self.launch_btn    = ChamferedButton("LAUNCH",    chamfer=CHAMFER_CARD, **_C_LAUNCH)
 
         self.shutdown_btn.setFont(font_display(9))
         self.autostart_btn.setFont(font_display(9))
         self.settings_btn.setFont(font_display(9))
         self.launch_btn.setFont(font_display(11))
 
-        self.shutdown_btn.setIcon(_glyph_icon("⏻", QColor("#B85555")))
+        self.shutdown_btn.setIcon(power_icon(QColor("#B85555")))
         self.autostart_btn.setIcon(_glyph_icon("⟳", C_ORANGE))
         self.settings_btn.setIcon(_glyph_icon("⚙", QColor("#9A9AA0")))
         self.launch_btn.setIcon(_glyph_icon("▶", C_GOLD))
@@ -996,7 +967,7 @@ class ToggleSwitch(QWidget):
         r = self.rect().adjusted(1, 1, -1, -1)
         radius = r.height() / 2.0
 
-        off, on = QColor("#8A929C"), QColor("#C25E0A")
+        off, on = TOGGLE_OFF, TOGGLE_ON
         t = self._pos
         track = QColor(int(off.red()   + (on.red()   - off.red())   * t),
                        int(off.green() + (on.green() - off.green()) * t),
@@ -1011,6 +982,90 @@ class ToggleSwitch(QWidget):
         p.setBrush(QColor("#FFFFFF"))
         p.drawEllipse(x, r.top() + margin, d, d)
         p.end()
+
+
+def _derive_process(path: str) -> str:
+    """The process name EDLS watches/kills is the exe's filename stem — that's
+    what psutil reports as proc.name(). So for a user-added app we derive it from
+    the chosen file instead of making them type it. Empty path -> empty string."""
+    base = os.path.basename(path.rstrip("\\/"))
+    return os.path.splitext(base)[0]
+
+
+# ── Add / edit app dialog ─────────────────────────────────────────────────────
+class AppEntryDialog(QDialog):
+    """Modal editor for a single companion app: a Name plus a browsable file
+    path. The process name is derived from the file (see `_derive_process`), so
+    it isn't shown here. Reuses the parent SettingsDialog's stylesheet so it
+    picks up the active theme with no duplicated QSS."""
+
+    def __init__(self, name: str = "", path: str = "", *,
+                 taken_names: Optional[list[str]] = None,
+                 parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setModal(True)
+        self.setWindowTitle("Edit app" if name else "Add app")
+        self.setMinimumWidth(460)
+        # Names already in use (case-insensitive) — a name is the key for status
+        # routing and launch tracking, so duplicates would collide silently.
+        self._taken = {n.strip().lower() for n in (taken_names or [])}
+        if parent is not None:
+            self.setStyleSheet(parent.styleSheet())
+
+        vbox = QVBoxLayout(self)
+        vbox.setSpacing(12)
+        vbox.setContentsMargins(20, 18, 20, 16)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("NAME"))
+        self.name_edit = QLineEdit(name)
+        name_row.addWidget(self.name_edit, 1)
+        vbox.addLayout(name_row)
+
+        path_row = QHBoxLayout()
+        path_row.addWidget(QLabel("FILE"))
+        self.path_edit = QLineEdit(path)
+        browse_btn = QPushButton("Browse…")
+        browse_btn.clicked.connect(self._browse)
+        path_row.addWidget(self.path_edit, 1)
+        path_row.addWidget(browse_btn)
+        vbox.addLayout(path_row)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save |
+            QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(self._on_accept)
+        btn_box.rejected.connect(self.reject)
+        vbox.addWidget(btn_box)
+
+    def _browse(self) -> None:
+        start = os.path.dirname(self.path_edit.text().strip())
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Select application", start,
+            "Executables (*.exe);;All files (*)")
+        if chosen:
+            self.path_edit.setText(os.path.normpath(chosen))
+
+    def _validation_error(self, name: str) -> Optional[str]:
+        """Reason the entry can't be saved, or None if it's valid. Split out from
+        the message box so it's unit-testable without a modal popup."""
+        if not name:
+            return "Please enter a name for the app."
+        if name.lower() in self._taken:
+            return (f"An app named '{name}' already exists.\n"
+                    "Please choose a different name.")
+        return None
+
+    def _on_accept(self) -> None:
+        err = self._validation_error(self.name_edit.text().strip())
+        if err:
+            QMessageBox.warning(self, "Invalid entry", err)
+            return
+        self.accept()
+
+    def values(self) -> tuple[str, str]:
+        """(name, path), both stripped."""
+        return self.name_edit.text().strip(), self.path_edit.text().strip()
 
 
 # ── Settings dialog ───────────────────────────────────────────────────────────
@@ -1033,24 +1088,33 @@ class SettingsDialog(QDialog):
         if settings.theme is Theme.LIGHT:
             _bg, _fg, _field, _border = "#E6E9ED", "#252C36", "#FFFFFF", "#B4BCC6"
             _amber, _gold, _field_fg = "#C25E0A", "#C25E0A", "#252C36"
-            _head_bg, _head_fg, _grid, _btn_bg = "#DCE0E5", "#5A6573", "#D0D5DB", "#DCE0E5"
+            _head_fg, _btn_bg = "#5A6573", "#DCE0E5"
+            _alt, _sel = "#EFF1F4", "#F0E3CC"
         else:
             _bg, _fg, _field, _border = "#0C0C0F", "#C8760A", "#0A0A0D", "#252530"
             _amber, _gold, _field_fg = "#C8760A", "#FFB700", "#FFB700"
-            _head_bg, _head_fg, _grid, _btn_bg = "#111114", "#666670", "#1A1A20", "#111114"
+            _head_fg, _btn_bg = "#666670", "#111114"
+            _alt, _sel = "#101014", "#1C1408"
+        # Dim brush for the secondary (process/path) cells, so the app NAME reads
+        # as primary and the rest recedes — mirrors the design's name/proc split.
+        self._row_dim = QColor(_head_fg)
         self.setStyleSheet(f"""
             QDialog   {{ background: {_bg}; color: {_fg}; }}
             QLabel    {{ color: {_fg}; }}
             QLineEdit {{ background: {_field}; color: {_field_fg};
                          border: 1px solid {_border}; padding: 4px 6px; }}
             QCheckBox {{ color: {_fg}; spacing: 6px; }}
-            QCheckBox::indicator {{ width:13px; height:13px; border:1px solid {_border};
+            QCheckBox::indicator {{ width:14px; height:14px; border:1px solid {_border};
                                     background:{_field}; }}
-            QCheckBox::indicator:checked {{ background: {_amber}; }}
+            QCheckBox::indicator:hover {{ border-color:{_amber}; }}
+            QCheckBox::indicator:checked {{ background:{_amber}; border-color:{_amber}; }}
             QTableWidget {{ background:{_field}; color:{_fg};
-                            gridline-color:{_grid}; border:1px solid {_border}; }}
-            QHeaderView::section {{ background:{_head_bg}; color:{_head_fg};
-                                    border:none; padding:4px; font-size:9px; }}
+                            alternate-background-color:{_alt};
+                            gridline-color:transparent; border:1px solid {_border};
+                            outline:none; }}
+            QTableWidget::item {{ padding:6px 8px; border:none; }}
+            QTableWidget::item:selected {{ background:{_sel}; color:{_gold}; }}
+            QTableCornerButton::section {{ background:{_field}; border:none; }}
             QPushButton {{ background:{_btn_bg}; color:{_fg};
                            border:1px solid {_border}; padding:4px 12px; }}
             QPushButton:hover {{ border-color:{_amber}; color:{_gold}; }}
@@ -1107,68 +1171,205 @@ class SettingsDialog(QDialog):
             "Light theme (day mode for washed-out monitors)",
             settings.theme is Theme.LIGHT)
 
-        # App table
-        self.table = QTableWidget(len(settings.apps), 4)
+        # Companion-app list. Styled as a flat HUD row-list rather than a grid:
+        # no column headers, no gridlines, zebra rows, hairline container.
+        apps_lbl = QLabel("C O M P A N I O N   A P P S")
+        apps_lbl.setFont(font_display(8))
+        apps_lbl.setStyleSheet(f"color: {_head_fg}; letter-spacing:3px;")
+        vbox.addWidget(apps_lbl)
+
+        self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["ON", "NAME", "PROCESS", "PATH"])
-        self.table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch)
+        hh = self.table.horizontalHeader()
+        hh.setVisible(False)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnHidden(2, True)   # PROCESS is derived, not user-facing
+        self.table.setShowGrid(False)
+        self.table.setFrameShape(QFrame.Shape.NoFrame)
+        self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
+        # Rows are edited through AppEntryDialog (add / double-click / EDIT), not
+        # inline, so the file path gets a Browse button and the process name is
+        # derived rather than hand-typed.
         self.table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked)
+            QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.cellDoubleClicked.connect(
+            lambda row, _col: self._edit_row(row))
         self.table.verticalHeader().setVisible(False)
-        for r, app in enumerate(settings.apps):
-            chk = QCheckBox()
-            chk.setChecked(app.enabled)
-            chk_cell = QWidget()
-            chk_layout = QHBoxLayout(chk_cell)
-            chk_layout.addWidget(chk)
-            chk_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            chk_layout.setContentsMargins(0, 0, 0, 0)
-            self.table.setCellWidget(r, 0, chk_cell)
-            self.table.setItem(r, 1, QTableWidgetItem(app.name))
-            self.table.setItem(r, 2, QTableWidgetItem(app.process_name))
-            self.table.setItem(r, 3, QTableWidgetItem(app.path or ""))
+        self.table.verticalHeader().setDefaultSectionSize(30)
+        self._populate_table(settings.apps)
         vbox.addWidget(self.table, 1)
 
         # add / remove buttons
         tbl_btns = QHBoxLayout()
         add_btn = QPushButton("+ ADD")
+        edit_btn = QPushButton("EDIT")
+        # The pencil is drawn as a coloured icon (via 'Segoe UI Symbol') rather
+        # than a text glyph: in the button's inherited font U+270E falls back to
+        # an emoji font that ignores the QSS colour and clashes with the theme.
+        edit_btn.setIcon(_glyph_icon("✎", QColor(_fg), px=14))
+        edit_btn.setIconSize(QSize(14, 14))
         rem_btn = QPushButton("— REMOVE")
         add_btn.clicked.connect(self._add_row)
+        edit_btn.clicked.connect(self._edit_selected)
         rem_btn.clicked.connect(self._remove_row)
         tbl_btns.addWidget(add_btn)
+        tbl_btns.addWidget(edit_btn)
         tbl_btns.addWidget(rem_btn)
         tbl_btns.addStretch()
         vbox.addLayout(tbl_btns)
 
-        # OK / Cancel
+        # Bottom bar: utility buttons (reset + open log folder) on the left,
+        # Save / Cancel on the right. Reset/folder don't close the dialog.
+        reset_btn = QPushButton("RESET TO DEFAULT")
+        folder_btn = QPushButton("OPEN LOG FOLDER")
+        reset_btn.clicked.connect(self._reset_defaults)
+        folder_btn.clicked.connect(self._open_data_dir)
+
         btn_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save |
             QDialogButtonBox.StandardButton.Cancel)
         btn_box.accepted.connect(self._save)
         btn_box.rejected.connect(self.reject)
-        vbox.addWidget(btn_box)
 
-    def _add_row(self) -> None:
-        r = self.table.rowCount()
-        self.table.insertRow(r)
+        bottom = QHBoxLayout()
+        bottom.addWidget(reset_btn)
+        bottom.addWidget(folder_btn)
+        bottom.addStretch()
+        bottom.addWidget(btn_box)
+        vbox.addLayout(bottom)
+
+    def _set_row(self, r: int, name: str, process: str,
+                 path: str, enabled: bool, origin: str = "") -> None:
+        """Fill an (already inserted) table row: a centred ON checkbox plus the
+        name/process/path cells. Shared by initial fill, + ADD, and reset.
+        `origin` is the registry name this row derives from (empty for custom
+        apps); it's stashed on the name cell so a rename still re-attaches the
+        default's resolver/path on save (see `_save`)."""
         chk = QCheckBox()
-        chk.setChecked(True)
+        chk.setChecked(enabled)
         cell = QWidget()
         cl = QHBoxLayout(cell)
         cl.addWidget(chk)
         cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cl.setContentsMargins(0, 0, 0, 0)
         self.table.setCellWidget(r, 0, cell)
-        self.table.setItem(r, 1, QTableWidgetItem("NewApp"))
-        self.table.setItem(r, 2, QTableWidgetItem("NewApp"))
-        self.table.setItem(r, 3, QTableWidgetItem(""))
+        name_item = QTableWidgetItem(name)
+        name_item.setData(Qt.ItemDataRole.UserRole, origin)
+        self.table.setItem(r, 1, name_item)
+        proc_item = QTableWidgetItem(process)
+        path_item = QTableWidgetItem(path)
+        proc_item.setForeground(self._row_dim)
+        path_item.setForeground(self._row_dim)
+        self.table.setItem(r, 2, proc_item)
+        self.table.setItem(r, 3, path_item)
+
+    def _populate_table(self, apps: list[AppDescriptor]) -> None:
+        """Replace all table rows with the given app list."""
+        self.table.setRowCount(0)
+        for app in apps:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            origin = app.name if app.name in config.REGISTRY_BY_NAME else ""
+            self._set_row(r, app.name, app.process_name, app.path or "",
+                          app.enabled, origin)
+
+    def _existing_names(self, exclude_row: Optional[int] = None) -> list[str]:
+        """Current app names in the table (col 1), optionally skipping one row —
+        used to block duplicate names in the add/edit dialog."""
+        names = []
+        for r in range(self.table.rowCount()):
+            if r == exclude_row:
+                continue
+            item = self.table.item(r, 1)
+            if item and item.text().strip():
+                names.append(item.text().strip())
+        return names
+
+    def _insert_app_row(self, name: str, path: str, process: str,
+                        enabled: bool = True) -> None:
+        """Append one app row. Kept separate from the modal add/edit flow so the
+        row-mutation path stays callable (and testable) without a dialog."""
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        self._set_row(r, name, process, path, enabled)
+
+    def _add_row(self) -> None:
+        dlg = AppEntryDialog(taken_names=self._existing_names(), parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, path = dlg.values()
+        self._insert_app_row(name, path, _derive_process(path) or name)
+
+    def _edit_selected(self) -> None:
+        rows = self.table.selectionModel().selectedRows()
+        if rows:
+            self._edit_row(rows[0].row())
+
+    def _edit_row(self, row: int) -> None:
+        name_item = self.table.item(row, 1)
+        old_process = self.table.item(row, 2)
+        path_item = self.table.item(row, 3)
+        old_process = old_process.text() if old_process else ""
+        # Registry origin stashed on the name cell survives a rename, so an edited
+        # default keeps its resolver/default path on save.
+        origin = (name_item.data(Qt.ItemDataRole.UserRole) or "") if name_item else ""
+
+        dlg = AppEntryDialog(
+            name_item.text() if name_item else "",
+            path_item.text() if path_item else "",
+            taken_names=self._existing_names(exclude_row=row),
+            parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, path = dlg.values()
+        # Re-derive the process from the (maybe new) file, but keep the existing
+        # one when the path is blank — resolver-based apps (e.g. SrvSurvey) carry
+        # no path yet still need a process name to be watched/killed by.
+        process = _derive_process(path) or old_process or name
+        cell = self.table.cellWidget(row, 0)
+        chk = cell.findChild(QCheckBox) if cell else None
+        enabled = chk.isChecked() if chk else True
+        self._set_row(row, name, process, path, enabled, origin)
 
     def _remove_row(self) -> None:
         rows = self.table.selectedIndexes()
         if rows:
             self.table.removeRow(rows[0].row())
+
+    def _reset_defaults(self) -> None:
+        """Restore every field to factory defaults (CMDR name, toggles, and the
+        full default app list). Nothing is written until the user hits Save, so
+        this is reversible with Cancel."""
+        if QMessageBox.question(
+                self, "Reset to default",
+                "Reset all settings, apps, and config to their defaults?\n\n"
+                "Nothing is saved until you press Save.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        defaults = config.default_settings()
+        self.cmdr_edit.setText(defaults.cmdr_name)
+        self.toggle_inactive.setChecked(defaults.show_inactive_cards)
+        self.toggle_scope.setChecked(
+            defaults.shutdown_scope is ShutdownScope.ALL_ENABLED)
+        self.toggle_light.setChecked(defaults.theme is Theme.LIGHT)
+        self._populate_table(defaults.apps)
+        # Clear any suppressed defaults so the reset list isn't re-filtered on save.
+        self._settings = replace(self._settings, removed_defaults=[])
+
+    def _open_data_dir(self) -> None:
+        """Open the EDLS log/data directory (%LOCALAPPDATA%\\EDLS, where
+        launcher.log and settings.json live) in the file manager. Creates it
+        first so the button never fails on a fresh install."""
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(config.DATA_DIR))
 
     def _save(self) -> None:
         def _text(row: int, col: int) -> str:
@@ -1184,7 +1385,11 @@ class SettingsDialog(QDialog):
             name = _text(r, 1)
             if not name:
                 continue
-            reg = config._REGISTRY_BY_NAME.get(name)
+            # Prefer the row's registry origin so a renamed default still re-links
+            # to its resolver/default path; fall back to the (unchanged) name.
+            name_item = self.table.item(r, 1)
+            origin = (name_item.data(Qt.ItemDataRole.UserRole) or "") if name_item else ""
+            reg = config.REGISTRY_BY_NAME.get(origin) or config.REGISTRY_BY_NAME.get(name)
             new_apps.append(AppDescriptor(
                 name=name,
                 process_name=_text(r, 2) or name,
@@ -1216,11 +1421,9 @@ class SettingsDialog(QDialog):
 # Subdued boot animation: each panel fades up a few px, staggered. Mirrors the
 # mockup's `bootIn` keyframe. Set BOOT_ENABLED = False for an instant show
 # (a stand-in for prefers-reduced-motion, which Qt has no native signal for).
-BOOT_ENABLED  = True
-BOOT_DURATION = 320   # ms per panel
-BOOT_OFFSET   = 6     # px upward rise
-BOOT_STAGGER  = 60    # ms between panels
-BOOT_TOTAL    = BOOT_STAGGER * 3 + BOOT_DURATION
+# Timings (BOOT_DURATION/OFFSET/STAGGER) come from theme.py.
+BOOT_ENABLED = True
+BOOT_TOTAL = BOOT_STAGGER * 3 + BOOT_DURATION
 
 
 class MainWindow(QMainWindow):
@@ -1249,6 +1452,7 @@ class MainWindow(QMainWindow):
         engine.on_log.connect(self._on_log)
         engine.on_status.connect(self._on_status)
         engine.on_busy.connect(self._on_busy)
+        engine.on_quit.connect(self._on_quit)
 
         self._build_content()
 
@@ -1358,6 +1562,10 @@ class MainWindow(QMainWindow):
         self._busy = busy
         self._btns.set_busy(busy)
 
+    @Slot()
+    def _on_quit(self) -> None:
+        self.close()
+
     @Slot(str, bool)
     def _on_start_stop(self, name: str, is_running: bool) -> None:
         if is_running:
@@ -1378,6 +1586,16 @@ class MainWindow(QMainWindow):
         )
         dlg.saved.connect(self._on_settings_saved)
         dlg.exec()
+
+    def _prewarm_settings(self) -> None:
+        """Pay Qt's one-time first-dialog realization cost off-screen while idle,
+        so the user's first Settings open is snappy. Construction is ~10ms; the
+        warm-up is the off-screen show/hide (native window + stylesheet + fonts)."""
+        dlg = SettingsDialog(self._settings, parent=self)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        dlg.show()
+        dlg.hide()
+        dlg.deleteLater()
 
     @Slot(object)
     def _on_settings_saved(self, updated: Settings) -> None:
@@ -1473,7 +1691,11 @@ def run(engine, settings: Settings) -> int:
     # auto-start. Matches the original's Window.Add_Loaded sequencing.
     if not settings.setup_complete:
         QTimer.singleShot(follow_delay, win._open_settings)
-    elif settings.auto_start:
-        QTimer.singleShot(follow_delay, engine.launch)
+    else:
+        if settings.auto_start:
+            QTimer.singleShot(follow_delay, engine.launch)
+        # Warm the Settings dialog off-screen after boot settles so the first
+        # real open is instant (first-run already opens it, so skip that case).
+        QTimer.singleShot(follow_delay + 50, win._prewarm_settings)
 
     return app.exec()

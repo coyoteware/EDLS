@@ -102,6 +102,60 @@ def main():
     run("settings dialog (first-run) build + save",
         lambda: settings_dialog(True))
 
+    def app_entry_dialog():
+        # The add/edit dialog + its process-derivation, driven without .exec()
+        # (which would block headless). Also add a row through the non-modal
+        # insert path, then save the whole settings dialog with it in place.
+        assert ui._derive_process(r"C:\x\Foo.exe") == "Foo"
+        assert ui._derive_process("") == ""
+        dlg = ui.AppEntryDialog("MyApp", r"C:\x\Foo.exe")
+        assert dlg.values() == ("MyApp", r"C:\x\Foo.exe")
+
+        sd = ui.SettingsDialog(settings)
+        before = sd.table.rowCount()
+        sd._insert_app_row("MyApp", r"C:\x\Foo.exe", "Foo")
+        assert sd.table.rowCount() == before + 1
+        sd._save()
+
+    run("app entry dialog + row insert + save", app_entry_dialog)
+
+    def duplicate_name_guard():
+        # A name is the routing/launch key, so the dialog must reject duplicates
+        # (case-insensitive) while allowing an unused name. Uses _validation_error
+        # directly to avoid popping a modal warning headless.
+        sd = ui.SettingsDialog(config.default_settings())
+        taken = sd._existing_names()
+        assert "SrvSurvey" in taken
+        dlg = ui.AppEntryDialog(taken_names=taken)
+        assert dlg._validation_error("SrvSurvey") is not None
+        assert dlg._validation_error("srvsurvey") is not None   # case-insensitive
+        assert dlg._validation_error("") is not None
+        assert dlg._validation_error("A Brand New App") is None
+        # Editing a row must allow keeping its own name (excluded from 'taken').
+        assert "SrvSurvey" not in sd._existing_names(exclude_row=1)
+
+    run("duplicate-name guard", duplicate_name_guard)
+
+    def renamed_default_keeps_resolver():
+        # Renaming a resolver-based default (SrvSurvey has no path) must not drop
+        # its resolver — the row's registry origin survives the rename.
+        sd = ui.SettingsDialog(config.default_settings())
+        def _name(r):
+            it = sd.table.item(r, 1)
+            return it.text() if it else ""
+        row = next(r for r in range(sd.table.rowCount())
+                   if _name(r) == "SrvSurvey")
+        sd._set_row(row, "My Survey", "SrvSurvey", "", True, origin="SrvSurvey")
+        captured = {}
+        sd.saved.connect(lambda s: captured.update(s=s))
+        sd._save()
+        app = next(a for a in captured["s"].apps if a.name == "My Survey")
+        assert app.resolver is not None
+
+    run("renamed default keeps resolver", renamed_default_keeps_resolver)
+
+    run("settings pre-warm (off-screen realize)", win._prewarm_settings)
+
     def theme_switch():
         from dataclasses import replace
         # Drive a live light/dark switch both ways through the real save path,
