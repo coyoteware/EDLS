@@ -1,6 +1,6 @@
 ﻿"""
-EDLS - ui.py
-PySide6 view layer. The only file that imports Qt.
+EDLS/ui.py
+PySide6 view layer in Qt.
 
 Design target: faithfully approximate the Elite: Dangerous HUD aesthetic from
 the HTML mockup — dark warm background, amber/gold palette, chamfered panel
@@ -1070,7 +1070,7 @@ class AppEntryDialog(QDialog):
 
 # ── Settings dialog ───────────────────────────────────────────────────────────
 class SettingsDialog(QDialog):
-    """Data-driven settings editor (collapses the two PowerShell dialogs into one).
+    """Data-driven settings editor (collapses the two dialogs into one).
     In first-run mode it shows a welcome header and all apps checked by default."""
 
     saved = Signal(object)   # emits updated Settings
@@ -1168,7 +1168,7 @@ class SettingsDialog(QDialog):
             "Shutdown closes all enabled apps (not just those EDLS launched)",
             settings.shutdown_scope is ShutdownScope.ALL_ENABLED)
         self.toggle_light = _toggle_row(
-            "Light theme (day mode for washed-out monitors)",
+            "Light mode",
             settings.theme is Theme.LIGHT)
 
         # Companion-app list. Styled as a flat HUD row-list rather than a grid:
@@ -1227,7 +1227,7 @@ class SettingsDialog(QDialog):
 
         # Bottom bar: utility buttons (reset + open log folder) on the left,
         # Save / Cancel on the right. Reset/folder don't close the dialog.
-        reset_btn = QPushButton("RESET TO DEFAULT")
+        reset_btn = QPushButton("RESTORE DEFAULTS")
         folder_btn = QPushButton("OPEN LOG FOLDER")
         reset_btn.clicked.connect(self._reset_defaults)
         folder_btn.clicked.connect(self._open_data_dir)

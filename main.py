@@ -1,8 +1,7 @@
 """
-EDLS - Elite: Dangerous Launch Suite (Python rewrite)
-main.py - entry point + launch engine.
+EDLS/main.py
 
-This is the "machinery": the process manager, the launch / monitor / shutdown
+This is the process manager, the launch / monitor / shutdown
 sequence, logging, and the wiring that bolts everything together. It contains
 NO GUI-toolkit imports, so the engine can be driven and tested without a window.
 
@@ -20,7 +19,7 @@ ui.py must NOT import main.py. The engine reaches the view only through Signals
 (engine -> view) and public methods (view -> engine), so the view can be swapped
 (PySide6, web-render, ...) without the engine knowing or caring.
 
-Targets Windows 10/11 + Steam, matching the original.
+Windows 10/11 + Steam.
 """
 from __future__ import annotations
 
@@ -92,7 +91,7 @@ def setup_logging() -> None:
 
 
 # =============================================================================
-# Signal - a tiny toolkit-agnostic observer
+# Signal - toolkit-agnostic observer
 # =============================================================================
 class Signal:
     """Minimal subscribe/emit. Handlers may be invoked from a worker thread;
@@ -111,7 +110,7 @@ class Signal:
 
 
 # =============================================================================
-# ProcessManager - the single home for find / launch / kill
+# ProcessManager
 # =============================================================================
 class ProcessManager:
     """Owns runtime process state for every app. Having one of these means the
@@ -219,7 +218,7 @@ class ProcessManager:
 
 
 # =============================================================================
-# Engine - the launch -> monitor -> shutdown sequence
+# Engine - launch -> monitor -> shutdown sequence
 # =============================================================================
 class Engine:
     """Runs the long sequence on a daemon worker thread and talks outward only

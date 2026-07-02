@@ -1,15 +1,14 @@
 """
-EDLS - Elite: Dangerous Launch Suite (Python rewrite)
-config.py - the pure-data layer.
+EDLS/config.py
 
-Everything here is toolkit-blind and engine-blind: it imports only the standard
+The pure-data layer. Everything here is toolkit-blind and engine-blind; it imports only the standard
 library and is imported by both main.py and ui.py without creating a cycle. It
 owns four things:
 
   1. AppState / ShutdownScope   -- the shared vocabulary
   2. AppDescriptor              -- one app's definition, with path resolution
-  3. REGISTRY                   -- THE list of default apps (single source of truth)
-  4. Settings + load/save       -- persistence, with merge-on-load and migration
+  3. REGISTRY                   -- list of default apps
+  4. Settings + load/save       -- persistence, w/ merge-on-load and migration
 
 Adding a companion app is a one-line entry in REGISTRY below. Both config dialogs
 and the launch engine read from it, so there's no longer a four-places-to-edit
@@ -144,7 +143,7 @@ def _find_srvsurvey() -> Optional[str]:
 
 
 # =============================================================================
-# THE registry -- add or remove default apps here, nowhere else
+# App registry -- add or remove default apps here only
 # =============================================================================
 REGISTRY: list[AppDescriptor] = [
     AppDescriptor("EDMarketConnector", "EDMarketConnector",

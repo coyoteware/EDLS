@@ -15,10 +15,13 @@ Each stage is isolated, so a failure points at the exact spot, and the run
 keeps going to collect every failure rather than stopping at the first.
 Exits 0 if everything passes, 1 otherwise.
 
-Note: this calls config.load_settings(), which will create the app's normal
-settings.json under %LOCALAPPDATA%\\EDLS if you don't already have one.
+WARNING: the first stage DELETES the app's data dir (%LOCALAPPDATA%\\EDLS —
+settings.json, launcher.log) so every run exercises the fresh-install path.
+Afterwards the dir holds fresh defaults, and the next real launch will show
+the first-run setup dialog again.
 """
 import os
+import shutil
 import sys
 import traceback
 
@@ -60,7 +63,14 @@ def main():
     app = QApplication.instance() or QApplication(sys.argv)
     ui._load_fonts()
 
+    def wipe_app_data():
+        # Fresh-install state every run. No ignore_errors: a partial wipe (e.g.
+        # launcher.log locked by a running EDLS) must FAIL loudly, not fake it.
+        if os.path.isdir(config.DATA_DIR):
+            shutil.rmtree(config.DATA_DIR)
+
     ctx = {}
+    run("wipe preexisting app data", wipe_app_data)
     run("load settings", lambda: ctx.update(settings=config.load_settings()))
     run("build engine",  lambda: ctx.update(engine=eng.Engine(ctx["settings"])))
     run("build window",  lambda: ctx.update(
