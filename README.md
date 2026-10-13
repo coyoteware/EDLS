@@ -1,4 +1,4 @@
-# **WIP!!!**
+# **WIP README!!!**
 
 
 
@@ -8,43 +8,24 @@
 > SrvSurvey, and more, in a single click.
 
 EDLS is a Windows desktop launcher for [Elite: Dangerous](https://www.elitedangerous.com/).
-It brings up Steam → Elite → up to a dozen companion apps in the right order,
-shows a live HUD-style status board while you play, and shuts itself and the rest of your companion apps down when Elite closes.
+It will find and boot Steam, then Elite via legendary and min-ed-launcher (see below), then up to a dozen companion apps of your choosing,
+show a live HUD-style status board while you play, and shut itself and the rest of your companion apps down when Elite closes. Note that this does require a small amount of configuration on your end; if you skip setup for min-ed-launcher and legendary, EDLS will not actually save you much of any time or effort.
 
-Originally a 20 line powershell script, then bloated to >1000 lines of WPF ui, now in nice clean modern python with good thread management.
+>Claude opus 5.5 was used in the making of this program. I have a degree in computer science which predates the advent of shatGPT and its ilk. If you try to lump me in with mouth breathing vibecoder scrubs I will personally escort a thargoid titan up your bunghole
 
----
-*DISCLAIMER*: I did make use of claude code for this project. *HOWEVER*, I also have a bachelors' in computer science which I earned prior to the advent of LLMs. This is not vibecoded slop!!
 ---
 
 ## Features
 
-- **One-click launch** — Steam, Elite: Dangerous, and every enabled companion app,
-  started in sequence. Optionally bypasses Frontier's native launcher (see
+- **One-click launch** — Steam, Elite: Dangerous, and your desired programs all at once,
+  bypassing Frontier's native launcher (see
   [Prerequisites](#prerequisites)).
-- **Live status board** — a card per app showing Offline / Launching / Online /
-  Running, with pulsing status dots and PIDs.
-- **Automatic teardown** — when Elite exits, EDLS closes the companion tools for you.
-- **Manual shutdown** — a SHUTDOWN button to close the tools on demand.
+- **Live status board** — a card per app showing Offline / Launching / Online
+- **Automatic teardown** — when Elite exits, EDLS closes the companion tools for you, then itself.
 - **Per-app start/stop** — bring a single tool up or down from its status card.
-- **Configurable shutdown scope** — close *only what EDLS launched*, or *every
-  enabled app that's running* — your choice in Settings.
-- **Single-source app registry** — enable/disable apps and edit their paths in a
-  built-in settings table. Auto-start is available and off by default.
-- **Persistent config** — settings and a rotating log live under
-  `%LOCALAPPDATA%\EDLS`.
-
----
-
-## Requirements
-
-- **Windows 10 / 11** (64-bit)
-- **Python 3.11+**
-- **Steam**, with Elite: Dangerous in your library
-- Python packages: `PySide6` and `psutil` (see [Installation](#installation))
-- **[min-ed-launcher](https://github.com/rfvgyhn/min-ed-launcher)** and
-  **[Legendary](https://github.com/derrod/legendary)** configured first — see
-  [Prerequisites](#prerequisites) below.
+- **Configurable** — add/remove/enable/disable apps and edit their paths in a
+  built-in settings table. Add a commander name if you please. There's also a (work in progress) light mode ui
+- **Auto-start** — Off by default for easier setup. You should turn this on once you have EDLS configured to your liking, otherwise it's 2 clicks instead of 1
 
 ---
 
@@ -157,8 +138,8 @@ python selftest.py
 
 ## Credits
 
-- **CMDR Coyote Bongwater** author of EDLS.
-- **Claude** (Anthropic) — pair-programmer on the Python rewrite.
+- CMDR Coyote Bongwater
+- VScode, Claude Opus 5.5
 - The Elite: Dangerous tool community behind the companion apps above.
 - [min-ed-launcher](https://github.com/rfvgyhn/min-ed-launcher) by rfvgyhn and
   [Legendary](https://github.com/derrod/legendary) by derrod — the launch-chain
