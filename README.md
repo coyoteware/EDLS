@@ -90,28 +90,7 @@ full Epic Games launcher installed.
 
 ## Installation
 
-```powershell
-# 1. Clone the repo
-git clone https://github.com/coyoteware/EDLS-py.git
-cd EDLS-py
-
-# 2. (Recommended) create a virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-# 3. Install dependencies
-pip install -r requirements.txt
-```
-
-## Running
-
-```powershell
-python main.py
-```
-
-On first launch, EDLS shows a **first-time setup** dialog: set your CMDR name and
-tick the companion apps you want it to manage. You can change all of this later
-via the **SETTINGS** button.
+Release coming soon :)
 
 ---
 
