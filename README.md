@@ -11,7 +11,7 @@ EDLS is a Windows desktop launcher for [Elite: Dangerous](https://www.elitedange
 It will find and boot Steam, then Elite via legendary and min-ed-launcher (see below), then up to a dozen companion apps of your choosing,
 show a live HUD-style status board while you play, and shut itself and the rest of your companion apps down when Elite closes. Note that this does require a small amount of configuration on your end; if you skip setup for min-ed-launcher and legendary, EDLS will not actually save you much of any time or effort.
 
->Claude opus 5.5 was used in the making of this program. I have a degree in computer science which predates the advent of shatGPT and its ilk. If you try to lump me in with mouth breathing vibecoder scrubs I will personally escort a thargoid titan up your bunghole
+>>Claude opus 5.5 was used in the making of this program. I have a degree in computer science which predates the advent of shatGPT and its ilk. If you try to lump me in with mouth breathing vibecoder scrubs I will personally escort a thargoid titan up your bunghole
 
 ---
 
@@ -31,17 +31,11 @@ show a live HUD-style status board while you play, and shut itself and the rest 
 
 ## Prerequisites
 
-EDLS launches Elite through Steam and expects the launch to **skip Frontier's
-default launcher** and drop you straight into the game. That hand-off is handled
-by two external, open-source tools that you must install and configure **before**
-running EDLS:
 
 ### 1. min-ed-launcher
 
 [min-ed-launcher](https://github.com/rfvgyhn/min-ed-launcher) is a minimal,
-fast replacement for the official Elite: Dangerous launcher. It is what actually
-starts the game once Steam hands off, and it lets EDLS go from click to cockpit
-without the Frontier launcher window in the way.
+fast replacement for the official Elite: Dangerous launcher. Rather than the clunky, slow, ugly, advertisement-ware launcher, the game will - get this - just f**king start. We will trick Steam into pointing to it with commandline arguments, then use an epic games store account to authenticate. The reason for this is that passing off our launcher as the epic store is the only way Frontier will permit us to skip their launcher. In order to launch a faux epic games store from the command line, you'll need the next prerequisite named legendary.
 
 - Download and install it from the
   [min-ed-launcher releases page](https://github.com/rfvgyhn/min-ed-launcher/releases).
