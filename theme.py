@@ -64,7 +64,7 @@ TOGGLE_ON  = QColor("#C25E0A")
 # (only visible where the art is transparent/missing), a top accent line, and the
 # suite title. Gold never themes, so light mode swaps in its own art + accent.
 BANNER_IMAGE  = "title-bar.png"
-BANNER_FILL   = QColor("#140E03")   # dark strip behind the banner art
+BANNER_FILL   = QColor(0x14, 0x0E, 0x03, 179)   # dark strip, 70% opaque
 BANNER_ACCENT = C_GOLD              # top line + title text
 
 IS_LIGHT = False
@@ -101,7 +101,7 @@ _LIGHT_PALETTE = {
     "CARD_BORDER_OFF": QColor("#C6CCD4"),
     "BG_IMAGE": "window-bg-light.png",
     "BANNER_IMAGE": "title-bar-light.png",
-    "BANNER_FILL":  QColor("#C8CDD4"),   # silver strip matching the light art
+    "BANNER_FILL":  QColor(0xC8, 0xCD, 0xD4, 179),   # silver strip, 70% opaque
     "BANNER_ACCENT": QColor("#C25E0A"),  # orange accent (no gold on light)
 }
 

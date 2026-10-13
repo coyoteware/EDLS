@@ -60,6 +60,17 @@ def main():
     app = QApplication.instance() or QApplication(sys.argv)
     ui._load_fonts()
 
+    def assets_decode():
+        # A corrupt PNG doesn't raise -- libpng prints a line and Qt hands back
+        # a null image, so the UI silently falls back to a flat fill. (That's
+        # how truncated window-bg PNGs went unnoticed for months.)
+        import glob
+        from PySide6.QtGui import QImage
+        pngs = glob.glob(os.path.join(ui.ASSETS_DIR, "*.png"))
+        bad = [os.path.basename(p) for p in pngs if QImage(p).isNull()]
+        assert not bad, f"assets that don't decode: {bad}"
+    run("asset PNGs decode", assets_decode)
+
     ctx = {}
     run("load settings", lambda: ctx.update(settings=config.load_settings()))
     run("build engine",  lambda: ctx.update(engine=eng.Engine(ctx["settings"])))
@@ -86,6 +97,90 @@ def main():
 
     run("busy toggle (launch button)",
         lambda: (win._btns.set_busy(True), win._btns.set_busy(False)))
+
+    def status_refresh():
+        # The REFRESH button's whole job: reconcile the cards with what's really
+        # running. Runs the scan inline here (engine.refresh_status() threads it)
+        # so a failure surfaces in this stage instead of in a daemon thread.
+        eng_obj = ctx["engine"]
+        seen = {}
+        eng_obj.on_status.connect(lambda k, s, p: seen.__setitem__(k, s))
+        eng_obj._refresh()
+        # Status goes out through engine.dispatch, which the view marshals onto
+        # the GUI thread -- so the emissions are queued until the loop spins.
+        app.processEvents()
+        tracked = {a.name for a in eng_obj.tracked_apps}
+        assert tracked <= set(seen), \
+            f"refresh skipped cards: {tracked - set(seen)}"
+    run("status refresh reports every card", status_refresh)
+
+    def system_card_paint():
+        # Steam/Elite are ordinary cards now (no more double-wide Elite). Render
+        # explicitly: offscreen Qt doesn't guarantee a repaint, so a throwing
+        # paintEvent would otherwise slip through the whole test.
+        from PySide6.QtGui import QPixmap
+        for key in ("Steam", "Elite"):
+            card = win._status.cards[key]
+            assert card.ctrl_btn is not None, f"{key} card has no START/STOP button"
+            card.resize(190, 96)
+            for st in (config.AppState.OFFLINE, config.AppState.LAUNCHING,
+                       config.AppState.RUNNING, config.AppState.FAILED):
+                card.update_state(st, 4321)
+                card.render(QPixmap(card.size()))
+    run("system card paint (every state)", system_card_paint)
+
+    def inactive_cards():
+        # Cards for apps the user hasn't enabled are read-only: dimmed, OFF tag,
+        # no control button. Driving every state over BOTH kinds is what catches
+        # a missing `if self.ctrl_btn is not None` guard in update_state.
+        from dataclasses import replace as _replace
+        from PySide6.QtGui import QPixmap
+        base = settings.apps[0]
+        panel = ui.StatusPanel([_replace(base, name="OnApp", enabled=True),
+                                _replace(base, name="OffApp", enabled=False)])
+        assert panel.cards["OnApp"].ctrl_btn is not None, \
+            "enabled card lost its START button"
+        assert panel.cards["OffApp"].ctrl_btn is None, \
+            "not-enabled card should have no START button"
+        for card in panel.cards.values():
+            card.resize(190, 96)
+            for st in config.AppState:
+                card.update_state(st, 4321)
+                card.render(QPixmap(card.size()))
+        panel.deleteLater()
+    run("inactive (not-enabled) cards", inactive_cards)
+
+    def visible_apps_toggle():
+        # The setting that was doing nothing: on -> every app gets a card,
+        # off -> only enabled ones.
+        from dataclasses import replace as _replace
+        total, enabled = len(settings.apps), sum(a.enabled for a in settings.apps)
+        win._settings = _replace(settings, show_inactive_cards=True)
+        assert len(win._visible_apps()) == total, "setting ON should show all apps"
+        win._settings = _replace(settings, show_inactive_cards=False)
+        assert len(win._visible_apps()) == enabled, \
+            "setting OFF should show only enabled apps"
+        win._settings = settings
+    run("show_inactive_cards selects the card list", visible_apps_toggle)
+
+    def system_descriptors():
+        # The regression that was shipping: Steam/Elite aren't in settings.apps,
+        # so their cards' START/STOP resolved to nothing and silently no-opped.
+        # Deliberately NOT calling _on_start_stop -- that would really launch Steam.
+        for key in ("Steam", "Elite"):
+            assert ctx["engine"]._find_descriptor(key) is not None, \
+                f"{key} has no descriptor - its card button would no-op"
+    run("system app descriptor lookup", system_descriptors)
+
+    def protected_processes():
+        # Killing the game violates the ToS; EDLS must refuse even if asked.
+        # Safe to call for real: the guard returns before any process lookup.
+        import main as _main
+        for key in ("Steam", "Elite"):
+            desc = config.SYSTEM_APPS[key]
+            assert _main.ProcessManager().stop(desc) is False, \
+                f"ProcessManager.stop would kill {key}"
+    run("Steam / Elite are never killed", protected_processes)
 
     run("boot animation", win._play_boot_animation)
 

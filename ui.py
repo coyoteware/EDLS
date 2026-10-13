@@ -1,6 +1,6 @@
 ﻿"""
-EDLS - ui.py
-PySide6 view layer. The only file that imports Qt.
+EDLS/ui.py
+PySide6 view layer in Qt.
 
 Design target: faithfully approximate the Elite: Dangerous HUD aesthetic from
 the HTML mockup — dark warm background, amber/gold palette, chamfered panel
@@ -45,18 +45,19 @@ from PySide6.QtGui import (
     QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
+    QApplication, QFrame, QGraphicsOpacityEffect,
     QHBoxLayout, QLabel, QMainWindow, QSizePolicy,
     QSpacerItem, QSplitter, QStyle, QStyleOptionButton, QStylePainter,
     QTextEdit, QVBoxLayout, QWidget, QPushButton,
     QDialog, QCheckBox, QLineEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QDialogButtonBox, QMessageBox,
+    QFileDialog,
 )
 
 import config
 from config import (
     AppDescriptor, AppState, Settings, ShutdownScope, Theme,
-    KEY_STEAM, KEY_ELITE, STEAM_PROCESS, ELITE_PROCESS,
+    KEY_STEAM, KEY_ELITE,
 )
 
 import theme as _theme
@@ -293,21 +294,24 @@ class ElidingLabel(QLabel):
 
 # ── Status card ───────────────────────────────────────────────────────────────
 class StatusCard(ChamferedFrame):
-    """One app's status tile. Wired to engine.on_status."""
+    """One app's status tile. Wired to engine.on_status. Every card — Steam and
+    the game included — is the same tile with the same header rhythm."""
 
     start_stop_clicked = Signal(str, bool)   # (app_name, currently_running)
 
     def __init__(self, descriptor: AppDescriptor,
-                 wide: bool = False,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent, chamfer=CHAMFER_CARD,
                          bg=CARD_BG, border=CARD_BORDER)
         self._name = descriptor.name
-        self._wide = wide
         self._state = AppState.OFFLINE
+        # An app the CMDR hasn't enabled still gets a card when they ask for one
+        # (Settings → show cards for apps that aren't enabled). It's read-only:
+        # dimmed, tagged OFF, and no START button, since LAUNCH won't touch it.
+        self._inactive = not descriptor.enabled
         self.setMinimumHeight(90)
-        if wide:
-            self.setMinimumWidth(200)
+        # Capped so a sparse grid (one row) doesn't stretch the tiles tall.
+        self.setMaximumHeight(110)
 
         vbox = QVBoxLayout(self)
         vbox.setSpacing(4)
@@ -321,39 +325,32 @@ class StatusCard(ChamferedFrame):
         display = _DISPLAY_NAMES.get(descriptor.name, descriptor.name)
         name_lbl = ElidingLabel(display.upper())
         name_lbl.setFont(font_body(10, QFont.Weight.DemiBold))
-        name_lbl.setStyleSheet(f"color: {C_NAME.name()}; letter-spacing: 1px;")
+        name_col = C_TDIM if self._inactive else C_NAME
+        name_lbl.setStyleSheet(
+            f"color: {name_col.name()}; letter-spacing: 1px;")
         hdr.addWidget(self.dot)
         hdr.addWidget(name_lbl, 1)
 
-        # state label — right-justified. The PID line is gone (PIDs are in the
-        # activity log); on compact cards the status moves up beside the name to
-        # cut a row of clutter, while the featured Elite card keeps it big below.
+        # state label — inline beside the name, right-justified. The PID line is
+        # gone (PIDs are in the activity log) and the status sits up here beside
+        # the name rather than on its own row, to cut a row of clutter.
         self.state_lbl = QLabel(AppState.OFFLINE.label)
         self.state_lbl.setStyleSheet(f"color: {C_INACT.name()};")
         self.state_lbl.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.state_lbl.setFont(font_mono(12))
+        hdr.addWidget(self.state_lbl, 0, Qt.AlignmentFlag.AlignTop)
 
-        # The featured (Elite) card's big value gets a real emissive glow — a
-        # zero-offset coloured blur behind the text — when the state is live,
-        # mirroring the design's `text-shadow: var(--glow-text)`.
-        self._value_glow: Optional[QGraphicsDropShadowEffect] = None
+        vbox.addLayout(hdr)
+        vbox.addStretch(1)
 
-        if wide:
-            self.state_lbl.setFont(font_mono(16))
-            self._value_glow = QGraphicsDropShadowEffect(self.state_lbl)
-            self._value_glow.setOffset(0, 0)
-            self._value_glow.setBlurRadius(18)
-            self._value_glow.setEnabled(False)
-            self.state_lbl.setGraphicsEffect(self._value_glow)
-            vbox.addLayout(hdr)
-            vbox.addWidget(self.state_lbl)
-            vbox.addStretch(1)
-            self.ctrl_btn = None
+        # Bottom row: the control button, or — on a card the CMDR hasn't enabled
+        # — an OFF tag in its place, so every card keeps the same height.
+        self.ctrl_btn: Optional[QPushButton] = None
+        if self._inactive:
+            vbox.addWidget(make_badge("OFF", C_TDIM), 0,
+                           Qt.AlignmentFlag.AlignLeft)
         else:
-            self.state_lbl.setFont(font_mono(12))
-            hdr.addWidget(self.state_lbl, 0, Qt.AlignmentFlag.AlignTop)
-            vbox.addLayout(hdr)
-            vbox.addStretch(1)
             self.ctrl_btn = QPushButton("START")
             self.ctrl_btn.setFont(font_display(7))
             self.ctrl_btn.setFixedHeight(20)
@@ -376,21 +373,17 @@ class StatusCard(ChamferedFrame):
         self.state_lbl.setText(state.label)
         self.state_lbl.setStyleSheet(f"color: {label_col.name()};")
 
-        # Light the featured value's halo for live states; tint it to the state
-        # colour so a running value glows green, launching glows amber, etc.
-        if self._value_glow is not None:
-            if pulse:
-                glow = QColor(label_col)
-                glow.setAlpha(170)
-                self._value_glow.setColor(glow)
-                self._value_glow.setEnabled(True)
-            else:
-                self._value_glow.setEnabled(False)
-
-        if self.ctrl_btn:
+        if self.ctrl_btn is not None:      # None on a not-enabled card
             is_running = state.is_running
-            self.ctrl_btn.setText("STOP" if is_running else "START")
-            self.ctrl_btn.setStyleSheet(_btn_ctrl_style(active=is_running))
+            if self._name == KEY_ELITE and is_running:
+                # EDLS never closes the game (ToS) -- no STOP on this card.
+                self.ctrl_btn.setText("QUIT IN-GAME")
+                self.ctrl_btn.setEnabled(False)
+                self.ctrl_btn.setStyleSheet(_btn_ctrl_style(active=False))
+            else:
+                self.ctrl_btn.setText("STOP" if is_running else "START")
+                self.ctrl_btn.setEnabled(True)
+                self.ctrl_btn.setStyleSheet(_btn_ctrl_style(active=is_running))
 
         # update border colour to match state
         if state in (AppState.ONLINE, AppState.RUNNING):
@@ -643,6 +636,7 @@ class TitleBanner(QWidget):
         f = font_display(13, QFont.Weight.ExtraBold)
         f.setPixelSize(max(20, int(r.height() * 0.46)))
         f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, TRACK_BANNER)
+        f.setKerning(False)   # even tracked caps; stop the font's LA pair from fusing
         p.setFont(f)
         p.setPen(BANNER_ACCENT)
         p.drawText(r, Qt.AlignmentFlag.AlignCenter,
@@ -667,8 +661,10 @@ class HeaderPanel(QWidget):
         self._banner = TitleBanner()
         vbox.addWidget(self._banner)
 
-        # CMDR row
-        cmdr_row = QHBoxLayout()
+        # CMDR row, framed like the System Status / Activity Log panes
+        cmdr_frame = ChamferedFrame(chamfer=CHAMFER_PANEL, bg=C_PANEL_T)
+        cmdr_row = QHBoxLayout(cmdr_frame)
+        cmdr_row.setContentsMargins(14, 6, 14, 6)
         cmdr_row.setSpacing(10)
         cmdr_row.addStretch()
 
@@ -681,7 +677,7 @@ class HeaderPanel(QWidget):
             f"color: {C_CMDR.name()}; letter-spacing: 4px;")
         cmdr_row.addWidget(self.cmdr_lbl)
         cmdr_row.addStretch()
-        vbox.addLayout(cmdr_row)
+        vbox.addWidget(cmdr_frame)
 
     def set_cmdr(self, name: str) -> None:
         self.cmdr_lbl.setText(name.upper())
@@ -712,26 +708,21 @@ class StatusPanel(ChamferedFrame):
 
         col, row = 0, 0
 
-        def _add(card: StatusCard, span: int = 1) -> None:
+        def _add(card: StatusCard) -> None:
             nonlocal col, row
-            grid.addWidget(card, row, col, 1, span)
+            grid.addWidget(card, row, col)
             card.start_stop_clicked.connect(self.start_stop_clicked)
-            col += span
+            col += 1
             if col >= 4:
                 col = 0
                 row += 1
 
-        # Steam (single)
-        steam = StatusCard(
-            AppDescriptor(KEY_STEAM, STEAM_PROCESS), wide=False)
-        self.cards[KEY_STEAM] = steam
-        _add(steam)
-
-        # Elite (double-wide)
-        elite_desc = AppDescriptor(KEY_ELITE, ELITE_PROCESS)
-        elite = StatusCard(elite_desc, wide=True)
-        self.cards[KEY_ELITE] = elite
-        _add(elite, span=2)
+        # Steam and the game get the same tile as every companion app — they
+        # used to be special-cased (Steam single, Elite double-wide).
+        for key in (KEY_STEAM, KEY_ELITE):
+            card = StatusCard(config.SYSTEM_APPS[key])
+            self.cards[key] = card
+            _add(card)
 
         # companion apps
         for desc in apps:
@@ -748,6 +739,8 @@ class StatusPanel(ChamferedFrame):
             col += 1
 
         vbox.addLayout(grid)
+        # leftover height sits below the grid; cards stay pinned to the top
+        vbox.addStretch(1)
 
     def update_card(self, key: str, state: AppState,
                     pid: Optional[int]) -> None:
@@ -801,6 +794,7 @@ class ButtonBar(QWidget):
     autostart_toggled = Signal(bool)
     settings_clicked  = Signal()
     launch_clicked    = Signal()
+    refresh_clicked   = Signal()
 
     def __init__(self, version: str, auto_start: bool,
                  parent: Optional[QWidget] = None) -> None:
@@ -813,7 +807,7 @@ class ButtonBar(QWidget):
         # credits (left)
         cred_vbox = QVBoxLayout()
         cred_vbox.setSpacing(1)
-        l1 = QLabel("CMDR Coyote Bongwater (and Claude)")
+        l1 = QLabel("CMDR Coyote Bongwater")
         l1.setFont(font_mono(9))
         l1.setStyleSheet(f"color: {C_TDIM.name()};")
         cred_vbox.addWidget(l1)
@@ -835,28 +829,34 @@ class ButtonBar(QWidget):
         hbox.addLayout(cred_vbox)
         hbox.addStretch()
 
+        self.refresh_btn   = ChamferedButton("REFRESH",   chamfer=CHAMFER_CARD, **_C_SECONDARY)
         self.shutdown_btn  = ChamferedButton("SHUTDOWN",   chamfer=CHAMFER_CARD, **_C_DANGER)
         self.autostart_btn = ChamferedButton("AUTO START", chamfer=CHAMFER_CARD,
                                              **(_C_SECONDARY_ON if auto_start else _C_SECONDARY))
         self.settings_btn  = ChamferedButton("SETTINGS",  chamfer=CHAMFER_CARD, **_C_SECONDARY)
         self.launch_btn    = ChamferedButton("LAUNCH",    chamfer=CHAMFER_CARD, **_C_LAUNCH)
 
+        self.refresh_btn.setFont(font_display(9))
         self.shutdown_btn.setFont(font_display(9))
         self.autostart_btn.setFont(font_display(9))
         self.settings_btn.setFont(font_display(9))
         self.launch_btn.setFont(font_display(11))
 
+        # ↻ (U+21BB) rather than AUTO START's ⟳, and in the SETTINGS grey, so the
+        # two loop glyphs don't read as the same control.
+        self.refresh_btn.setIcon(_glyph_icon("↻", QColor("#9A9AA0")))
         self.shutdown_btn.setIcon(power_icon(QColor("#B85555")))
         self.autostart_btn.setIcon(_glyph_icon("⟳", C_ORANGE))
         self.settings_btn.setIcon(_glyph_icon("⚙", QColor("#9A9AA0")))
         self.launch_btn.setIcon(_glyph_icon("▶", C_GOLD))
-        for b in (self.shutdown_btn, self.autostart_btn,
+        for b in (self.refresh_btn, self.shutdown_btn, self.autostart_btn,
                   self.settings_btn, self.launch_btn):
             b.setIconSize(QSize(BTN_ICON, BTN_ICON))
             b.setFixedHeight(BTN_H)
             b.setMinimumWidth(120)
             hbox.addWidget(b, 0, Qt.AlignmentFlag.AlignBottom)
 
+        self.refresh_btn.clicked.connect(self.refresh_clicked)
         self.shutdown_btn.clicked.connect(self.shutdown_clicked)
         self.autostart_btn.clicked.connect(self._toggle_autostart)
         self.settings_btn.clicked.connect(self.settings_clicked)
@@ -982,9 +982,93 @@ class ToggleSwitch(QWidget):
         p.end()
 
 
+def _derive_process(path: str) -> str:
+    """The process name EDLS watches/kills is the exe's filename stem — that's
+    what psutil reports as proc.name(). So for a user-added app we derive it from
+    the chosen file instead of making them type it. Empty path -> empty string."""
+    base = os.path.basename(path.rstrip("\\/"))
+    return os.path.splitext(base)[0]
+
+
+# ── Add / edit app dialog ─────────────────────────────────────────────────────
+class AppEntryDialog(QDialog):
+    """Modal editor for a single companion app: a Name plus a browsable file
+    path. The process name is derived from the file (see `_derive_process`), so
+    it isn't shown here. Reuses the parent SettingsDialog's stylesheet so it
+    picks up the active theme with no duplicated QSS."""
+
+    def __init__(self, name: str = "", path: str = "", *,
+                 taken_names: Optional[list[str]] = None,
+                 parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setModal(True)
+        self.setWindowTitle("Edit app" if name else "Add app")
+        self.setMinimumWidth(460)
+        # Names already in use (case-insensitive) — a name is the key for status
+        # routing and launch tracking, so duplicates would collide silently.
+        self._taken = {n.strip().lower() for n in (taken_names or [])}
+        if parent is not None:
+            self.setStyleSheet(parent.styleSheet())
+
+        vbox = QVBoxLayout(self)
+        vbox.setSpacing(12)
+        vbox.setContentsMargins(20, 18, 20, 16)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("NAME"))
+        self.name_edit = QLineEdit(name)
+        name_row.addWidget(self.name_edit, 1)
+        vbox.addLayout(name_row)
+
+        path_row = QHBoxLayout()
+        path_row.addWidget(QLabel("FILE"))
+        self.path_edit = QLineEdit(path)
+        browse_btn = QPushButton("Browse…")
+        browse_btn.clicked.connect(self._browse)
+        path_row.addWidget(self.path_edit, 1)
+        path_row.addWidget(browse_btn)
+        vbox.addLayout(path_row)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save |
+            QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(self._on_accept)
+        btn_box.rejected.connect(self.reject)
+        vbox.addWidget(btn_box)
+
+    def _browse(self) -> None:
+        start = os.path.dirname(self.path_edit.text().strip())
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Select application", start,
+            "Executables (*.exe);;All files (*)")
+        if chosen:
+            self.path_edit.setText(os.path.normpath(chosen))
+
+    def _validation_error(self, name: str) -> Optional[str]:
+        """Reason the entry can't be saved, or None if it's valid. Split out from
+        the message box so it's unit-testable without a modal popup."""
+        if not name:
+            return "Please enter a name for the app."
+        if name.lower() in self._taken:
+            return (f"An app named '{name}' already exists.\n"
+                    "Please choose a different name.")
+        return None
+
+    def _on_accept(self) -> None:
+        err = self._validation_error(self.name_edit.text().strip())
+        if err:
+            QMessageBox.warning(self, "Invalid entry", err)
+            return
+        self.accept()
+
+    def values(self) -> tuple[str, str]:
+        """(name, path), both stripped."""
+        return self.name_edit.text().strip(), self.path_edit.text().strip()
+
+
 # ── Settings dialog ───────────────────────────────────────────────────────────
 class SettingsDialog(QDialog):
-    """Data-driven settings editor (collapses the two PowerShell dialogs into one).
+    """Data-driven settings editor (collapses the two dialogs into one).
     In first-run mode it shows a welcome header and all apps checked by default."""
 
     saved = Signal(object)   # emits updated Settings
@@ -1076,13 +1160,13 @@ class SettingsDialog(QDialog):
             return tog
 
         self.toggle_inactive = _toggle_row(
-            "Show status cards for inactive apps",
+            "Show cards for apps that aren't enabled",
             settings.show_inactive_cards)
         self.toggle_scope = _toggle_row(
             "Shutdown closes all enabled apps (not just those EDLS launched)",
             settings.shutdown_scope is ShutdownScope.ALL_ENABLED)
         self.toggle_light = _toggle_row(
-            "Light theme (day mode for washed-out monitors)",
+            "Light mode",
             settings.theme is Theme.LIGHT)
 
         # Companion-app list. Styled as a flat HUD row-list rather than a grid:
@@ -1100,6 +1184,7 @@ class SettingsDialog(QDialog):
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnHidden(2, True)   # PROCESS is derived, not user-facing
         self.table.setShowGrid(False)
         self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setAlternatingRowColors(True)
@@ -1107,8 +1192,13 @@ class SettingsDialog(QDialog):
             QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection)
+        # Rows are edited through AppEntryDialog (add / double-click / EDIT), not
+        # inline, so the file path gets a Browse button and the process name is
+        # derived rather than hand-typed.
         self.table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked)
+            QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.cellDoubleClicked.connect(
+            lambda row, _col: self._edit_row(row))
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(30)
         self._populate_table(settings.apps)
@@ -1117,17 +1207,25 @@ class SettingsDialog(QDialog):
         # add / remove buttons
         tbl_btns = QHBoxLayout()
         add_btn = QPushButton("+ ADD")
+        edit_btn = QPushButton("EDIT")
+        # The pencil is drawn as a coloured icon (via 'Segoe UI Symbol') rather
+        # than a text glyph: in the button's inherited font U+270E falls back to
+        # an emoji font that ignores the QSS colour and clashes with the theme.
+        edit_btn.setIcon(_glyph_icon("✎", QColor(_fg), px=14))
+        edit_btn.setIconSize(QSize(14, 14))
         rem_btn = QPushButton("— REMOVE")
         add_btn.clicked.connect(self._add_row)
+        edit_btn.clicked.connect(self._edit_selected)
         rem_btn.clicked.connect(self._remove_row)
         tbl_btns.addWidget(add_btn)
+        tbl_btns.addWidget(edit_btn)
         tbl_btns.addWidget(rem_btn)
         tbl_btns.addStretch()
         vbox.addLayout(tbl_btns)
 
         # Bottom bar: utility buttons (reset + open log folder) on the left,
         # Save / Cancel on the right. Reset/folder don't close the dialog.
-        reset_btn = QPushButton("RESET TO DEFAULT")
+        reset_btn = QPushButton("RESTORE DEFAULTS")
         folder_btn = QPushButton("OPEN LOG FOLDER")
         reset_btn.clicked.connect(self._reset_defaults)
         folder_btn.clicked.connect(self._open_data_dir)
@@ -1146,9 +1244,12 @@ class SettingsDialog(QDialog):
         vbox.addLayout(bottom)
 
     def _set_row(self, r: int, name: str, process: str,
-                 path: str, enabled: bool) -> None:
+                 path: str, enabled: bool, origin: str = "") -> None:
         """Fill an (already inserted) table row: a centred ON checkbox plus the
-        name/process/path cells. Shared by initial fill, + ADD, and reset."""
+        name/process/path cells. Shared by initial fill, + ADD, and reset.
+        `origin` is the registry name this row derives from (empty for custom
+        apps); it's stashed on the name cell so a rename still re-attaches the
+        default's resolver/path on save (see `_save`)."""
         chk = QCheckBox()
         chk.setChecked(enabled)
         cell = QWidget()
@@ -1157,7 +1258,9 @@ class SettingsDialog(QDialog):
         cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cl.setContentsMargins(0, 0, 0, 0)
         self.table.setCellWidget(r, 0, cell)
-        self.table.setItem(r, 1, QTableWidgetItem(name))
+        name_item = QTableWidgetItem(name)
+        name_item.setData(Qt.ItemDataRole.UserRole, origin)
+        self.table.setItem(r, 1, name_item)
         proc_item = QTableWidgetItem(process)
         path_item = QTableWidgetItem(path)
         proc_item.setForeground(self._row_dim)
@@ -1171,13 +1274,67 @@ class SettingsDialog(QDialog):
         for app in apps:
             r = self.table.rowCount()
             self.table.insertRow(r)
+            origin = app.name if app.name in config.REGISTRY_BY_NAME else ""
             self._set_row(r, app.name, app.process_name, app.path or "",
-                          app.enabled)
+                          app.enabled, origin)
 
-    def _add_row(self) -> None:
+    def _existing_names(self, exclude_row: Optional[int] = None) -> list[str]:
+        """Current app names in the table (col 1), optionally skipping one row —
+        used to block duplicate names in the add/edit dialog."""
+        names = []
+        for r in range(self.table.rowCount()):
+            if r == exclude_row:
+                continue
+            item = self.table.item(r, 1)
+            if item and item.text().strip():
+                names.append(item.text().strip())
+        return names
+
+    def _insert_app_row(self, name: str, path: str, process: str,
+                        enabled: bool = True) -> None:
+        """Append one app row. Kept separate from the modal add/edit flow so the
+        row-mutation path stays callable (and testable) without a dialog."""
         r = self.table.rowCount()
         self.table.insertRow(r)
-        self._set_row(r, "NewApp", "NewApp", "", True)
+        self._set_row(r, name, process, path, enabled)
+
+    def _add_row(self) -> None:
+        dlg = AppEntryDialog(taken_names=self._existing_names(), parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, path = dlg.values()
+        self._insert_app_row(name, path, _derive_process(path) or name)
+
+    def _edit_selected(self) -> None:
+        rows = self.table.selectionModel().selectedRows()
+        if rows:
+            self._edit_row(rows[0].row())
+
+    def _edit_row(self, row: int) -> None:
+        name_item = self.table.item(row, 1)
+        old_process = self.table.item(row, 2)
+        path_item = self.table.item(row, 3)
+        old_process = old_process.text() if old_process else ""
+        # Registry origin stashed on the name cell survives a rename, so an edited
+        # default keeps its resolver/default path on save.
+        origin = (name_item.data(Qt.ItemDataRole.UserRole) or "") if name_item else ""
+
+        dlg = AppEntryDialog(
+            name_item.text() if name_item else "",
+            path_item.text() if path_item else "",
+            taken_names=self._existing_names(exclude_row=row),
+            parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, path = dlg.values()
+        # Re-derive the process from the (maybe new) file, but keep the existing
+        # one when the path is blank — resolver-based apps (e.g. SrvSurvey) carry
+        # no path yet still need a process name to be watched/killed by.
+        process = _derive_process(path) or old_process or name
+        cell = self.table.cellWidget(row, 0)
+        chk = cell.findChild(QCheckBox) if cell else None
+        enabled = chk.isChecked() if chk else True
+        self._set_row(row, name, process, path, enabled, origin)
 
     def _remove_row(self) -> None:
         rows = self.table.selectedIndexes()
@@ -1226,7 +1383,11 @@ class SettingsDialog(QDialog):
             name = _text(r, 1)
             if not name:
                 continue
-            reg = config.REGISTRY_BY_NAME.get(name)
+            # Prefer the row's registry origin so a renamed default still re-links
+            # to its resolver/default path; fall back to the (unchanged) name.
+            name_item = self.table.item(r, 1)
+            origin = (name_item.data(Qt.ItemDataRole.UserRole) or "") if name_item else ""
+            reg = config.REGISTRY_BY_NAME.get(origin) or config.REGISTRY_BY_NAME.get(name)
             new_apps.append(AppDescriptor(
                 name=name,
                 process_name=_text(r, 2) or name,
@@ -1297,6 +1458,14 @@ class MainWindow(QMainWindow):
         if settings.auto_start:
             self._log.append("Auto-start enabled — launching...", "dim")
 
+    def _visible_apps(self) -> list[AppDescriptor]:
+        """Apps that get a status card: the enabled ones, plus — when the CMDR
+        asks for them — the ones they haven't enabled (shown read-only). Both
+        panel-build paths go through here so the rule can't drift between them."""
+        if self._settings.show_inactive_cards:
+            return list(self._settings.apps)
+        return [a for a in self._settings.apps if a.enabled]
+
     def _build_content(self) -> None:
         """Build (or rebuild) the central widget and its panels from the current
         settings + active theme. Replacing the central widget deletes the old one
@@ -1320,8 +1489,7 @@ class MainWindow(QMainWindow):
         self._splitter.setStyleSheet(
             "QSplitter::handle:vertical { background: transparent; }"
         )
-        self._status = StatusPanel(
-            [a for a in self._settings.apps if a.enabled])
+        self._status = StatusPanel(self._visible_apps())
         self._status.start_stop_clicked.connect(self._on_start_stop)
         self._log = LogPanel()
         self._splitter.addWidget(self._status)
@@ -1336,6 +1504,7 @@ class MainWindow(QMainWindow):
         self._btns.autostart_toggled.connect(self._on_autostart)
         self._btns.settings_clicked.connect(self._open_settings)
         self._btns.launch_clicked.connect(self._engine.launch)
+        self._btns.refresh_clicked.connect(self._engine.refresh_status)
         self._btns.set_busy(self._busy)
         root.addWidget(self._btns)
 
@@ -1424,6 +1593,16 @@ class MainWindow(QMainWindow):
         dlg.saved.connect(self._on_settings_saved)
         dlg.exec()
 
+    def _prewarm_settings(self) -> None:
+        """Pay Qt's one-time first-dialog realization cost off-screen while idle,
+        so the user's first Settings open is snappy. Construction is ~10ms; the
+        warm-up is the off-screen show/hide (native window + stylesheet + fonts)."""
+        dlg = SettingsDialog(self._settings, parent=self)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        dlg.show()
+        dlg.hide()
+        dlg.deleteLater()
+
     @Slot(object)
     def _on_settings_saved(self, updated: Settings) -> None:
         theme_changed = updated.theme != self._settings.theme
@@ -1443,16 +1622,18 @@ class MainWindow(QMainWindow):
             sb = self._log.log.verticalScrollBar()
             sb.setValue(sb.maximum())
             self._bg.update()
+            # Rebuilt cards come back up Offline; re-read what's running.
+            self._engine.refresh_status()
             return
 
         self._header.set_cmdr(updated.cmdr_name)
         # Rebuild the status panel with the new app list
         old_status = self._status
-        self._status = StatusPanel(
-            [a for a in updated.apps if a.enabled])
+        self._status = StatusPanel(self._visible_apps())
         self._status.start_stop_clicked.connect(self._on_start_stop)
         self._splitter.replaceWidget(0, self._status)
         old_status.deleteLater()
+        self._engine.refresh_status()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._engine.close()
@@ -1510,6 +1691,11 @@ def run(engine, settings: Settings) -> int:
     win = MainWindow(engine, settings)
     win.show()
 
+    # One honest read of what's already up, so a game or tool the CMDR started
+    # before EDLS doesn't sit there greyed out. Threaded (see refresh_status),
+    # so the cold process scan doesn't stall the window appearing.
+    engine.refresh_status()
+
     # Boot animation first (after layout settles), then any follow-on action.
     QTimer.singleShot(0, win._play_boot_animation)
     follow_delay = BOOT_TOTAL if BOOT_ENABLED else 0
@@ -1518,7 +1704,11 @@ def run(engine, settings: Settings) -> int:
     # auto-start. Matches the original's Window.Add_Loaded sequencing.
     if not settings.setup_complete:
         QTimer.singleShot(follow_delay, win._open_settings)
-    elif settings.auto_start:
-        QTimer.singleShot(follow_delay, engine.launch)
+    else:
+        if settings.auto_start:
+            QTimer.singleShot(follow_delay, engine.launch)
+        # Warm the Settings dialog off-screen after boot settles so the first
+        # real open is instant (first-run already opens it, so skip that case).
+        QTimer.singleShot(follow_delay + 50, win._prewarm_settings)
 
     return app.exec()

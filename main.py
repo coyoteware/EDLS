@@ -29,6 +29,7 @@ import logging.handlers
 import os
 import subprocess
 import threading
+import time
 from typing import Callable, Optional
 
 import psutil
@@ -73,7 +74,44 @@ except ImportError:  # pragma: no cover - non-Windows dev machines
 
 STEAM_REG_KEY = r"Software\Valve\Steam"
 
+# steam:// URIs are how Steam and the game are driven -- neither can be started
+# from a path, so they never go through ProcessManager.launch().
+STEAM_URI_MAIN = "steam://open/main"
+STEAM_URI_EXIT = "steam://exit"
+
+# Process-wait tuning (seconds). POLL is the gap between process scans; the rest
+# are how long we'll wait for something to appear or disappear before giving up.
+POLL_SECONDS = 2
+STEAM_WAIT = 20        # Steam's client to show up
+STEAM_EXIT_WAIT = 15   # steam://exit to actually take effect
+ELITE_WAIT = 300       # the game, started from a card (min-ed-launcher is slow)
+
+# EDLS must never kill Steam or the game -- force-closing Elite violates
+# Frontier's ToS. ProcessManager.stop() refuses these outright, so no setting,
+# custom app entry, or future code path can get there by accident.
+PROTECTED_PROCESSES = frozenset(
+    n.lower().removesuffix(".exe") for n in (STEAM_PROCESS, ELITE_PROCESS))
+
+# If EDLS itself runs inside a kill-on-close Job Object (VS Code's debugpy
+# launcher does this), anything we start joins that job and Windows kills it
+# the moment EDLS exits -- that's how closing EDLS took Steam and the game down
+# with it. Breaking away keeps what we launch independent of our lifetime.
+_BREAKAWAY = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+
 log = logging.getLogger("edls")
+
+
+def _popen_detached(args: list[str], **kwargs) -> subprocess.Popen:
+    """Popen outside our Job Object when the job allows it. A job that forbids
+    breakaway raises OSError; fall back to a normal launch rather than fail."""
+    flags = kwargs.pop("creationflags", 0)
+    if _BREAKAWAY:
+        try:
+            return subprocess.Popen(args, creationflags=flags | _BREAKAWAY,
+                                    **kwargs)
+        except OSError:
+            pass
+    return subprocess.Popen(args, creationflags=flags, **kwargs)
 
 
 def setup_logging() -> None:
@@ -184,7 +222,7 @@ class ProcessManager:
         if not path or not os.path.exists(path):
             return None
         try:
-            popen = subprocess.Popen([path], cwd=os.path.dirname(path) or None)
+            popen = _popen_detached([path], cwd=os.path.dirname(path) or None)
             with self._lock:
                 self.launched[descriptor.name] = popen.pid
             return psutil.Process(popen.pid)
@@ -194,7 +232,13 @@ class ProcessManager:
 
     def stop(self, descriptor: AppDescriptor) -> bool:
         """Kill a single app, by our tracked PID first, then by process name.
-        Returns True if something was actually killed."""
+        Returns True if something was actually killed. Never touches Steam or
+        the game (PROTECTED_PROCESSES)."""
+        if descriptor.process_name.lower().removesuffix(".exe") \
+                in PROTECTED_PROCESSES:
+            log.warning("Refusing to kill protected process %s",
+                        descriptor.process_name)
+            return False
         with self._lock:
             pid = self.launched.get(descriptor.name)
         proc: Optional[psutil.Process] = None
@@ -241,6 +285,10 @@ class Engine:
 
         self._thread: Optional[threading.Thread] = None
         self._shutdown_thread: Optional[threading.Thread] = None
+        # Card-driven Steam/Elite start/stop: those wait on processes, so they
+        # can't run on the GUI thread like a companion app's quick Popen can.
+        self._system_thread: Optional[threading.Thread] = None
+        self._refresh_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
 
     # ---- signal helpers (everything outbound goes through dispatch) ----
@@ -263,9 +311,61 @@ class Engine:
         return [a for a in self.settings.apps if a.enabled]
 
     def _find_descriptor(self, name: str) -> Optional[AppDescriptor]:
-        return next((a for a in self.settings.apps if a.name == name), None)
+        """Resolve a status-card key to a descriptor. Falls back to SYSTEM_APPS
+        so Steam and Elite resolve too -- they aren't in settings.apps, which is
+        why their cards' START/STOP used to silently do nothing."""
+        return (next((a for a in self.settings.apps if a.name == name), None)
+                or config.SYSTEM_APPS.get(name))
+
+    @property
+    def tracked_apps(self) -> list[AppDescriptor]:
+        """Everything that can have a status card: Steam, the game, and every
+        app in settings -- enabled or not. Deliberately wider than
+        `enabled_apps`: the view can show read-only cards for apps the CMDR
+        hasn't enabled, and those still need honest status. (Emitting status for
+        an app with no card is harmless -- StatusPanel.update_card no-ops on an
+        unknown key.) `enabled_apps` stays the launch/shutdown set."""
+        return list(config.SYSTEM_APPS.values()) + list(self.settings.apps)
+
+    @staticmethod
+    def _live_state(name: str) -> AppState:
+        """What to report for a process that's up. The game says RUNNING,
+        everything else ONLINE -- matching the launch sequence's wording."""
+        return AppState.RUNNING if name == KEY_ELITE else AppState.ONLINE
 
     # ---- public API (called by the view) ----
+    def refresh_status(self) -> None:
+        """REFRESH button: reconcile every card with what's actually running.
+        This is how a game or tool started *before* (or outside of) EDLS stops
+        showing as Offline.
+
+        Threaded, because the first process scan of a session can take a couple
+        of seconds to warm up -- inline it would freeze the window."""
+        if self._refresh_thread and self._refresh_thread.is_alive():
+            return
+        self._refresh_thread = threading.Thread(target=self._refresh, daemon=True)
+        self._refresh_thread.start()
+
+    def _refresh(self) -> None:
+        apps = self.tracked_apps
+        running = self.pm.find_many(a.process_name for a in apps)
+        # Nothing found here is recorded as launched-by-us, so an app the user
+        # started by hand stays safe from a LAUNCHED_ONLY shutdown.
+        for app in apps:
+            if self._stop.is_set():
+                return          # window closed mid-scan; nothing to report to
+            proc = running.get(app.process_name)
+            if proc:
+                self._status(app.name, self._live_state(app.name), proc.pid)
+            elif not (self._thread and self._thread.is_alive()):
+                # Checked per app, not once up front: a launch sequence may have
+                # started during the scan above (it can take seconds on a cold
+                # process table), and while it runs it owns the status narrative
+                # -- better to say nothing than to contradict a "Waiting..." .
+                self._status(app.name, AppState.OFFLINE)
+        self._log(f"Status refreshed - {len(running)} of {len(apps)} running.",
+                  "dim")
+
     def launch(self) -> None:
         if self._thread and self._thread.is_alive():
             return
@@ -285,6 +385,16 @@ class Engine:
         self._shutdown_thread.start()
 
     def start_app(self, name: str) -> None:
+        # Steam and the game are URI-launched and have to be waited on, so they
+        # take the threaded path; a companion app's Popen returns immediately
+        # and stays inline on the calling (GUI) thread.
+        if name == KEY_STEAM:
+            self._run_system(self._card_start_steam)
+            return
+        if name == KEY_ELITE:
+            self._run_system(self._card_start_elite)
+            return
+
         desc = self._find_descriptor(name)
         if not desc:
             return
@@ -296,11 +406,84 @@ class Engine:
             self._status(name, AppState.FAILED)
 
     def stop_app(self, name: str) -> None:
+        # Steam gets asked to quit politely rather than killed (see
+        # _card_stop_steam). The game has no graceful exit and killing it
+        # violates the ToS, so EDLS simply won't -- the CMDR quits from the
+        # in-game menu.
+        if name == KEY_STEAM:
+            self._run_system(self._card_stop_steam)
+            return
+        if name == KEY_ELITE:
+            self._log("EDLS doesn't close Elite: Dangerous - quit from the "
+                      "in-game menu.", "warning")
+            return
+
         desc = self._find_descriptor(name)
         if not desc:
             return
         self.pm.stop(desc)
         self._status(name, AppState.STOPPED)
+
+    # ---- card-driven Steam / Elite control ----
+    def _run_system(self, fn: Callable[[], None]) -> None:
+        """Run a system-app (Steam/Elite) action on a short-lived worker, unless
+        the full launch sequence or a previous action is still going."""
+        if self._thread and self._thread.is_alive():
+            self._log("Launch sequence already running.", "warning")
+            return
+        if self._system_thread and self._system_thread.is_alive():
+            return
+        self._system_thread = threading.Thread(target=fn, daemon=True)
+        self._system_thread.start()
+
+    def _card_start_steam(self) -> None:
+        existing = self.pm.find(STEAM_PROCESS)
+        if existing:
+            self._status(KEY_STEAM, AppState.ONLINE, existing.pid)
+            self._log("Steam is already running.", "dim")
+            return
+        self._status(KEY_STEAM, AppState.LAUNCHING)
+        self._log("Launching Steam...")
+        self._open_uri(STEAM_URI_MAIN)
+        proc = self._await_process(STEAM_PROCESS, STEAM_WAIT)
+        if self._stop.is_set():
+            return                      # window closed mid-wait
+        if proc:
+            self._status(KEY_STEAM, AppState.ONLINE, proc.pid)
+            self._log(f"Steam online. (PID {proc.pid})", "success")
+        else:
+            self._status(KEY_STEAM, AppState.FAILED)
+            self._log(f"Steam did not start within {STEAM_WAIT}s.", "error")
+
+    def _card_stop_steam(self) -> None:
+        """Ask Steam to exit via steam://exit. Deliberately NOT a kill: killing
+        steam.exe out from under a running game or download is worse than
+        leaving it up, so a refusal is reported, not escalated."""
+        if not self.pm.find(STEAM_PROCESS):
+            self._status(KEY_STEAM, AppState.OFFLINE)
+            return
+        self._log("Asking Steam to exit...")
+        self._open_uri(STEAM_URI_EXIT)
+        if self._await_gone(STEAM_PROCESS, STEAM_EXIT_WAIT):
+            self._status(KEY_STEAM, AppState.STOPPED)
+            self._log("Steam closed.", "success")
+        elif not self._stop.is_set():
+            self._log("Steam is still running - it won't exit while a game or "
+                      "download is active.", "warning")
+
+    def _card_start_elite(self) -> None:
+        existing = self.pm.find(ELITE_PROCESS)
+        if existing:
+            self._status(KEY_ELITE, AppState.RUNNING, existing.pid)
+            self._log("Elite: Dangerous is already running.", "dim")
+            return
+        self._log("Starting the game only - no companion apps, no session "
+                  "monitor. Use LAUNCH for the full sequence.", "dim")
+        proc = self._launch_elite(timeout=ELITE_WAIT)
+        if proc is None and not self._stop.is_set():
+            self._status(KEY_ELITE, AppState.FAILED)
+            self._log(f"Elite: Dangerous did not start within {ELITE_WAIT}s.",
+                      "error")
 
     def close(self) -> None:
         """Window is closing: stop the worker, but leave the game and tools
@@ -351,31 +534,48 @@ class Engine:
         return True
 
     def _start_steam(self) -> bool:
-        if not self.pm.find(STEAM_PROCESS):
+        """Bring Steam up for the launch sequence. Returns False only if the
+        window was closed mid-wait -- a Steam that's merely slow isn't fatal,
+        since steam://run brings the client up on its own."""
+        steam = self.pm.find(STEAM_PROCESS)
+        if not steam:
             self._status(KEY_STEAM, AppState.LAUNCHING)
             self._log("Steam offline - launching...")
-            self._open_uri("steam://open/main")
-            if self._sleep(10):           # interrupted by close()
+            self._open_uri(STEAM_URI_MAIN)
+            steam = self._await_process(STEAM_PROCESS, STEAM_WAIT)
+            if self._stop.is_set():
                 return False
-        steam = self.pm.find(STEAM_PROCESS)
-        self._status(KEY_STEAM, AppState.ONLINE, steam.pid if steam else None)
-        self._log("Steam online.", "success")
+        if steam:
+            self._status(KEY_STEAM, AppState.ONLINE, steam.pid)
+            self._log("Steam online.", "success")
+        else:
+            # Press on, and let _launch_elite correct the card once the game
+            # proves Steam came up after all.
+            self._status(KEY_STEAM, AppState.WAITING)
+            self._log(f"Steam not up after {STEAM_WAIT}s - continuing anyway.",
+                      "warning")
         return True
 
-    def _launch_elite(self) -> Optional[psutil.Process]:
+    def _launch_elite(
+        self, timeout: Optional[float] = None
+    ) -> Optional[psutil.Process]:
+        """Open the game through Steam and wait for its process. `timeout=None`
+        waits indefinitely (the launch sequence); the card path passes a limit."""
         self._status(KEY_ELITE, AppState.WAITING)
         self._log("Opening Elite: Dangerous via Steam...")
         self._open_uri(f"steam://run/{self.settings.elite_app_id}")
         self._log("Waiting for EliteDangerous64.exe...")
-        while not self._stop.is_set():
-            proc = self.pm.find(ELITE_PROCESS)
-            if proc:
-                self._status(KEY_ELITE, AppState.RUNNING, proc.pid)
-                self._log(f"Elite: Dangerous online. (PID {proc.pid})", "success")
-                return proc
-            if self._sleep(2):
-                return None
-        return None
+        proc = self._await_process(ELITE_PROCESS, timeout)
+        if not proc:
+            return None
+        self._status(KEY_ELITE, AppState.RUNNING, proc.pid)
+        self._log(f"Elite: Dangerous online. (PID {proc.pid})", "success")
+        # The game started through Steam, so Steam is definitely up now --
+        # correct its card if the wait above timed out.
+        steam = self.pm.find(STEAM_PROCESS)
+        if steam:
+            self._status(KEY_STEAM, AppState.ONLINE, steam.pid)
+        return proc
 
     def _launch_tools(self) -> list[AppDescriptor]:
         launched: list[AppDescriptor] = []
@@ -443,13 +643,49 @@ class Engine:
     @staticmethod
     def _open_uri(uri: str) -> None:
         if hasattr(os, "startfile"):
-            os.startfile(uri)                       # Windows: launches steam:// URIs
+            # Not os.startfile: when Steam isn't running, ShellExecute makes
+            # steam.exe (and so the game) our child, inside our Job Object. Going
+            # through a detached `cmd /c start` keeps them out of it.
+            try:
+                _popen_detached(["cmd", "/c", "start", "", uri],
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+            except OSError:
+                os.startfile(uri)
         else:                                       # dev fallback on non-Windows
             subprocess.Popen(["xdg-open", uri])
 
     def _sleep(self, seconds: float) -> bool:
         """Interruptible sleep. Returns True if a stop was requested while waiting."""
         return self._stop.wait(timeout=seconds)
+
+    def _await_process(self, process_name: str,
+                       timeout: Optional[float] = None
+                       ) -> Optional[psutil.Process]:
+        """Poll until `process_name` appears. Returns it, or None if the timeout
+        elapsed or close() was requested. `timeout=None` waits indefinitely."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while not self._stop.is_set():
+            proc = self.pm.find(process_name)
+            if proc:
+                return proc
+            if deadline is not None and time.monotonic() >= deadline:
+                return None
+            if self._sleep(POLL_SECONDS):
+                return None
+        return None
+
+    def _await_gone(self, process_name: str, timeout: float) -> bool:
+        """The inverse: poll until `process_name` is gone. False on timeout or
+        if close() was requested."""
+        deadline = time.monotonic() + timeout
+        while not self._stop.is_set():
+            if not self.pm.find(process_name):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            if self._sleep(POLL_SECONDS):
+                return False
+        return False
 
 
 # =============================================================================

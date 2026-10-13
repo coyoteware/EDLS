@@ -174,6 +174,16 @@ REGISTRY: list[AppDescriptor] = [
 
 REGISTRY_BY_NAME = {a.name: a for a in REGISTRY}
 
+# The two non-companion rows: Steam and the game itself. They aren't in REGISTRY
+# (they're not user-configurable, and they launch via steam:// URIs rather than a
+# path), but both the status cards and the engine's per-card start/stop need a
+# descriptor for them -- so it lives here once instead of being constructed by
+# hand in ui.py. Read-only: these are shared instances, don't mutate them.
+SYSTEM_APPS: dict[str, AppDescriptor] = {
+    KEY_STEAM: AppDescriptor(KEY_STEAM, STEAM_PROCESS),
+    KEY_ELITE: AppDescriptor(KEY_ELITE, ELITE_PROCESS),
+}
+
 
 # =============================================================================
 # Settings
