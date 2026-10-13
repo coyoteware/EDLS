@@ -1,17 +1,20 @@
+# **WIP!!!**
+
+
+
 # EDLS — Elite: Dangerous Launch Suite
 
-> Starts the game and all your companion tools in one click, watches the game
-> while you fly, and shuts the tools back down when you're done. o7
+> Launch _Elite_ (bypassing the Frontier launcher!) - and your preferred selection of companion apps like EDSM,
+> SrvSurvey, and more, in a single click.
 
 EDLS is a Windows desktop launcher for [Elite: Dangerous](https://www.elitedangerous.com/).
 It brings up Steam → Elite → up to a dozen companion apps in the right order,
-shows a live HUD-style status board while you play, and tears the third-party
-tools down automatically when the game closes.
+shows a live HUD-style status board while you play, and shuts itself and the rest of your companion apps down when Elite closes.
 
-This is the **Python rewrite** of the original PowerShell/WPF suite. It keeps the
-look and behaviour of the original while replacing the 1,500-line `.ps1` monolith
-with three small, testable modules.
+Originally a 20 line powershell script, then bloated to >1000 lines of WPF ui, now in nice clean modern python with good thread management.
 
+---
+*DISCLAIMER*: I did make use of claude code for this project. *HOWEVER*, I also have a bachelors' in computer science which I earned prior to the advent of LLMs. This is not vibecoded slop!!
 ---
 
 ## Features
