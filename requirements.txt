@@ -2,6 +2,7 @@
 # Install with:  pip install -r requirements.txt
 #
 # PySide6 pulls in PySide6-Essentials + shiboken6, which is all this project
-# uses (QtCore / QtGui / QtWidgets). No Addons needed.
+# uses (QtCore / QtGui / QtWidgets, and QtNetwork for the one-copy-only check).
+# No Addons needed.
 PySide6>=6.6
 psutil>=5.9

@@ -98,21 +98,55 @@ def main():
     run("busy toggle (launch button)",
         lambda: (win._btns.set_busy(True), win._btns.set_busy(False)))
 
-    def status_refresh():
-        # The REFRESH button's whole job: reconcile the cards with what's really
-        # running. Runs the scan inline here (engine.refresh_status() threads it)
-        # so a failure surfaces in this stage instead of in a daemon thread.
-        eng_obj = ctx["engine"]
-        seen = {}
-        eng_obj.on_status.connect(lambda k, s, p: seen.__setitem__(k, s))
-        eng_obj._refresh()
-        # Status goes out through engine.dispatch, which the view marshals onto
-        # the GUI thread -- so the emissions are queued until the loop spins.
-        app.processEvents()
-        tracked = {a.name for a in eng_obj.tracked_apps}
-        assert tracked <= set(seen), \
-            f"refresh skipped cards: {tracked - set(seen)}"
-    run("status refresh reports every card", status_refresh)
+    def status_watcher():
+        # The watcher replaced REFRESH. Feed _watch_tick() fake scans on a
+        # headless engine (inline dispatch) and check it reports exactly the
+        # changes: nothing more, nothing less.
+        import time as _time
+        S = config.AppState
+        w = eng.Engine(settings)
+        emits, logs = [], []
+        w.on_status.connect(lambda k, s, p: emits.append((k, s)))
+        w.on_log.connect(lambda m, lvl: logs.append(m))
+        apps = w.tracked_apps
+        steam = config.SYSTEM_APPS["Steam"].process_name
+        elite = config.SYSTEM_APPS["Elite"].process_name
+
+        class P:   # stands in for a psutil.Process
+            pid = 4242
+
+        def tick(found, started=None):
+            # Real ticks are seconds apart; these run back to back. A plain tick
+            # therefore pretends its scan began after every earlier update.
+            emits.clear(); logs.clear()
+            w._watch_tick(apps, found, started or _time.monotonic() + 1,
+                          quiet=False)
+            return dict(emits)
+
+        # First sight: every card gets a state, and nothing is logged.
+        emits.clear()
+        w._watch_tick(apps, {steam: P()}, _time.monotonic(), quiet=True)
+        got = dict(emits)
+        assert got["Steam"] is S.ONLINE and got["Elite"] is S.OFFLINE, got
+        assert len(got) == len(apps) and not logs, (got, logs)
+        # Steam closes on its own -> Offline, with a log line.
+        assert tick({}) == {"Steam": S.OFFLINE} and logs, logs
+        # Nothing changed -> silence.
+        assert tick({}) == {} and not logs
+        # "Waiting..." is left alone until the game actually appears.
+        w._status("Elite", S.WAITING)
+        assert tick({}) == {}, "watcher overwrote Waiting..."
+        assert tick({elite: P()}) == {"Elite": S.RUNNING}
+        # A card set by an action after the scan began is skipped (no race).
+        before = _time.monotonic()
+        w._status("Steam", S.ONLINE)
+        assert "Steam" not in tick({}, started=before)
+        # ERROR (couldn't close) counts as running: kept while it runs,
+        # cleared to Offline once it's gone.
+        w._status("Steam", S.ERROR)
+        assert tick({steam: P(), elite: P()}) == {}
+        assert tick({elite: P()}) == {"Steam": S.OFFLINE}
+    run("status watcher reports only changes", status_watcher)
 
     def system_card_paint():
         # Steam/Elite are ordinary cards now (no more double-wide Elite). Render
@@ -175,14 +209,142 @@ def main():
     def protected_processes():
         # Killing the game violates the ToS; EDLS must refuse even if asked.
         # Safe to call for real: the guard returns before any process lookup.
+        from dataclasses import replace as _replace
         import main as _main
         for key in ("Steam", "Elite"):
             desc = config.SYSTEM_APPS[key]
-            assert _main.ProcessManager().stop(desc) is False, \
-                f"ProcessManager.stop would kill {key}"
+            # ...and under a custom app's name, without the .exe, in any case.
+            alias = _replace(desc, name="Custom",
+                             process_name=desc.process_name[:-4].upper())
+            for d in (desc, alias):
+                assert _main.ProcessManager().stop(d) is \
+                    _main.StopResult.PROTECTED, \
+                    f"ProcessManager.stop would kill {d.process_name}"
     run("Steam / Elite are never killed", protected_processes)
 
-    run("boot animation", win._play_boot_animation)
+    def elite_card_muting():
+        # R-09: while the game is starting (or running) the Elite card button
+        # greys out but still answers clicks -- with a log line, never an action.
+        # Clicks go to a standalone panel: a real one is wired to the engine,
+        # and a regression here must not be able to start the actual game.
+        S = config.AppState
+        panel = ui.StatusPanel([])
+        card = panel.cards["Elite"]
+        notices, actions = [], []
+        card.notice.connect(notices.append)
+        card.start_stop_clicked.connect(lambda *a: actions.append(a))
+        for st in (S.WAITING, S.RUNNING):
+            card.update_state(st, None)
+            card.ctrl_btn.click()
+        assert len(notices) == 2 and not actions, (notices, actions)
+        # Right after the game stops, START is held for a moment.
+        card.update_state(S.OFFLINE, None)
+        assert card._blocked_reason, "START should be held briefly"
+        panel.deleteLater()
+        # LAUNCH mutes while the card (not a LAUNCH session) is starting it.
+        win._on_status("Elite", S.WAITING, None)
+        assert win._btns.launch_btn.muted, "LAUNCH should grey out"
+        win._on_status("Elite", S.OFFLINE, None)
+        assert not win._btns.launch_btn.muted
+    run("Elite card / LAUNCH grey each other out", elite_card_muting)
+
+    def error_card():
+        # R-11: a tool EDLS couldn't close shows ERROR, and clicking retries
+        # STOP. Standalone panel, so the click can't stop a real app.
+        from dataclasses import replace as _replace
+        panel = ui.StatusPanel([_replace(settings.apps[0], name="Tool",
+                                         enabled=True)])
+        card = panel.cards["Tool"]
+        card.update_state(config.AppState.ERROR, 4321)
+        assert card.ctrl_btn.text() == "ERROR", card.ctrl_btn.text()
+        hits = []
+        card.start_stop_clicked.connect(lambda n, running: hits.append(running))
+        card.ctrl_btn.click()
+        assert hits == [True], "ERROR click should ask to stop it again"
+        panel.deleteLater()
+    run("ERROR card button", error_card)
+
+    def locked_settings():
+        # R-15: during a session the app list can't change -- every edit path
+        # is refused and reported (once) for the activity log.
+        from PySide6.QtWidgets import QMessageBox
+        dlg = ui.SettingsDialog(settings, locked=True)
+        reports, popups = [], []
+        dlg.locked_attempt.connect(lambda: reports.append(1))
+        real = QMessageBox.information
+        QMessageBox.information = lambda *a, **k: popups.append(a)
+        try:
+            rows = dlg.table.rowCount()
+            dlg._add_row(); dlg._edit_row(0); dlg._reset_defaults()
+            dlg.table.selectRow(0); dlg._remove_row()
+        finally:
+            QMessageBox.information = real
+        assert dlg.table.rowCount() == rows, "locked list was changed"
+        assert len(popups) == 4 and reports == [1], (popups, reports)
+        dlg.deleteLater()
+    run("settings app list locked during a session", locked_settings)
+
+    def fits_small_screen():
+        # R-18: the window must fit 1024x768 with the taskbar (~1004x697 for
+        # the window), and many apps must scroll instead of growing the window.
+        from dataclasses import replace as _replace
+        assert win.minimumSize() == ui.WIN_MIN, win.minimumSize()
+        hint = win.minimumSizeHint()
+        assert hint.width() <= 1004 and hint.height() <= 697, hint
+        many = [_replace(settings.apps[0], name=f"App {i}", enabled=True)
+                for i in range(30)]
+        panel = ui.StatusPanel(many)
+        assert panel.minimumSizeHint().height() < 200, \
+            f"30 apps made the status panel {panel.minimumSizeHint().height()}px"
+        panel.deleteLater()
+    run("window fits 1024x768, cards scroll", fits_small_screen)
+
+    def boot_animation():
+        # R-21: the window is size-locked while panels animate, then unlocked.
+        win._play_boot_animation()
+        if ui.BOOT_ENABLED:
+            assert win.minimumSize() == win.maximumSize(), "not locked"
+            win._end_boot_lock()
+            assert win.minimumSize() == ui.WIN_MIN, "not unlocked"
+    run("boot animation (window locked meanwhile)", boot_animation)
+
+    def keyboard_focus():
+        # R-20: toggles work from the keyboard; the app list takes Space.
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+
+        def key(widget, k):
+            app.sendEvent(widget, QKeyEvent(QEvent.Type.KeyPress, k,
+                                            Qt.KeyboardModifier.NoModifier))
+        tog = ui.ToggleSwitch(False)
+        assert tog.focusPolicy() == Qt.FocusPolicy.StrongFocus
+        key(tog, Qt.Key.Key_Space)
+        assert tog.isChecked(), "Space should switch it on"
+        key(tog, Qt.Key.Key_Left)
+        assert not tog.isChecked(), "Left should switch it off"
+        assert win._btns.launch_btn.focusPolicy() == Qt.FocusPolicy.TabFocus
+        dlg = ui.SettingsDialog(settings)
+        dlg.table.setCurrentCell(0, 1)
+        chk = dlg.table.cellWidget(0, 0).findChild(ui.QCheckBox)
+        before = chk.isChecked()
+        key(dlg.table, Qt.Key.Key_Space)
+        assert chk.isChecked() != before, "Space should tick the row's ON box"
+        dlg.deleteLater()
+    run("keyboard: toggles, buttons, app list", keyboard_focus)
+
+    def single_instance():
+        # R-23: a second copy finds the first and backs off. A throwaway key,
+        # so a real EDLS running alongside the test isn't involved.
+        key = f"EDLS-selftest-{os.getpid()}"
+        try:
+            assert ui.acquire_single_instance(key), "first copy refused"
+            assert not ui.acquire_single_instance(key), \
+                "second copy didn't notice the first"
+        finally:
+            if ui._instance_server is not None:
+                ui._instance_server.close()
+            ui._instance_server = None
+    run("only one EDLS at a time", single_instance)
 
     run("button glyph icons",
         lambda: [ui._glyph_icon(c, ui.C_AMBER)
@@ -190,7 +352,14 @@ def main():
 
     def settings_dialog(first_run):
         dlg = ui.SettingsDialog(settings, first_run=first_run)
+        got = []
+        dlg.saved.connect(got.append)
+        # Flip the two close-EDLS toggles and check they come back out.
+        dlg.toggle_close_exit.setChecked(not settings.close_on_game_exit)
+        dlg.toggle_close_shutdown.setChecked(not settings.close_on_shutdown)
         dlg._save()   # exercises recompute_removed_defaults + replace path
+        assert got and got[0].close_on_game_exit != settings.close_on_game_exit
+        assert got[0].close_on_shutdown != settings.close_on_shutdown
 
     run("settings dialog (normal) build + save",
         lambda: settings_dialog(False))

@@ -30,6 +30,7 @@ Contract with main.py:
 """
 from __future__ import annotations
 
+import getpass
 import os
 import sys
 import time
@@ -37,7 +38,7 @@ from dataclasses import replace
 from typing import Optional
 
 from PySide6.QtCore import (
-    QEasingCurve, QParallelAnimationGroup, QPoint, Property,
+    QEasingCurve, QEvent, QParallelAnimationGroup, QPoint, Property,
     QPropertyAnimation, QRect, QSize, Qt, QTimer, QUrl, Signal, Slot,
 )
 from PySide6.QtGui import (
@@ -51,8 +52,9 @@ from PySide6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget, QPushButton,
     QDialog, QCheckBox, QLineEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QDialogButtonBox, QMessageBox,
-    QFileDialog,
+    QFileDialog, QScrollArea,
 )
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 import config
 from config import (
@@ -90,7 +92,7 @@ def _build_color_maps() -> None:
         AppState.NOT_FOUND: (C_INACT,  C_INACT),
         AppState.FAILED:    (C_RED,    C_RED),
         AppState.STOPPED:   (C_INACT,  C_INACT),
-        AppState.CLOSED:    (C_INACT,  C_INACT),
+        AppState.ERROR:     (C_RED,    C_RED),
     }
     LOG_COLORS = {
         "success": C_SUCCESS,
@@ -122,6 +124,10 @@ _DISPLAY_NAMES = {
 }
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
+
+# How long the Elite card keeps START greyed after the game finishes starting
+# or closing -- long enough to swallow an accidental double-click.
+ELITE_HOLD_MS = 3000
 
 # Where the "report issue" credit link points (the GitHub issues page).
 ISSUES_URL = "https://github.com/coyoteware/EDLS-py/issues"
@@ -298,6 +304,7 @@ class StatusCard(ChamferedFrame):
     the game included — is the same tile with the same header rhythm."""
 
     start_stop_clicked = Signal(str, bool)   # (app_name, currently_running)
+    notice = Signal(str)   # a greyed-out button was clicked: here's why
 
     def __init__(self, descriptor: AppDescriptor,
                  parent: Optional[QWidget] = None) -> None:
@@ -305,6 +312,14 @@ class StatusCard(ChamferedFrame):
                          bg=CARD_BG, border=CARD_BORDER)
         self._name = descriptor.name
         self._state = AppState.OFFLINE
+        # Set while the button is greyed out. It still takes clicks, so the
+        # click can be answered in the activity log instead of silently ignored.
+        self._blocked_reason: Optional[str] = None
+        # The Elite card holds START back briefly after the game finishes
+        # starting or closing, so a quick double-click can't launch it twice.
+        self._hold = QTimer(self)
+        self._hold.setSingleShot(True)
+        self._hold.timeout.connect(self._refresh_button)
         # An app the CMDR hasn't enabled still gets a card when they ask for one
         # (Settings → show cards for apps that aren't enabled). It's read-only:
         # dimmed, tagged OFF, and no START button, since LAUNCH won't touch it.
@@ -354,6 +369,7 @@ class StatusCard(ChamferedFrame):
             self.ctrl_btn = QPushButton("START")
             self.ctrl_btn.setFont(font_display(7))
             self.ctrl_btn.setFixedHeight(20)
+            self.ctrl_btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
             self.ctrl_btn.setStyleSheet(_btn_ctrl_style(active=False))
             self.ctrl_btn.clicked.connect(self._on_ctrl)
             vbox.addWidget(self.ctrl_btn)
@@ -361,10 +377,17 @@ class StatusCard(ChamferedFrame):
         self.update_state(AppState.OFFLINE, None)
 
     def _on_ctrl(self) -> None:
+        if self._blocked_reason:
+            self.notice.emit(self._blocked_reason)
+            return
         self.start_stop_clicked.emit(self._name, self._state.is_running)
 
+    @property
+    def state(self) -> AppState:
+        return self._state
+
     def update_state(self, state: AppState, pid: Optional[int]) -> None:
-        self._state = state
+        prev, self._state = self._state, state
         label_col, dot_col = STATE_COLORS.get(state, (C_INACT, C_INACT))
         pulse = state in (AppState.ONLINE, AppState.RUNNING,
                           AppState.LAUNCHING, AppState.WAITING)
@@ -373,28 +396,52 @@ class StatusCard(ChamferedFrame):
         self.state_lbl.setText(state.label)
         self.state_lbl.setStyleSheet(f"color: {label_col.name()};")
 
-        if self.ctrl_btn is not None:      # None on a not-enabled card
-            is_running = state.is_running
-            if self._name == KEY_ELITE and is_running:
-                # EDLS never closes the game (ToS) -- no STOP on this card.
-                self.ctrl_btn.setText("QUIT IN-GAME")
-                self.ctrl_btn.setEnabled(False)
-                self.ctrl_btn.setStyleSheet(_btn_ctrl_style(active=False))
-            else:
-                self.ctrl_btn.setText("STOP" if is_running else "START")
-                self.ctrl_btn.setEnabled(True)
-                self.ctrl_btn.setStyleSheet(_btn_ctrl_style(active=is_running))
+        if (self._name == KEY_ELITE and not state.is_running
+                and state is not AppState.WAITING
+                and prev in (AppState.WAITING, AppState.RUNNING)):
+            self._hold.start(ELITE_HOLD_MS)
+        self._refresh_button()
 
         # update border colour to match state
         if state in (AppState.ONLINE, AppState.RUNNING):
             self._border = CARD_BORDER_ONLINE
         elif state in (AppState.LAUNCHING, AppState.WAITING):
             self._border = CARD_BORDER_LAUNCHING
-        elif state in (AppState.FAILED,):
+        elif state in (AppState.FAILED, AppState.ERROR):
             self._border = CARD_BORDER_FAILED
         else:
             self._border = CARD_BORDER_OFF
         self.update()
+
+    def _refresh_button(self) -> None:
+        """Set the control button's label, look, and (for a greyed-out button)
+        the reason a click gets answered with."""
+        if self.ctrl_btn is None:          # not-enabled card: OFF tag, no button
+            return
+        state = self._state
+        reason: Optional[str] = None
+        if self._name == KEY_ELITE:
+            if state is AppState.WAITING:
+                text, reason = "STARTING", "The game is already starting."
+            elif state.is_running:
+                # EDLS never closes the game (ToS) -- no STOP on this card.
+                text, reason = "QUIT IN-GAME", (
+                    "EDLS doesn't close Elite: Dangerous - quit from the "
+                    "in-game menu.")
+            elif self._hold.isActive():
+                text, reason = "START", (
+                    "Give the game a moment before starting it again.")
+            else:
+                text = "START"
+            style = _btn_ctrl_style(muted=reason is not None)
+        elif state is AppState.ERROR:
+            text, style = "ERROR", _btn_ctrl_style(error=True)
+        else:
+            text = "STOP" if state.is_running else "START"
+            style = _btn_ctrl_style(active=state.is_running)
+        self._blocked_reason = reason
+        self.ctrl_btn.setText(text)
+        self.ctrl_btn.setStyleSheet(style)
 
 
 # ── Log view ──────────────────────────────────────────────────────────────────
@@ -412,16 +459,7 @@ class LogView(QTextEdit):
                 border: none;
                 padding: 4px 8px;
             }}
-            QScrollBar:vertical {{
-                background: transparent; width: 4px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {C_DIM.name()}; border-radius: 2px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
-            }}
-        """)
+        """ + _thin_scrollbar_qss())
 
     def append_line(self, message: str, level: str = "default") -> None:
         color = LOG_COLORS.get(level, C_AMBER)
@@ -431,6 +469,22 @@ class LogView(QTextEdit):
         self.append(f"{ts_html}{msg_html}")
         sb = self.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+
+def _thin_scrollbar_qss() -> str:
+    """The slim HUD scrollbar shared by the activity log and the card grid."""
+    return f"""
+        QScrollBar:vertical {{ background: transparent; width: 4px; }}
+        QScrollBar::handle:vertical {{
+            background: {C_DIM.name()}; border-radius: 2px; min-height: 20px;
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0;
+        }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+    """
 
 
 def _esc(text: str) -> str:
@@ -471,8 +525,22 @@ class ChamferedButton(QPushButton):
         super().__init__(text, parent)
         self._ch = chamfer
         self._c: dict = {}
+        # Muted = drawn greyed out but still clickable, so the owner can answer
+        # the click (e.g. explain in the log) instead of it vanishing.
+        self._muted = False
         self.set_colors(**colors)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        # Tab reaches it (Space presses it); a mouse click doesn't take focus,
+        # so the focus outline only appears for keyboard users.
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+
+    def set_muted(self, muted: bool) -> None:
+        self._muted = muted
+        self.update()
+
+    @property
+    def muted(self) -> bool:
+        return self._muted
 
     def set_colors(self, *, bg, bg_h, bg_p, bd, bd_h, fg, fg_h) -> None:
         self._c = dict(bg=QColor(bg), bg_h=QColor(bg_h), bg_p=QColor(bg_p),
@@ -492,7 +560,7 @@ class ChamferedButton(QPushButton):
         ])
 
     def paintEvent(self, _event) -> None:  # noqa: N802
-        en    = self.isEnabled()
+        en    = self.isEnabled() and not self._muted
         hover = en and self.underMouse()
         down  = en and self.isDown()
         c     = self._c
@@ -515,6 +583,13 @@ class ChamferedButton(QPushButton):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setClipping(False)
         p.drawPath(path)
+        if self.hasFocus():
+            # Keyboard focus: an inset outline that follows the chamfer.
+            ring = QPainterPath()
+            ring.addPolygon(self._poly(rect.adjusted(3, 3, -3, -3)))
+            ring.closeSubpath()
+            p.setPen(QPen(c["bd_h"], 1, Qt.PenStyle.DashLine))
+            p.drawPath(ring)
         p.end()
 
         opt = QStyleOptionButton()
@@ -527,19 +602,36 @@ class ChamferedButton(QPushButton):
         sp.end()
 
 
-def _btn_ctrl_style(active: bool = False) -> str:
+def _btn_ctrl_style(active: bool = False, *, muted: bool = False,
+                    error: bool = False) -> str:
+    """Card button QSS. active = STOP (green), muted = greyed out (still
+    clickable, so the click can be explained), error = couldn't close (red)."""
+    focus = "#C25E0A" if IS_LIGHT else "#FF8C1A"   # keyboard focus outline
     base = ("QPushButton {{ font-family: 'Euro Caps'; font-size: 7px;"
             " font-weight:700; letter-spacing:1px; border:1px solid {bd};"
             " color:{fg}; background:{bg}; padding: 0 4px; }}"
-            " QPushButton:hover {{ border-color:{bdh}; color:{fgh}; }}")
+            " QPushButton:hover {{ border-color:{bdh}; color:{fgh}; }}"
+            " QPushButton:focus {{ border:1px dashed " + focus + "; }}")
     if IS_LIGHT:
         # Bright buttons for the light cards: filled green STOP, light grey START.
+        if error:
+            return base.format(bd="#C0322B", fg="#A0261F", bg="#F6D5D3",
+                               bdh="#8E1F19", fgh="#8E1F19")
+        if muted:
+            return base.format(bd="#D0D5DB", fg="#A3ABB5", bg="#EEF0F3",
+                               bdh="#D0D5DB", fgh="#A3ABB5")
         if active:
             return base.format(bd="#3FA85F", fg="#1C6B36", bg="#CDEED7",
                                bdh="#2E9E55", fgh="#15592C")
         return base.format(bd="#B4BCC6", fg="#5A6573", bg="#E9EDF1",
                            bdh="#C25E0A", fgh="#C25E0A")
     # Dark theme (original).
+    if error:
+        return base.format(bd="#CC3D3D", fg="#CC3D3D", bg="#1A0A0A",
+                           bdh="#FF5555", fgh="#FF6666")
+    if muted:
+        return base.format(bd="#181818", fg="#303030", bg="#0A0A0A",
+                           bdh="#181818", fgh="#303030")
     if active:
         return base.format(bd="#226622", fg="#44AA44", bg="#0D1A0D",
                            bdh="#44AA44", fgh="#66CC66")
@@ -686,6 +778,7 @@ class HeaderPanel(QWidget):
 # ── Status panel ──────────────────────────────────────────────────────────────
 class StatusPanel(ChamferedFrame):
     start_stop_clicked = Signal(str, bool)
+    notice = Signal(str)   # forwarded from the cards
 
     def __init__(self, apps: list[AppDescriptor],
                  parent: Optional[QWidget] = None) -> None:
@@ -701,6 +794,26 @@ class StatusPanel(ChamferedFrame):
         lbl.setStyleSheet(f"color: {C_TMID.name()}; letter-spacing: 3px;")
         vbox.addWidget(lbl)
 
+        # The card grid scrolls, so the panel can shrink to about one row on a
+        # small screen (1024x768) however many apps there are. Everything in
+        # it is transparent: the panel paints its own chamfered background.
+        scroll = QScrollArea()
+        scroll.setObjectName("cardScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMinimumHeight(100)          # one card row
+        host = QWidget()
+        host.setObjectName("cardGrid")
+        scroll.setWidget(host)
+        scroll.viewport().setAutoFillBackground(False)
+        scroll.setStyleSheet(
+            "#cardScroll, #cardGrid, #qt_scrollarea_viewport"
+            " { background: transparent; }" + _thin_scrollbar_qss())
+        vbox.addWidget(scroll, 1)
+        host_box = QVBoxLayout(host)
+        host_box.setContentsMargins(0, 0, 0, 0)
+
         # card grid: 4 columns
         from PySide6.QtWidgets import QGridLayout
         grid = QGridLayout()
@@ -712,6 +825,7 @@ class StatusPanel(ChamferedFrame):
             nonlocal col, row
             grid.addWidget(card, row, col)
             card.start_stop_clicked.connect(self.start_stop_clicked)
+            card.notice.connect(self.notice)
             col += 1
             if col >= 4:
                 col = 0
@@ -738,9 +852,9 @@ class StatusPanel(ChamferedFrame):
                 row, col)
             col += 1
 
-        vbox.addLayout(grid)
+        host_box.addLayout(grid)
         # leftover height sits below the grid; cards stay pinned to the top
-        vbox.addStretch(1)
+        host_box.addStretch(1)
 
     def update_card(self, key: str, state: AppState,
                     pid: Optional[int]) -> None:
@@ -794,7 +908,6 @@ class ButtonBar(QWidget):
     autostart_toggled = Signal(bool)
     settings_clicked  = Signal()
     launch_clicked    = Signal()
-    refresh_clicked   = Signal()
 
     def __init__(self, version: str, auto_start: bool,
                  parent: Optional[QWidget] = None) -> None:
@@ -823,40 +936,37 @@ class ButtonBar(QWidget):
         issue.setFont(font_mono(9))
         issue.setStyleSheet(f"color: {C_TDIM.name()};")
         issue.setOpenExternalLinks(True)
+        # Reachable with Tab, opened with Enter -- not just a mouse target.
+        issue.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction)
         ver_row.addWidget(issue)
         ver_row.addStretch()
         cred_vbox.addLayout(ver_row)
         hbox.addLayout(cred_vbox)
         hbox.addStretch()
 
-        self.refresh_btn   = ChamferedButton("REFRESH",   chamfer=CHAMFER_CARD, **_C_SECONDARY)
         self.shutdown_btn  = ChamferedButton("SHUTDOWN",   chamfer=CHAMFER_CARD, **_C_DANGER)
         self.autostart_btn = ChamferedButton("AUTO START", chamfer=CHAMFER_CARD,
                                              **(_C_SECONDARY_ON if auto_start else _C_SECONDARY))
         self.settings_btn  = ChamferedButton("SETTINGS",  chamfer=CHAMFER_CARD, **_C_SECONDARY)
         self.launch_btn    = ChamferedButton("LAUNCH",    chamfer=CHAMFER_CARD, **_C_LAUNCH)
 
-        self.refresh_btn.setFont(font_display(9))
         self.shutdown_btn.setFont(font_display(9))
         self.autostart_btn.setFont(font_display(9))
         self.settings_btn.setFont(font_display(9))
         self.launch_btn.setFont(font_display(11))
 
-        # ↻ (U+21BB) rather than AUTO START's ⟳, and in the SETTINGS grey, so the
-        # two loop glyphs don't read as the same control.
-        self.refresh_btn.setIcon(_glyph_icon("↻", QColor("#9A9AA0")))
         self.shutdown_btn.setIcon(power_icon(QColor("#B85555")))
         self.autostart_btn.setIcon(_glyph_icon("⟳", C_ORANGE))
         self.settings_btn.setIcon(_glyph_icon("⚙", QColor("#9A9AA0")))
         self.launch_btn.setIcon(_glyph_icon("▶", C_GOLD))
-        for b in (self.refresh_btn, self.shutdown_btn, self.autostart_btn,
+        for b in (self.shutdown_btn, self.autostart_btn,
                   self.settings_btn, self.launch_btn):
             b.setIconSize(QSize(BTN_ICON, BTN_ICON))
             b.setFixedHeight(BTN_H)
             b.setMinimumWidth(120)
             hbox.addWidget(b, 0, Qt.AlignmentFlag.AlignBottom)
 
-        self.refresh_btn.clicked.connect(self.refresh_clicked)
         self.shutdown_btn.clicked.connect(self.shutdown_clicked)
         self.autostart_btn.clicked.connect(self._toggle_autostart)
         self.settings_btn.clicked.connect(self.settings_clicked)
@@ -926,8 +1036,11 @@ class ToggleSwitch(QWidget):
         super().__init__(parent)
         self._checked = checked
         self._pos = 1.0 if checked else 0.0   # knob travel, 0 (off) .. 1 (on)
-        self.setFixedSize(50, 26)
+        # 3-4 px around the 48x24 track leaves room for the focus ring.
+        self.setFixedSize(56, 30)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._kb_focus = False
         self._anim = QPropertyAnimation(self, b"knobPos", self)
         self._anim.setDuration(150)
         self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
@@ -950,6 +1063,29 @@ class ToggleSwitch(QWidget):
             self.setChecked(not self._checked)
         super().mousePressEvent(event)
 
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        if key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.setChecked(not self._checked)
+        elif key == Qt.Key.Key_Left:
+            self.setChecked(False)
+        elif key == Qt.Key.Key_Right:
+            self.setChecked(True)
+        else:
+            super().keyPressEvent(event)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        super().focusInEvent(event)
+        # Ring only for keyboard focus -- not after every mouse click.
+        self._kb_focus = event.reason() in (
+            Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+            Qt.FocusReason.ShortcutFocusReason)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        super().focusOutEvent(event)
+        self.update()
+
     def _get_pos(self) -> float:
         return self._pos
 
@@ -962,7 +1098,12 @@ class ToggleSwitch(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self.rect().adjusted(1, 1, -1, -1)
+        if self.hasFocus() and self._kb_focus:
+            ring = self.rect().adjusted(1, 1, -1, -1)
+            p.setPen(QPen(TOGGLE_ON, 1.2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(ring, ring.height() / 2.0, ring.height() / 2.0)
+        r = self.rect().adjusted(4, 3, -4, -3)   # the 48x24 track
         radius = r.height() / 2.0
 
         off, on = TOGGLE_OFF, TOGGLE_ON
@@ -1072,11 +1213,21 @@ class SettingsDialog(QDialog):
     In first-run mode it shows a welcome header and all apps checked by default."""
 
     saved = Signal(object)   # emits updated Settings
+    locked_attempt = Signal()   # tried to edit the app list during a session
+
+    # Shown when the app list is touched while a LAUNCH session runs. The list
+    # decides what the session launches and later closes, so it can't change
+    # under a running session.
+    LOCKED_MSG = ("The companion app list is locked while a session is running."
+                  "\n\nIt unlocks when the game closes, or when you restart EDLS.")
 
     def __init__(self, settings: Settings, first_run: bool = False,
+                 locked: bool = False,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._settings = settings
+        self._locked = locked
+        self._lock_reported = False
         self.setWindowTitle("EDLS — First-Time Setup" if first_run else "EDLS — Settings")
         self.setModal(True)
         self.setMinimumSize(620, 500)
@@ -1116,6 +1267,9 @@ class SettingsDialog(QDialog):
             QPushButton {{ background:{_btn_bg}; color:{_fg};
                            border:1px solid {_border}; padding:4px 12px; }}
             QPushButton:hover {{ border-color:{_amber}; color:{_gold}; }}
+            QPushButton:focus {{ border:1px dashed {_amber}; }}
+            QLineEdit:focus {{ border-color:{_amber}; }}
+            QTableWidget:focus {{ border:1px solid {_amber}; }}
         """)
 
         vbox = QVBoxLayout(self)
@@ -1165,6 +1319,12 @@ class SettingsDialog(QDialog):
         self.toggle_scope = _toggle_row(
             "Shutdown closes all enabled apps (not just those EDLS launched)",
             settings.shutdown_scope is ShutdownScope.ALL_ENABLED)
+        self.toggle_close_exit = _toggle_row(
+            "Close EDLS when the game exits",
+            settings.close_on_game_exit)
+        self.toggle_close_shutdown = _toggle_row(
+            "Close EDLS after SHUTDOWN",
+            settings.close_on_shutdown)
         self.toggle_light = _toggle_row(
             "Light mode",
             settings.theme is Theme.LIGHT)
@@ -1174,7 +1334,17 @@ class SettingsDialog(QDialog):
         apps_lbl = QLabel("C O M P A N I O N   A P P S")
         apps_lbl.setFont(font_display(8))
         apps_lbl.setStyleSheet(f"color: {_head_fg}; letter-spacing:3px;")
-        vbox.addWidget(apps_lbl)
+        if locked:
+            apps_hdr = QHBoxLayout()
+            apps_hdr.addWidget(apps_lbl)
+            apps_hdr.addStretch()
+            lock_lbl = QLabel("LOCKED WHILE A SESSION IS RUNNING")
+            lock_lbl.setFont(font_display(7))
+            lock_lbl.setStyleSheet(f"color: {_amber}; letter-spacing:2px;")
+            apps_hdr.addWidget(lock_lbl)
+            vbox.addLayout(apps_hdr)
+        else:
+            vbox.addWidget(apps_lbl)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["ON", "NAME", "PROCESS", "PATH"])
@@ -1199,6 +1369,8 @@ class SettingsDialog(QDialog):
             QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.cellDoubleClicked.connect(
             lambda row, _col: self._edit_row(row))
+        # Keyboard: Space ticks ON, Enter edits, Delete removes (see eventFilter).
+        self.table.installEventFilter(self)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(30)
         self._populate_table(settings.apps)
@@ -1252,6 +1424,10 @@ class SettingsDialog(QDialog):
         default's resolver/path on save (see `_save`)."""
         chk = QCheckBox()
         chk.setChecked(enabled)
+        chk.setEnabled(not self._locked)
+        # Not a Tab stop of its own (11 of them would bury the buttons);
+        # Space on the selected row ticks it instead.
+        chk.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         cell = QWidget()
         cl = QHBoxLayout(cell)
         cl.addWidget(chk)
@@ -1298,7 +1474,41 @@ class SettingsDialog(QDialog):
         self.table.insertRow(r)
         self._set_row(r, name, process, path, enabled)
 
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """Keyboard control of the app list: Space ticks the selected row's ON
+        box, Enter edits it, Delete removes it."""
+        if obj is self.table and event.type() == QEvent.Type.KeyPress:
+            row = self.table.currentRow()
+            key = event.key()
+            if row >= 0 and key == Qt.Key.Key_Space:
+                if not self._blocked():
+                    cell = self.table.cellWidget(row, 0)
+                    chk = cell.findChild(QCheckBox) if cell else None
+                    if chk:
+                        chk.toggle()
+                return True
+            if row >= 0 and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._edit_row(row)
+                return True
+            if row >= 0 and key == Qt.Key.Key_Delete:
+                self._remove_row()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _blocked(self) -> bool:
+        """True -- after explaining why -- if the app list is locked. The first
+        attempt per dialog is also reported, so it lands in the activity log."""
+        if not self._locked:
+            return False
+        if not self._lock_reported:
+            self._lock_reported = True
+            self.locked_attempt.emit()
+        QMessageBox.information(self, "App list locked", self.LOCKED_MSG)
+        return True
+
     def _add_row(self) -> None:
+        if self._blocked():
+            return
         dlg = AppEntryDialog(taken_names=self._existing_names(), parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1311,6 +1521,8 @@ class SettingsDialog(QDialog):
             self._edit_row(rows[0].row())
 
     def _edit_row(self, row: int) -> None:
+        if self._blocked():
+            return
         name_item = self.table.item(row, 1)
         old_process = self.table.item(row, 2)
         path_item = self.table.item(row, 3)
@@ -1338,13 +1550,15 @@ class SettingsDialog(QDialog):
 
     def _remove_row(self) -> None:
         rows = self.table.selectedIndexes()
-        if rows:
+        if rows and not self._blocked():
             self.table.removeRow(rows[0].row())
 
     def _reset_defaults(self) -> None:
         """Restore every field to factory defaults (CMDR name, toggles, and the
         full default app list). Nothing is written until the user hits Save, so
         this is reversible with Cancel."""
+        if self._blocked():   # a reset replaces the app list too
+            return
         if QMessageBox.question(
                 self, "Reset to default",
                 "Reset all settings, apps, and config to their defaults?\n\n"
@@ -1357,6 +1571,8 @@ class SettingsDialog(QDialog):
         self.toggle_inactive.setChecked(defaults.show_inactive_cards)
         self.toggle_scope.setChecked(
             defaults.shutdown_scope is ShutdownScope.ALL_ENABLED)
+        self.toggle_close_exit.setChecked(defaults.close_on_game_exit)
+        self.toggle_close_shutdown.setChecked(defaults.close_on_shutdown)
         self.toggle_light.setChecked(defaults.theme is Theme.LIGHT)
         self._populate_table(defaults.apps)
         # Clear any suppressed defaults so the reset list isn't re-filtered on save.
@@ -1406,6 +1622,8 @@ class SettingsDialog(QDialog):
             shutdown_scope=(ShutdownScope.ALL_ENABLED
                             if self.toggle_scope.isChecked()
                             else ShutdownScope.LAUNCHED_ONLY),
+            close_on_game_exit=self.toggle_close_exit.isChecked(),
+            close_on_shutdown=self.toggle_close_shutdown.isChecked(),
             theme=Theme.LIGHT if self.toggle_light.isChecked() else Theme.DARK,
             apps=new_apps,
             removed_defaults=removed,
@@ -1423,6 +1641,12 @@ class SettingsDialog(QDialog):
 BOOT_ENABLED = True
 BOOT_TOTAL = BOOT_STAGGER * 3 + BOOT_DURATION
 
+# Window sizing. The minimum fits a 1024x768 screen with the taskbar showing
+# (about 1004x697 usable); the card grid scrolls, so any number of apps fits.
+WIN_MIN = QSize(900, 640)
+WIN_DEFAULT = QSize(1000, 880)
+_QWIDGETSIZE_MAX = (1 << 24) - 1
+
 
 class MainWindow(QMainWindow):
     def __init__(self, engine, settings: Settings) -> None:
@@ -1431,13 +1655,16 @@ class MainWindow(QMainWindow):
         self._settings = settings
 
         self.setWindowTitle("Elite: Dangerous · Launch Suite")
-        self.setMinimumSize(900, 800)
-        self.resize(1000, 880)
+        self.setMinimumSize(WIN_MIN)
+        self._fit_to_screen()
 
         # Wire engine.dispatch to the GUI thread
         self._invoker = _Invoker()
         engine.dispatch = self._invoker.invoke
         self._busy = False   # tracked so a theme rebuild can restore button state
+        # Last state per card. Rebuilding the cards (Settings save, theme switch)
+        # re-applies these, so "Waiting..." or ERROR survive the rebuild.
+        self._card_states: dict[str, tuple[AppState, Optional[int]]] = {}
 
         # Background persists across theme switches (it repaints from the themed
         # globals); only the central content is rebuilt on a theme change.
@@ -1455,8 +1682,8 @@ class MainWindow(QMainWindow):
         self._build_content()
 
         self._log.append("Elite: Dangerous Launch Suite ready.", "success")
-        if settings.auto_start:
-            self._log.append("Auto-start enabled — launching...", "dim")
+        for warning in config.LOAD_WARNINGS:
+            self._log.append(warning, "warning")
 
     def _visible_apps(self) -> list[AppDescriptor]:
         """Apps that get a status card: the enabled ones, plus — when the CMDR
@@ -1489,8 +1716,7 @@ class MainWindow(QMainWindow):
         self._splitter.setStyleSheet(
             "QSplitter::handle:vertical { background: transparent; }"
         )
-        self._status = StatusPanel(self._visible_apps())
-        self._status.start_stop_clicked.connect(self._on_start_stop)
+        self._status = self._make_status_panel()
         self._log = LogPanel()
         self._splitter.addWidget(self._status)
         self._splitter.addWidget(self._log)
@@ -1503,17 +1729,56 @@ class MainWindow(QMainWindow):
         self._btns.shutdown_clicked.connect(self._engine.manual_shutdown)
         self._btns.autostart_toggled.connect(self._on_autostart)
         self._btns.settings_clicked.connect(self._open_settings)
-        self._btns.launch_clicked.connect(self._engine.launch)
-        self._btns.refresh_clicked.connect(self._engine.refresh_status)
+        self._btns.launch_clicked.connect(self._on_launch_clicked)
         self._btns.set_busy(self._busy)
+        self._update_launch_mute()
         root.addWidget(self._btns)
+
+    def _make_status_panel(self) -> "StatusPanel":
+        """A fresh status panel for the current app list, wired up and showing
+        the last known state of every card."""
+        panel = StatusPanel(self._visible_apps())
+        panel.start_stop_clicked.connect(self._on_start_stop)
+        panel.notice.connect(lambda msg: self._log.append(msg, "warning"))
+        for key, (state, pid) in self._card_states.items():
+            panel.update_card(key, state, pid)
+        return panel
+
+    def _update_launch_mute(self) -> None:
+        """LAUNCH greys out while the Elite card is starting the game on its
+        own, so the two can't race (it stays clickable to explain why)."""
+        elite = self._card_states.get(KEY_ELITE, (AppState.OFFLINE, None))[0]
+        self._btns.launch_btn.set_muted(
+            not self._busy and elite is AppState.WAITING)
+
+    def _on_launch_clicked(self) -> None:
+        if self._btns.launch_btn.muted:
+            self._log.append("The game is already being started from its card "
+                             "- wait for it to finish.", "warning")
+            return
+        self._engine.launch()
+
+    def _fit_to_screen(self) -> None:
+        """Open at the default size, shrunk to fit a small screen, centred."""
+        screen = self.screen().availableGeometry()
+        w = max(WIN_MIN.width(),
+                min(WIN_DEFAULT.width(), int(screen.width() * 0.92)))
+        h = max(WIN_MIN.height(),
+                min(WIN_DEFAULT.height(), int(screen.height() * 0.92)))
+        self.resize(w, h)
+        self.move(screen.x() + (screen.width() - w) // 2,
+                  screen.y() + max(0, (screen.height() - h) // 2 - 16))
 
     def _play_boot_animation(self) -> None:
         """Staggered fade-up of the four panels. Runs once, after the layout has
         positioned everything (called via a 0ms timer post-show). The opacity
-        effect is removed on completion so it can't dull later text rendering."""
+        effect is removed on completion so it can't dull later text rendering.
+        The window is locked to its size meanwhile: the animation moves panels
+        to positions captured up front, and a resize mid-way would strand them."""
         if not BOOT_ENABLED:
             return
+        self.setFixedSize(self.size())
+        QTimer.singleShot(BOOT_TOTAL + 20, self._end_boot_lock)
         panels = [self._header, self._status, self._log, self._btns]
         self._boot_anims: list[QParallelAnimationGroup] = []
 
@@ -1550,6 +1815,15 @@ class MainWindow(QMainWindow):
             self._boot_anims.append(group)
             QTimer.singleShot(i * BOOT_STAGGER, group.start)
 
+    def _end_boot_lock(self) -> None:
+        """Unlock the window after the boot animation, and re-seat the panels
+        in case anything moved them while it ran."""
+        self.setMinimumSize(WIN_MIN)
+        self.setMaximumSize(_QWIDGETSIZE_MAX, _QWIDGETSIZE_MAX)
+        layout = self.centralWidget().layout()
+        layout.invalidate()
+        layout.activate()
+
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._bg.setGeometry(self.rect())
@@ -1561,16 +1835,32 @@ class MainWindow(QMainWindow):
     @Slot(str, object, object)
     def _on_status(self, key: str, state: AppState,
                    pid: Optional[int]) -> None:
+        self._card_states[key] = (state, pid)
         self._status.update_card(key, state, pid)
+        if key == KEY_ELITE:
+            self._update_launch_mute()
 
     @Slot(bool)
     def _on_busy(self, busy: bool) -> None:
         self._busy = busy
         self._btns.set_busy(busy)
+        self._update_launch_mute()
 
     @Slot()
     def _on_quit(self) -> None:
         self.close()
+
+    @Slot()
+    def _bring_to_front(self) -> None:
+        """Another copy of EDLS was started: show this one instead. (Windows
+        may only flash the taskbar button rather than hand over focus.)"""
+        server = _instance_server
+        while server is not None and server.hasPendingConnections():
+            server.nextPendingConnection().deleteLater()
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     @Slot(str, bool)
     def _on_start_stop(self, name: str, is_running: bool) -> None:
@@ -1582,15 +1872,24 @@ class MainWindow(QMainWindow):
     @Slot(bool)
     def _on_autostart(self, on: bool) -> None:
         self._settings.auto_start = on
-        config.save_settings(self._settings)
+        self._save_settings(self._settings)
+
+    def _save_settings(self, settings: Settings) -> None:
+        if not config.save_settings(settings):
+            self._log.append("Couldn't save settings.json - changes will be lost "
+                             "when EDLS closes (see launcher.log).", "error")
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(
             self._settings,
             first_run=not self._settings.setup_complete,
+            locked=self._engine.session_active,
             parent=self,
         )
         dlg.saved.connect(self._on_settings_saved)
+        dlg.locked_attempt.connect(lambda: self._log.append(
+            "The companion app list is locked during a session - it unlocks "
+            "when the game closes, or when EDLS restarts.", "warning"))
         dlg.exec()
 
     def _prewarm_settings(self) -> None:
@@ -1607,13 +1906,14 @@ class MainWindow(QMainWindow):
     def _on_settings_saved(self, updated: Settings) -> None:
         theme_changed = updated.theme != self._settings.theme
         self._settings = updated
-        config.save_settings(updated)
+        self._save_settings(updated)
         self._engine.settings = updated
 
         if theme_changed:
             # A theme switch must rebuild all content so every baked-in
             # stylesheet picks up the new palette. Carry the activity log across
             # the swap (its per-line accent colours are theme-independent).
+            # Card states carry over via _card_states.
             log_html = self._log.log.toHtml()
             apply_theme(updated.theme)
             _apply_app_palette()
@@ -1622,18 +1922,15 @@ class MainWindow(QMainWindow):
             sb = self._log.log.verticalScrollBar()
             sb.setValue(sb.maximum())
             self._bg.update()
-            # Rebuilt cards come back up Offline; re-read what's running.
-            self._engine.refresh_status()
-            return
-
-        self._header.set_cmdr(updated.cmdr_name)
-        # Rebuild the status panel with the new app list
-        old_status = self._status
-        self._status = StatusPanel(self._visible_apps())
-        self._status.start_stop_clicked.connect(self._on_start_stop)
-        self._splitter.replaceWidget(0, self._status)
-        old_status.deleteLater()
-        self._engine.refresh_status()
+        else:
+            self._header.set_cmdr(updated.cmdr_name)
+            # Rebuild the status panel with the new app list
+            old_status = self._status
+            self._status = self._make_status_panel()
+            self._splitter.replaceWidget(0, self._status)
+            old_status.deleteLater()
+        # Apps added or renamed have no state yet: have the watcher look now.
+        self._engine.request_scan()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._engine.close()
@@ -1656,6 +1953,41 @@ class _Invoker(QWidget):
     @Slot(object)
     def _run(self, fn) -> None:
         fn()
+
+
+# ── Single instance ───────────────────────────────────────────────────────────
+# A per-user local socket: the first EDLS listens on it, a second one connects,
+# asks the first to come to the front, and exits. Two copies would both launch
+# the game, both tear tools down, and both write settings.json.
+_instance_server: Optional[QLocalServer] = None
+
+
+def _instance_key() -> str:
+    try:
+        user = getpass.getuser()
+    except Exception:  # noqa: BLE001 - no user name is no reason to fail
+        user = "user"
+    return f"EDLS-py-{user}"
+
+
+def acquire_single_instance(key: Optional[str] = None) -> bool:
+    """True if this is the only EDLS running. Otherwise the running copy is
+    asked to show itself and this returns False -- the caller should exit."""
+    global _instance_server
+    QApplication.instance() or QApplication(sys.argv)
+    key = key or _instance_key()
+    probe = QLocalSocket()
+    probe.connectToServer(key)
+    if probe.waitForConnected(500):
+        probe.write(b"show\n")
+        probe.waitForBytesWritten(500)
+        probe.disconnectFromServer()
+        return False
+    QLocalServer.removeServer(key)   # a crashed copy's leftover (non-Windows)
+    server = QLocalServer()
+    if server.listen(key):
+        _instance_server = server
+    return True   # if listening failed we just run unguarded
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -1689,23 +2021,30 @@ def run(engine, settings: Settings) -> int:
     _load_fonts()
 
     win = MainWindow(engine, settings)
+    if _instance_server is not None:
+        _instance_server.newConnection.connect(win._bring_to_front)
     win.show()
 
-    # One honest read of what's already up, so a game or tool the CMDR started
-    # before EDLS doesn't sit there greyed out. Threaded (see refresh_status),
-    # so the cold process scan doesn't stall the window appearing.
-    engine.refresh_status()
+    # Keep every card honest from here on -- including a game or tool the CMDR
+    # started before EDLS. Its own thread, so the cold first process scan
+    # doesn't stall the window appearing.
+    engine.start_watching()
 
     # Boot animation first (after layout settles), then any follow-on action.
     QTimer.singleShot(0, win._play_boot_animation)
     follow_delay = BOOT_TOTAL if BOOT_ENABLED else 0
 
     # Show first-run setup once the panels have animated in; otherwise honour
-    # auto-start. Matches the original's Window.Add_Loaded sequencing.
+    # auto-start. The auto-start message is logged here, next to the decision,
+    # so it can never claim a launch that isn't going to happen.
     if not settings.setup_complete:
+        if settings.auto_start:
+            win._log.append("Auto-start skipped - finish first-time setup "
+                            "first.", "dim")
         QTimer.singleShot(follow_delay, win._open_settings)
     else:
         if settings.auto_start:
+            win._log.append("Auto-start enabled — launching...", "dim")
             QTimer.singleShot(follow_delay, engine.launch)
         # Warm the Settings dialog off-screen after boot settles so the first
         # real open is instant (first-run already opens it, so skip that case).

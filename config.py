@@ -21,11 +21,22 @@ import json
 import logging
 import os
 import re
+import shutil
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Callable, Optional
 
 log = logging.getLogger("edls.config")
+
+# Problems hit by the last load_settings() -- bad values that fell back to a
+# default, an unreadable file, a failed write. They also go to launcher.log; the
+# view repeats them in the activity log at startup so the CMDR actually sees them.
+LOAD_WARNINGS: list[str] = []
+
+
+def _warn(message: str) -> None:
+    LOAD_WARNINGS.append(message)
+    log.warning(message)
 
 # Bump when the on-disk schema changes; load_settings() can migrate on read.
 SETTINGS_VERSION = 1
@@ -61,11 +72,11 @@ class AppState(Enum):
     NOT_FOUND = "Not found"
     FAILED = "Failed"
     STOPPED = "Stopped"
-    CLOSED = "Closed"
     WAITING = "Waiting..."
     LAUNCHING = "Launching..."
     ONLINE = "Online"
     RUNNING = "Running"
+    ERROR = "Error"       # EDLS tried to close it and couldn't -- still running
 
     @property
     def label(self) -> str:
@@ -73,7 +84,8 @@ class AppState(Enum):
 
     @property
     def is_running(self) -> bool:
-        return self in (AppState.LAUNCHING, AppState.ONLINE, AppState.RUNNING)
+        return self in (AppState.LAUNCHING, AppState.ONLINE, AppState.RUNNING,
+                        AppState.ERROR)
 
 
 class ShutdownScope(Enum):
@@ -196,6 +208,10 @@ class Settings:
     auto_start: bool = False
     show_inactive_cards: bool = True
     shutdown_scope: ShutdownScope = ShutdownScope.LAUNCHED_ONLY
+    # Whether EDLS closes itself (after a short countdown) once its work is done.
+    # Tools are torn down either way; these only decide if the window goes too.
+    close_on_game_exit: bool = True
+    close_on_shutdown: bool = False
     theme: Theme = Theme.DARK
     apps: list[AppDescriptor] = field(default_factory=list)
     removed_defaults: list[str] = field(default_factory=list)
@@ -211,44 +227,116 @@ def default_settings() -> Settings:
     return Settings(apps=_clone_registry())
 
 
-def _app_from_dict(d: dict) -> AppDescriptor:
-    name = d.get("name", "")
+# Hand-edited settings.json can hold anything. Each reader below returns the
+# default for a missing key silently, and for a wrong-typed one with a warning,
+# so a typo costs one setting instead of crashing EDLS at startup.
+_TRUE_WORDS = {"true", "1", "yes", "on"}
+_FALSE_WORDS = {"false", "0", "no", "off"}
+
+
+def _bad(key: str, default) -> None:
+    _warn(f"settings.json: '{key}' has an invalid value - using {default!r}.")
+
+
+def _as_bool(value, default: bool, key: str) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word in _TRUE_WORDS:
+            return True
+        if word in _FALSE_WORDS:
+            return False
+    _bad(key, default)
+    return default
+
+
+def _as_int(value, default: int, key: str) -> int:
+    if value is None:
+        return default
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    _bad(key, default)
+    return default
+
+
+def _as_str(value, default: str, key: str) -> str:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    _bad(key, default)
+    return default
+
+
+def _as_list(value, key: str) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    _bad(key, [])
+    return []
+
+
+def _as_enum(enum_cls, value, default, key: str):
+    if value is None:
+        return default
+    try:
+        return enum_cls(value)
+    except ValueError:
+        _bad(key, default.value)
+        return default
+
+
+def _app_from_dict(d) -> Optional[AppDescriptor]:
+    """One `apps` entry, or None (with a warning) if it isn't usable."""
+    name = d.get("name") if isinstance(d, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        _warn(f"settings.json: skipped an app entry with no valid name: {d!r}")
+        return None
+    name = name.strip()
     reg = REGISTRY_BY_NAME.get(name)
     return AppDescriptor(
         name=name,
-        process_name=d.get("process", ""),
-        path=d.get("path") or "",
-        enabled=bool(d.get("enabled", True)),
+        process_name=_as_str(d.get("process"), name, f"{name}.process") or name,
+        path=_as_str(d.get("path"), "", f"{name}.path"),
+        enabled=_as_bool(d.get("enabled"), True, f"{name}.enabled"),
         # Re-attach the resolver for known defaults; custom apps have none.
         resolver=reg.resolver if reg else None,
     )
 
 
-def _parse_scope(value) -> ShutdownScope:
-    try:
-        return ShutdownScope(value)
-    except ValueError:
-        return ShutdownScope.LAUNCHED_ONLY
-
-
-def _parse_theme(value) -> Theme:
-    try:
-        return Theme(value)
-    except ValueError:
-        return Theme.DARK
-
-
 def _from_dict(raw: dict) -> Settings:
+    d = Settings()   # field defaults
+    cmdr = _as_str(raw.get("cmdr_name"), d.cmdr_name, "cmdr_name").strip()
+    apps = [_app_from_dict(e) for e in _as_list(raw.get("apps"), "apps")]
     return Settings(
-        cmdr_name=raw.get("cmdr_name", Settings.cmdr_name),
-        elite_app_id=int(raw.get("elite_app_id", Settings.elite_app_id)),
-        setup_complete=bool(raw.get("setup_complete", False)),
-        auto_start=bool(raw.get("auto_start", False)),
-        show_inactive_cards=bool(raw.get("show_inactive_cards", True)),
-        shutdown_scope=_parse_scope(raw.get("shutdown_scope")),
-        theme=_parse_theme(raw.get("theme")),
-        apps=[_app_from_dict(d) for d in raw.get("apps", [])],
-        removed_defaults=list(raw.get("removed_defaults", [])),
+        cmdr_name=cmdr or d.cmdr_name,
+        elite_app_id=_as_int(raw.get("elite_app_id"), d.elite_app_id,
+                             "elite_app_id"),
+        setup_complete=_as_bool(raw.get("setup_complete"), False,
+                                "setup_complete"),
+        auto_start=_as_bool(raw.get("auto_start"), False, "auto_start"),
+        show_inactive_cards=_as_bool(raw.get("show_inactive_cards"),
+                                     d.show_inactive_cards,
+                                     "show_inactive_cards"),
+        shutdown_scope=_as_enum(ShutdownScope, raw.get("shutdown_scope"),
+                                d.shutdown_scope, "shutdown_scope"),
+        close_on_game_exit=_as_bool(raw.get("close_on_game_exit"),
+                                    d.close_on_game_exit, "close_on_game_exit"),
+        close_on_shutdown=_as_bool(raw.get("close_on_shutdown"),
+                                   d.close_on_shutdown, "close_on_shutdown"),
+        theme=_as_enum(Theme, raw.get("theme"), d.theme, "theme"),
+        apps=[a for a in apps if a is not None],
+        removed_defaults=[n for n in _as_list(raw.get("removed_defaults"),
+                                              "removed_defaults")
+                          if isinstance(n, str)],
     )
 
 
@@ -266,35 +354,58 @@ def _merge_new_defaults(s: Settings) -> bool:
     return changed
 
 
+def _save_or_warn(s: Settings) -> None:
+    if not save_settings(s):
+        _warn("Couldn't write settings.json - changes won't be kept "
+              "(see launcher.log).")
+
+
 def load_settings() -> Settings:
-    os.makedirs(DATA_DIR, exist_ok=True)
+    LOAD_WARNINGS.clear()
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except OSError as exc:
+        _warn(f"Couldn't create {DATA_DIR} ({exc}).")
 
     if not os.path.exists(SETTINGS_FILE):
         s = default_settings()
-        save_settings(s)
+        _save_or_warn(s)
         return s
 
     try:
-        with open(SETTINGS_FILE, encoding="utf-8") as fh:
+        # utf-8-sig, not utf-8: it also accepts a leading BOM, which Notepad's
+        # "UTF-8 with BOM" adds and plain utf-8 rejects as a corrupt file.
+        with open(SETTINGS_FILE, encoding="utf-8-sig") as fh:
             raw = json.load(fh)
-    except (OSError, json.JSONDecodeError) as exc:
-        log.warning("settings.json unreadable (%s); recreating from defaults", exc)
+        if not isinstance(raw, dict):
+            raise ValueError("expected a JSON object at the top level")
+    except (OSError, ValueError) as exc:   # incl. JSON and Unicode decode errors
+        # Keep the unreadable file so a hand-edit isn't lost for good.
+        kept = ""
+        try:
+            shutil.copyfile(SETTINGS_FILE, SETTINGS_FILE + ".bad")
+            kept = " The old file was kept as settings.json.bad."
+        except OSError:
+            pass
+        _warn(f"settings.json couldn't be read ({exc}) - settings were reset "
+              f"to defaults.{kept}")
         s = default_settings()
-        save_settings(s)
+        _save_or_warn(s)
         return s
 
     s = _from_dict(raw)
     # Migrate/repair: a fresh file with no apps, or a file predating new defaults.
     if not s.apps:
         s.apps = _clone_registry()
-        save_settings(s)
+        _save_or_warn(s)
     elif _merge_new_defaults(s) or raw.get("version") != SETTINGS_VERSION:
-        save_settings(s)
+        _save_or_warn(s)
     return s
 
 
-def save_settings(s: Settings) -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
+def save_settings(s: Settings) -> bool:
+    """Write settings.json atomically. Returns False (and logs why) if it
+    couldn't -- callers tell the CMDR, since the change is otherwise lost."""
     data = {
         "version": SETTINGS_VERSION,
         "cmdr_name": s.cmdr_name,
@@ -303,6 +414,8 @@ def save_settings(s: Settings) -> None:
         "auto_start": s.auto_start,
         "show_inactive_cards": s.show_inactive_cards,
         "shutdown_scope": s.shutdown_scope.value,
+        "close_on_game_exit": s.close_on_game_exit,
+        "close_on_shutdown": s.close_on_shutdown,
         "theme": s.theme.value,
         "removed_defaults": s.removed_defaults,
         "apps": [
@@ -314,11 +427,18 @@ def save_settings(s: Settings) -> None:
     # Atomic write: never leave a half-written settings.json behind on a crash.
     tmp = SETTINGS_FILE + ".tmp"
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
         os.replace(tmp, SETTINGS_FILE)
+        return True
     except OSError as exc:
         log.warning("Failed to write settings.json: %s", exc)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
 
 
 def recompute_removed_defaults(apps: list[AppDescriptor],

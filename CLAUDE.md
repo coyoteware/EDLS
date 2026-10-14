@@ -57,6 +57,12 @@ a visual outcome you haven't confirmed with him.
   PowerShell PascalCase (settings reset once on migration; that's fine).
 - **`ShutdownScope` is a user setting** (`LAUNCHED_ONLY` | `ALL_ENABLED`); both the
   SHUTDOWN button and the on-exit teardown honor it. Don't hardcode one behavior.
+- **EDLS never closes Steam or the game** (force-closing Elite breaks Frontier's
+  ToS). `ProcessManager.stop()` refuses `PROTECTED_PROCESSES`; never add a kill
+  path around it, and the Elite card has no STOP.
+- **Every card status goes out through `Engine._status()`.** The status watcher
+  (which replaced REFRESH) compares each scan with what `_status()` recorded and only
+  emits differences — emitting any other way makes cards stale or flicker.
 - **Display names are a UI concern** (`_DISPLAY_NAMES` in `ui.py`); `descriptor.name`
   stays the key for status routing + settings.
 - **`config.APP_VERSION`** is the single source of truth for the version string.

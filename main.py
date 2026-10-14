@@ -30,6 +30,7 @@ import os
 import subprocess
 import threading
 import time
+from enum import Enum
 from typing import Callable, Optional
 
 import psutil
@@ -52,15 +53,16 @@ except ImportError:  # pragma: no cover - non-Windows dev machines
 # config.py provides:
 #   DATA_DIR, SETTINGS_FILE, LOG_FILE                paths under %LOCALAPPDATA%\EDLS
 #   AppState (Enum) with .is_running                 OFFLINE NOT_FOUND FAILED
-#                                                    STOPPED CLOSED WAITING
-#                                                    LAUNCHING ONLINE RUNNING
+#                                                    STOPPED WAITING LAUNCHING
+#                                                    ONLINE RUNNING ERROR
 #   ShutdownScope (Enum): LAUNCHED_ONLY | ALL_ENABLED
 #   AppDescriptor: .name .process_name .enabled  +  .resolve_path() -> str | None
 #   Settings: .cmdr_name .elite_app_id .setup_complete .auto_start
-#             .show_inactive_cards .shutdown_scope .theme .apps (list[AppDescriptor])
+#             .show_inactive_cards .shutdown_scope .close_on_game_exit
+#             .close_on_shutdown .theme .apps (list[AppDescriptor])
 #             .removed_defaults (list[str])
-#   load_settings() -> Settings
-#   save_settings(settings) -> None
+#   load_settings() -> Settings          (problems land in LOAD_WARNINGS)
+#   save_settings(settings) -> bool      (False if the file couldn't be written)
 #
 # ui.py provides:
 #   run(engine, settings) -> int     builds the window, shows the first-run
@@ -84,21 +86,49 @@ STEAM_URI_EXIT = "steam://exit"
 POLL_SECONDS = 2
 STEAM_WAIT = 20        # Steam's client to show up
 STEAM_EXIT_WAIT = 15   # steam://exit to actually take effect
-ELITE_WAIT = 300       # the game, started from a card (min-ed-launcher is slow)
+ELITE_WAIT = 60        # the game to appear after steam://run (LAUNCH and card)
+KILL_WAIT = 3          # a killed tool to actually be gone
+CLOSE_DELAY = 5        # countdown before EDLS closes itself after a session
+
+# The status watcher's scan interval. One scan is a single process-table pass
+# (~6-9 ms of CPU), so even the fast rate costs well under 1% of one core.
+WATCH_FAST = 2         # while something is in flight, or just after a click
+WATCH_SLOW = 5         # idle
+WATCH_ACTIVE_FOR = 20  # how long a click keeps the fast rate
+
+log = logging.getLogger("edls")
+
+
+def _stem(process_name: str) -> str:
+    """Process names compare case-insensitively, with or without '.exe'."""
+    return process_name.lower().removesuffix(".exe")
+
 
 # EDLS must never kill Steam or the game -- force-closing Elite violates
 # Frontier's ToS. ProcessManager.stop() refuses these outright, so no setting,
 # custom app entry, or future code path can get there by accident.
-PROTECTED_PROCESSES = frozenset(
-    n.lower().removesuffix(".exe") for n in (STEAM_PROCESS, ELITE_PROCESS))
+PROTECTED_PROCESSES = frozenset(_stem(n) for n in (STEAM_PROCESS, ELITE_PROCESS))
+
+
+# States that mean "on its way": the watcher leaves these alone until the
+# process actually shows up (a Steam that's still starting isn't "Offline").
+_PENDING_STATES = (AppState.LAUNCHING, AppState.WAITING)
+
+# Watcher bookkeeping: an app it has never reported on (startup, or just added).
+_UNSEEN = object()
+
+
+class StopResult(Enum):
+    STOPPED = "stopped"           # it was running and is now gone
+    NOT_RUNNING = "not_running"   # nothing to close
+    FAILED = "failed"             # still running, e.g. it runs as administrator
+    PROTECTED = "protected"       # Steam or the game -- never closed
 
 # If EDLS itself runs inside a kill-on-close Job Object (VS Code's debugpy
 # launcher does this), anything we start joins that job and Windows kills it
 # the moment EDLS exits -- that's how closing EDLS took Steam and the game down
 # with it. Breaking away keeps what we launch independent of our lifetime.
 _BREAKAWAY = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
-
-log = logging.getLogger("edls")
 
 
 def _popen_detached(args: list[str], **kwargs) -> subprocess.Popen:
@@ -201,9 +231,6 @@ class ProcessManager:
                 found[original] = proc
         return found
 
-    def is_running(self, descriptor: AppDescriptor) -> Optional[psutil.Process]:
-        return self.find(descriptor.process_name)
-
     def launch(self, descriptor: AppDescriptor,
                resolved_path: Optional[str] = None) -> Optional[psutil.Process]:
         """Launch the app if it isn't already up. Returns the process (existing
@@ -230,36 +257,42 @@ class ProcessManager:
             log.warning("Failed to launch %s: %s", descriptor.name, exc)
             return None
 
-    def stop(self, descriptor: AppDescriptor) -> bool:
-        """Kill a single app, by our tracked PID first, then by process name.
-        Returns True if something was actually killed. Never touches Steam or
-        the game (PROTECTED_PROCESSES)."""
-        if descriptor.process_name.lower().removesuffix(".exe") \
-                in PROTECTED_PROCESSES:
+    def stop(self, descriptor: AppDescriptor) -> StopResult:
+        """Kill a single app, by our tracked PID first, then by process name,
+        and wait until it's really gone. Never touches Steam or the game
+        (PROTECTED_PROCESSES)."""
+        if _stem(descriptor.process_name) in PROTECTED_PROCESSES:
             log.warning("Refusing to kill protected process %s",
                         descriptor.process_name)
-            return False
+            return StopResult.PROTECTED
         with self._lock:
-            pid = self.launched.get(descriptor.name)
+            pid = self.launched.pop(descriptor.name, None)
         proc: Optional[psutil.Process] = None
         if pid:
             try:
-                proc = psutil.Process(pid)
-            except psutil.NoSuchProcess:
-                proc = None
+                tracked = psutil.Process(pid)
+                # Windows reuses PIDs: only trust ours if it's still that program,
+                # or SHUTDOWN could kill whatever inherited the number.
+                if _stem(tracked.name()) == _stem(descriptor.process_name):
+                    proc = tracked
+            except psutil.Error:
+                pass
         if proc is None:
             proc = self.find(descriptor.process_name)
-
-        killed = False
-        if proc:
-            try:
-                proc.kill()
-                killed = True
-            except psutil.Error as exc:
-                log.warning("Failed to stop %s: %s", descriptor.name, exc)
-        with self._lock:
-            self.launched.pop(descriptor.name, None)
-        return killed
+        if proc is None:
+            return StopResult.NOT_RUNNING
+        try:
+            proc.kill()
+            proc.wait(timeout=KILL_WAIT)
+            return StopResult.STOPPED
+        except psutil.NoSuchProcess:
+            return StopResult.STOPPED
+        except psutil.Error as exc:   # AccessDenied (elevated app) or TimeoutExpired
+            log.warning("Failed to stop %s: %s", descriptor.name, exc)
+            if pid:   # it's still ours -- keep it in scope for a later SHUTDOWN
+                with self._lock:
+                    self.launched[descriptor.name] = proc.pid
+            return StopResult.FAILED
 
 
 # =============================================================================
@@ -288,8 +321,19 @@ class Engine:
         # Card-driven Steam/Elite start/stop: those wait on processes, so they
         # can't run on the GUI thread like a companion app's quick Popen can.
         self._system_thread: Optional[threading.Thread] = None
-        self._refresh_thread: Optional[threading.Thread] = None
-        self._stop = threading.Event()
+        self._watch_thread: Optional[threading.Thread] = None
+        self._stop = threading.Event()     # interrupts the current waits
+        self._closed = threading.Event()   # window closed: start nothing new
+        self._wake = threading.Event()     # asks the watcher to scan right away
+        self._last_action = 0.0
+
+        # What each card currently claims, so the watcher only speaks up when
+        # reality differs: True = running, False = not running, None = pending
+        # (Launching/Waiting -- only the process appearing may change it). Kept
+        # by _status(), the single place statuses go out.
+        self._believed: dict[str, Optional[bool]] = {}
+        self._set_at: dict[str, float] = {}
+        self._watch_lock = threading.Lock()
 
     # ---- signal helpers (everything outbound goes through dispatch) ----
     def _log(self, message: str, level: str = "info") -> None:
@@ -298,6 +342,10 @@ class Engine:
         self.dispatch(lambda: self.on_log.emit(message, level))
 
     def _status(self, key: str, state: AppState, pid: Optional[int] = None) -> None:
+        with self._watch_lock:
+            self._believed[key] = (None if state in _PENDING_STATES
+                                   else state.is_running)
+            self._set_at[key] = time.monotonic()
         self.dispatch(lambda: self.on_status.emit(key, state, pid))
 
     def _busy(self, busy: bool) -> None:
@@ -333,43 +381,91 @@ class Engine:
         everything else ONLINE -- matching the launch sequence's wording."""
         return AppState.RUNNING if name == KEY_ELITE else AppState.ONLINE
 
-    # ---- public API (called by the view) ----
-    def refresh_status(self) -> None:
-        """REFRESH button: reconcile every card with what's actually running.
-        This is how a game or tool started *before* (or outside of) EDLS stops
-        showing as Offline.
+    @property
+    def session_active(self) -> bool:
+        """A LAUNCH session is running (from LAUNCH until the game exits and
+        the teardown is done). The app list is locked for its duration."""
+        return self._thread is not None and self._thread.is_alive()
 
-        Threaded, because the first process scan of a session can take a couple
-        of seconds to warm up -- inline it would freeze the window."""
-        if self._refresh_thread and self._refresh_thread.is_alive():
+    # ---- status watcher ----
+    def start_watching(self) -> None:
+        """Start the background watcher that keeps every card honest -- this
+        replaced the REFRESH button. Call once, after the view is wired up."""
+        if self._watch_thread and self._watch_thread.is_alive():
             return
-        self._refresh_thread = threading.Thread(target=self._refresh, daemon=True)
-        self._refresh_thread.start()
+        self._watch_thread = threading.Thread(target=self._watch, daemon=True)
+        self._watch_thread.start()
 
-    def _refresh(self) -> None:
-        apps = self.tracked_apps
-        running = self.pm.find_many(a.process_name for a in apps)
-        # Nothing found here is recorded as launched-by-us, so an app the user
-        # started by hand stays safe from a LAUNCHED_ONLY shutdown.
+    def request_scan(self) -> None:
+        """The view's card list changed (e.g. Settings saved): scan right away
+        so new or renamed apps don't wait for the next tick."""
+        self._kick()
+
+    def _kick(self) -> None:
+        """A click happened: scan now, then stay on the fast rate for a while."""
+        self._last_action = time.monotonic()
+        self._wake.set()
+
+    def _watch_interval(self) -> float:
+        busy = any(t is not None and t.is_alive() for t in
+                   (self._thread, self._system_thread, self._shutdown_thread))
+        recent = time.monotonic() - self._last_action < WATCH_ACTIVE_FOR
+        return WATCH_FAST if busy or recent else WATCH_SLOW
+
+    def _watch(self) -> None:
+        first = True
+        while not self._closed.is_set():
+            scan_started = time.monotonic()
+            apps = self.tracked_apps
+            try:
+                found = self.pm.find_many(a.process_name for a in apps)
+            except Exception:   # never let one bad scan kill the watcher
+                log.exception("Status scan failed")
+                found = None
+            if found is not None and not self._closed.is_set():
+                self._watch_tick(apps, found, scan_started, quiet=first)
+                if first:
+                    self._log(f"Status check: {len(found)} of {len(apps)} "
+                              "running.", "dim")
+                    first = False
+            if self._wake.wait(timeout=self._watch_interval()):
+                self._wake.clear()
+
+    def _watch_tick(self, apps: list[AppDescriptor], found: dict,
+                    scan_started: float, quiet: bool = False) -> None:
+        """Compare one scan with what the cards claim and report only the
+        differences. Separate from _watch() so selftest can feed it fake scans."""
+        session = self.session_active
         for app in apps:
-            if self._stop.is_set():
-                return          # window closed mid-scan; nothing to report to
-            proc = running.get(app.process_name)
-            if proc:
+            proc = found.get(app.process_name)
+            with self._watch_lock:
+                # >=, not >: monotonic() only ticks every ~16 ms on Windows.
+                if self._set_at.get(app.name, 0.0) >= scan_started:
+                    continue   # an action changed this card after we scanned
+                believed = self._believed.get(app.name, _UNSEEN)
+            label = "Elite: Dangerous" if app.name == KEY_ELITE else app.name
+            # The session reports the game's comings and goings itself.
+            speak = (not quiet and believed is not _UNSEEN
+                     and not (session and app.name == KEY_ELITE))
+            if proc and believed is not True:
                 self._status(app.name, self._live_state(app.name), proc.pid)
-            elif not (self._thread and self._thread.is_alive()):
-                # Checked per app, not once up front: a launch sequence may have
-                # started during the scan above (it can take seconds on a cold
-                # process table), and while it runs it owns the status narrative
-                # -- better to say nothing than to contradict a "Waiting..." .
+                if speak and believed is False:
+                    self._log(f"{label} is now running.", "dim")
+            elif not proc and (believed is True or believed is _UNSEEN):
                 self._status(app.name, AppState.OFFLINE)
-        self._log(f"Status refreshed - {len(running)} of {len(apps)} running.",
-                  "dim")
+                if speak:
+                    self._log(f"{label} stopped running.", "dim")
 
+    # ---- public API (called by the view) ----
     def launch(self) -> None:
-        if self._thread and self._thread.is_alive():
+        if self._closed.is_set() or self.session_active:
+            return
+        if self._system_thread and self._system_thread.is_alive():
+            self._log("Steam or the game is still being started from its card "
+                      "- wait for it to finish.", "warning")
             return
         self._stop.clear()
+        self._kick()
         self._busy(True)
         self._log("Launch sequence initiated.", "success")
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -379,10 +475,21 @@ class Engine:
         """SHUTDOWN button. Honors the user's shutdown_scope setting."""
         if self._shutdown_thread and self._shutdown_thread.is_alive():
             return   # already tearing down -- ignore a double-click
+        self._kick()
         self._shutdown_thread = threading.Thread(
-            target=self._shutdown, args=(self.settings.shutdown_scope,), daemon=True
-        )
+            target=self._manual_shutdown, daemon=True)
         self._shutdown_thread.start()
+
+    def _manual_shutdown(self) -> None:
+        self._teardown(self.settings.shutdown_scope)
+        game_running = self.pm.find(ELITE_PROCESS) is not None
+        if game_running:
+            self._log("Quit Elite: Dangerous from the in-game menu - EDLS never "
+                      "closes the game.", "warning")
+        if self.settings.close_on_shutdown:
+            self._close_countdown()
+        elif self.session_active and game_running:
+            self._log("Waiting for Elite: Dangerous to close...", "dim")
 
     def start_app(self, name: str) -> None:
         # Steam and the game are URI-launched and have to be waited on, so they
@@ -398,12 +505,27 @@ class Engine:
         desc = self._find_descriptor(name)
         if not desc:
             return
+        self._kick()
+        if self.pm.find(desc.process_name):
+            proc = self.pm.launch(desc)   # adopts the running copy
+            self._status(name, AppState.ONLINE, proc.pid if proc else None)
+            self._log(f"{name} is already running.", "dim")
+            return
+        path = desc.resolve_path()
+        if not path or not os.path.exists(path):
+            self._status(name, AppState.NOT_FOUND)
+            self._log(f"{name} not found - check its path in Settings.",
+                      "warning")
+            return
         self._status(name, AppState.LAUNCHING)
-        proc = self.pm.launch(desc)
+        self._log(f"Starting {name}...")
+        proc = self.pm.launch(desc, resolved_path=path)
         if proc:
             self._status(name, AppState.ONLINE, proc.pid)
+            self._log(f"{name} online. (PID {proc.pid})", "success")
         else:
             self._status(name, AppState.FAILED)
+            self._log(f"Couldn't start {name} (see launcher.log).", "error")
 
     def stop_app(self, name: str) -> None:
         # Steam gets asked to quit politely rather than killed (see
@@ -421,8 +543,35 @@ class Engine:
         desc = self._find_descriptor(name)
         if not desc:
             return
-        self.pm.stop(desc)
-        self._status(name, AppState.STOPPED)
+        self._kick()
+        # Threaded: stop() waits for the process to really exit, which mustn't
+        # freeze the window.
+        threading.Thread(target=self._stop_one, args=(desc,), daemon=True).start()
+
+    def _stop_one(self, desc: AppDescriptor) -> None:
+        self._log(f"Stopping {desc.name}...")
+        result = self.pm.stop(desc)
+        if result is StopResult.STOPPED:
+            self._status(desc.name, AppState.STOPPED)
+            self._log(f"{desc.name} stopped.", "success")
+        elif result is StopResult.NOT_RUNNING:
+            self._status(desc.name, AppState.STOPPED)
+            self._log(f"{desc.name} wasn't running.", "dim")
+        else:
+            self._report_unstoppable(desc, result)
+
+    def _report_unstoppable(self, desc: AppDescriptor,
+                            result: StopResult) -> None:
+        """A tool EDLS couldn't (or won't) close: say so, and for a real failure
+        flag its card ERROR -- it's still running, so 'Stopped' would lie."""
+        if result is StopResult.PROTECTED:
+            self._log(f"EDLS never closes {desc.name} - it's Steam or the game.",
+                      "warning")
+            return
+        proc = self.pm.find(desc.process_name)
+        self._status(desc.name, AppState.ERROR, proc.pid if proc else None)
+        self._log(f"Couldn't close {desc.name} - it may be running as "
+                  "administrator.", "error")
 
     # ---- card-driven Steam / Elite control ----
     def _run_system(self, fn: Callable[[], None]) -> None:
@@ -433,6 +582,7 @@ class Engine:
             return
         if self._system_thread and self._system_thread.is_alive():
             return
+        self._kick()
         self._system_thread = threading.Thread(target=fn, daemon=True)
         self._system_thread.start()
 
@@ -481,41 +631,69 @@ class Engine:
                   "monitor. Use LAUNCH for the full sequence.", "dim")
         proc = self._launch_elite(timeout=ELITE_WAIT)
         if proc is None and not self._stop.is_set():
+            # If it turns up later anyway, the watcher flips the card to Running.
             self._status(KEY_ELITE, AppState.FAILED)
             self._log(f"Elite: Dangerous did not start within {ELITE_WAIT}s.",
                       "error")
 
     def close(self) -> None:
-        """Window is closing: stop the worker, but leave the game and tools
-        running -- closing the launcher should not close everything."""
+        """Window is closing: stop the workers, but leave the game and tools
+        running -- closing the launcher should not close everything. Also
+        blocks anything queued (e.g. a late auto-start) from starting."""
+        self._closed.set()
         self._stop.set()
+        self._wake.set()
 
     # ---- the sequence ----
     def _run(self) -> None:
         log.info("=== Session started ===")
+        close_after = False
         try:
             if not self._preflight():
                 return
             if not self._start_steam():
                 return
-            elite = self._launch_elite()
+            elite = self._launch_elite(timeout=ELITE_WAIT)
             if not elite:
+                if not self._stop.is_set():
+                    # The watcher still flips the card if the game turns up late.
+                    self._status(KEY_ELITE, AppState.FAILED)
+                    self._log(f"Elite: Dangerous didn't start within "
+                              f"{ELITE_WAIT}s - launch cancelled. Press LAUNCH "
+                              "to try again.", "error")
                 return
-            launched = self._launch_tools()
+            self._launch_tools()
             self._log("All systems nominal.", "success")
-            if not self._monitor(elite, launched):
+            if not self._monitor(elite):
                 # The window was closed mid-session, not the game exiting --
                 # leave the game and tools running (see Engine.close()).
                 return
-            self._shutdown(self.settings.shutdown_scope)
-            self._log("Farewell, CMDR. o7", "success")
-            self._quit()   # session's done: Elite exited and tools are torn down
+            self._teardown(self.settings.shutdown_scope)
+            if self.settings.close_on_game_exit:
+                close_after = True
+            else:
+                self._log("Session ended.", "success")
         except Exception as exc:
             log.exception("Launch sequence crashed")
             self._log(f"Unexpected error: {exc}", "error")
         finally:
             log.info("=== Session ended ===")
-            self._busy(False)
+            if close_after:
+                self._close_countdown()   # LAUNCH stays disabled until we go
+            else:
+                self._busy(False)
+
+    def _close_countdown(self) -> None:
+        """Close EDLS after a short, logged countdown (the window closing
+        interrupts it). The game and Steam are never touched."""
+        self._busy(True)
+        self._log(f"EDLS will close in {CLOSE_DELAY} seconds.")
+        if self._closed.wait(CLOSE_DELAY - 1):
+            return
+        self._log("Farewell, CMDR. o7", "success")
+        if self._closed.wait(1):
+            return
+        self._quit()
 
     def _preflight(self) -> bool:
         self._log("Preflight checks...", "dim")
@@ -559,8 +737,8 @@ class Engine:
     def _launch_elite(
         self, timeout: Optional[float] = None
     ) -> Optional[psutil.Process]:
-        """Open the game through Steam and wait for its process. `timeout=None`
-        waits indefinitely (the launch sequence); the card path passes a limit."""
+        """Open the game through Steam and wait for its process, up to `timeout`
+        seconds (None = forever). Returns None on timeout or close()."""
         self._status(KEY_ELITE, AppState.WAITING)
         self._log("Opening Elite: Dangerous via Steam...")
         self._open_uri(f"steam://run/{self.settings.elite_app_id}")
@@ -601,43 +779,48 @@ class Engine:
                 self._status(app.name, AppState.FAILED)
         return launched
 
-    def _monitor(self, elite: psutil.Process, launched: list[AppDescriptor]) -> bool:
+    def _monitor(self, elite: psutil.Process) -> bool:
         """Watches Elite until it exits. Returns False (without touching status/
         logs) if a stop was requested instead -- the caller distinguishes "game
-        exited" from "window closed" so it knows whether shutdown should run."""
+        exited" from "window closed" so it knows whether shutdown should run.
+        Tools' own comings and goings are the status watcher's job."""
         self._log("Monitoring Elite: Dangerous...", "dim")
-        noted_offline: set[str] = set()
         while elite.is_running():
-            if self._sleep(2):
+            if self._sleep(POLL_SECONDS):
                 return False
-            pending = [a for a in launched if a.name not in noted_offline]
-            if pending:
-                running = self.pm.find_many(a.process_name for a in pending)
-                for app in pending:
-                    if app.process_name not in running:
-                        self._status(app.name, AppState.OFFLINE)
-                        noted_offline.add(app.name)
         self._status(KEY_ELITE, AppState.OFFLINE)
         self._log("Elite: Dangerous offline.")
         return True
 
-    def _shutdown(self, scope: ShutdownScope) -> None:
+    def _teardown(self, scope: ShutdownScope) -> None:
+        """Close the companion apps the scope covers (SHUTDOWN and game exit)."""
         if scope is ShutdownScope.LAUNCHED_ONLY:
             launched_names = self.pm.launched_names()
             targets = [a for a in self.settings.apps if a.name in launched_names]
         else:  # ALL_ENABLED
             targets = self.enabled_apps
 
-        running = [a for a in targets if self.pm.is_running(a)]
+        found = self.pm.find_many(a.process_name for a in targets)
+        running = [a for a in targets if a.process_name in found]
         if not running:
             self._log("No tools running.", "dim")
             return
         self._log("Closing third-party tools...")
+        failed: list[str] = []
         for app in running:
             self._log(f"Stopping {app.name}...")
-            if self.pm.stop(app):
-                self._status(app.name, AppState.CLOSED)
-        self._log("Third-party tools shut down.", "success")
+            result = self.pm.stop(app)
+            if result in (StopResult.STOPPED, StopResult.NOT_RUNNING):
+                self._status(app.name, AppState.OFFLINE)
+            else:
+                self._report_unstoppable(app, result)
+                if result is StopResult.FAILED:
+                    failed.append(app.name)
+        if failed:
+            self._log(f"Some tools could not be closed: {', '.join(failed)}.",
+                      "warning")
+        else:
+            self._log("Third-party tools shut down.", "success")
 
     # ---- small helpers ----
     @staticmethod
@@ -693,9 +876,14 @@ class Engine:
 # =============================================================================
 def main() -> int:
     setup_logging()
+    import ui  # late import: driving the engine headless needs no GUI toolkit
+    # Before anything touches settings.json: a second copy just brings the
+    # running one to the front and leaves.
+    if not ui.acquire_single_instance():
+        log.info("EDLS is already running - showed that window instead.")
+        return 0
     settings = config.load_settings()
     engine = Engine(settings)
-    import ui  # late import: driving the engine headless needs no GUI toolkit
     return ui.run(engine, settings)
 
 

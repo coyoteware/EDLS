@@ -20,16 +20,28 @@ with three small, testable modules.
   started in sequence. Optionally bypasses Frontier's native launcher (see
   [Prerequisites](#prerequisites)).
 - **Live status board** — a card per app showing Offline / Launching / Online /
-  Running, with pulsing status dots and PIDs.
-- **Automatic teardown** — when Elite exits, EDLS closes the companion tools for you.
-- **Manual shutdown** — a SHUTDOWN button to close the tools on demand.
-- **Per-app start/stop** — bring a single tool up or down from its status card.
+  Running, with pulsing status dots. Cards keep themselves up to date (no refresh
+  button) with a lightweight background check: every 2 s while something is
+  happening, every 5 s when idle.
+- **Automatic teardown** — when Elite exits, EDLS closes the companion tools for you,
+  then (optionally) closes itself after a short countdown.
+- **Manual shutdown** — a SHUTDOWN button to close the tools on demand. EDLS never
+  closes Steam or the game: quit Elite from the in-game menu.
+- **Per-app start/stop** — bring a single tool up or down from its status card. The
+  Elite card can start the game on its own, but never stops it. A tool EDLS can't
+  close (e.g. one running as administrator) is flagged with a red ERROR button.
 - **Configurable shutdown scope** — close *only what EDLS launched*, or *every
-  enabled app that's running* — your choice in Settings.
+  enabled app that's running* — your choice in Settings, along with whether EDLS
+  closes itself when the game exits and after SHUTDOWN.
 - **Single-source app registry** — enable/disable apps and edit their paths in a
-  built-in settings table. Auto-start is available and off by default.
+  built-in settings table. The list is locked while a session is running.
+  Auto-start is available and off by default.
 - **Persistent config** — settings and a rotating log live under
-  `%LOCALAPPDATA%\EDLS`.
+  `%LOCALAPPDATA%\EDLS`. A damaged or hand-edited `settings.json` falls back to
+  defaults per setting, with a warning in the activity log, instead of failing.
+- **One copy at a time** — starting EDLS again just brings the running window forward.
+- **Fits small screens** — works down to 1024×768; the status cards scroll when there
+  are many apps. Fully usable from the keyboard.
 
 ---
 
@@ -123,8 +135,11 @@ Open **SETTINGS** from the main window to:
 - Toggle **status cards for inactive apps**.
 - Choose the **shutdown scope** — close only apps EDLS launched, or all enabled
   apps that are running.
+- Choose whether EDLS **closes itself when the game exits** (on by default) and
+  **after SHUTDOWN** (off by default).
 - **Add, remove, enable/disable** companion apps and edit each app's executable
-  path. Paths support `%ENV%` variables (e.g. `%ProgramFiles%`).
+  path. Paths support `%ENV%` variables (e.g. `%ProgramFiles%`). The app list can't
+  be changed during a session; it unlocks when the game closes.
 
 Settings and the activity log are stored under:
 
