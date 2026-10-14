@@ -1,0 +1,12 @@
+-remember window size and pos on exit, geometry()
+-update settings window ui to match main window
+-first time setup name box: make it ghost text
+     -regex for name box? r19
+-clean up bg image
+-what version is it now???
+-fix text for closed/offline/shutdown
+-r17 is this a concern? toggle setting for nice mode?
+-verify status pane does not smush itself anymore
+-r31 odds this is really an issue? simple way to limit scope?
+-r35 good point maybe make it longer
+
