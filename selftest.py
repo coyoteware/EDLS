@@ -61,15 +61,17 @@ def main():
     ui._load_fonts()
 
     def assets_decode():
-        # A corrupt PNG doesn't raise -- libpng prints a line and Qt hands back
-        # a null image, so the UI silently falls back to a flat fill. (That's
-        # how truncated window-bg PNGs went unnoticed for months.)
+        # A corrupt SVG doesn't raise -- Qt prints a line and hands back an
+        # invalid renderer, so the UI silently drops the art. (That's how
+        # truncated window-bg PNGs went unnoticed for months.)
         import glob
-        from PySide6.QtGui import QImage
-        pngs = glob.glob(os.path.join(ui.ASSETS_DIR, "*.png"))
-        bad = [os.path.basename(p) for p in pngs if QImage(p).isNull()]
+        from PySide6.QtSvg import QSvgRenderer
+        svgs = glob.glob(os.path.join(ui.ASSETS_DIR, "*.svg"))
+        assert svgs, "no SVG assets found"
+        bad = [os.path.basename(p) for p in svgs
+               if not QSvgRenderer(p).isValid()]
         assert not bad, f"assets that don't decode: {bad}"
-    run("asset PNGs decode", assets_decode)
+    run("assets decode", assets_decode)
 
     ctx = {}
     run("load settings", lambda: ctx.update(settings=config.load_settings()))

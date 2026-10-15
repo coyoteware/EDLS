@@ -13,7 +13,7 @@ QSS gaps and how we close them:
                         borders (running cards, amber header) since QSS has no
                         inset shadow and a real glow needs a graphics effect
   @keyframes pulsing  → QPropertyAnimation on a custom 'opacity' property
-  hex body background → tiled SVG QPixmap rendered once at startup
+  body background     → themed window-bg SVG, rendered to cover the window
   text-shadow         → not available; compensated by bright base color
   ::before/::after    → extra QLabel / QFrame children placed in layouts
 
@@ -39,7 +39,7 @@ from typing import Optional
 
 from PySide6.QtCore import (
     QEasingCurve, QEvent, QParallelAnimationGroup, QPoint, Property,
-    QPropertyAnimation, QRect, QSize, Qt, QTimer, QUrl, Signal, Slot,
+    QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal, Slot,
 )
 from PySide6.QtGui import (
     QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QIcon,
@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QScrollArea,
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from PySide6.QtSvg import QSvgRenderer
 
 import config
 from config import (
@@ -64,10 +65,10 @@ from config import (
 
 import theme as _theme
 from theme import (
-    C_GOLD, C_DARK, C_PANEL, C_BORDER, C_AMBER, C_ORANGE, C_DIM,
-    C_TMID, C_TDIM, C_GREEN, C_RED, C_INACT, C_NAME, C_CMDR,
-    C_SUCCESS, C_LOGDIM, C_PANEL_T, CARD_BG, CARD_BORDER, CARD_BORDER_OFF,
-    BG_IMAGE, BANNER_IMAGE, BANNER_FILL, BANNER_ACCENT,
+    C_GOLD, C_DARK, C_PANEL, C_BORDER, C_AMBER, C_ORANGE,
+    C_TMID, C_TDIM, C_CMDR, C_SUCCESS, CARD_BORDER_OFF, PANE,
+    PANE_TITLE, PANE_META, LOG_TIME, LOG_COLORS,
+    BG_IMAGE, BANNER_FILL, BANNER_ACCENT, TITLE_MARK,
     IS_LIGHT, CHAMFER_CARD, CHAMFER_PANEL, PULSE_MS,
     BOOT_DURATION, BOOT_OFFSET, BOOT_STAGGER,
     CARD_BORDER_ONLINE, CARD_BORDER_LAUNCHING, CARD_BORDER_FAILED,
@@ -75,47 +76,30 @@ from theme import (
     font_display, font_body, font_mono, power_icon,
 )
 
-# State → (label_colour, dot_colour) and log-level → colour. Rebuilt on each
-# theme switch since they reference themed colours.
-STATE_COLORS: dict = {}
-LOG_COLORS: dict = {}
-
-
-def _build_color_maps() -> None:
-    global STATE_COLORS, LOG_COLORS
-    STATE_COLORS = {
-        AppState.ONLINE:    (C_GREEN,  C_GREEN),
-        AppState.RUNNING:   (C_GREEN,  C_GREEN),
-        AppState.LAUNCHING: (C_ORANGE, C_ORANGE),
-        AppState.WAITING:   (C_ORANGE, C_ORANGE),
-        AppState.OFFLINE:   (C_INACT,  C_INACT),
-        AppState.NOT_FOUND: (C_INACT,  C_INACT),
-        AppState.FAILED:    (C_RED,    C_RED),
-        AppState.STOPPED:   (C_INACT,  C_INACT),
-        AppState.ERROR:     (C_RED,    C_RED),
-    }
-    LOG_COLORS = {
-        "success": C_SUCCESS,
-        "default": C_AMBER,
-        "warning": C_ORANGE,
-        "error":   C_RED,
-        "dim":     C_LOGDIM,
-        "info":    C_AMBER,
-    }
+# State → (label_colour, dot_colour) for the cards. The cards are the dark HUD in
+# both themes (theme.PANE), so this never changes. (LOG_COLORS is themed: the
+# log sits straight on the pane, which comes out mid-grey in day mode.)
+STATE_COLORS = {
+    AppState.ONLINE:    (PANE.C_GREEN,  PANE.C_GREEN),
+    AppState.RUNNING:   (PANE.C_GREEN,  PANE.C_GREEN),
+    AppState.LAUNCHING: (PANE.C_ORANGE, PANE.C_ORANGE),
+    AppState.WAITING:   (PANE.C_ORANGE, PANE.C_ORANGE),
+    AppState.OFFLINE:   (PANE.C_INACT,  PANE.C_INACT),
+    AppState.NOT_FOUND: (PANE.C_INACT,  PANE.C_INACT),
+    AppState.FAILED:    (PANE.C_RED,    PANE.C_RED),
+    AppState.STOPPED:   (PANE.C_INACT,  PANE.C_INACT),
+    AppState.ERROR:     (PANE.C_RED,    PANE.C_RED),
+}
 
 
 def apply_theme(theme: Theme) -> None:
-    """Rebind the palette globals + colour maps to the chosen Theme. Call before
-    building (or rebuilding) the window content."""
+    """Rebind the palette globals to the chosen Theme. Call before building (or
+    rebuilding) the window content."""
     _theme.apply_theme(theme)
     is_light = theme is Theme.LIGHT
     globals().update(
         _theme._LIGHT_PALETTE if is_light else _theme._DARK_PALETTE)
     globals()["IS_LIGHT"] = is_light
-    _build_color_maps()
-
-
-_build_color_maps()   # seed the maps for the default (dark) palette
 
 # Friendly card labels that differ from the registry/identifier name. Presentation
 # only — the descriptor.name is still the key for status routing and settings.
@@ -177,14 +161,17 @@ class ChamferedFrame(QFrame):
             QPoint(r.left(),          r.bottom() - c),
         ])
 
+    def _path(self) -> QPainterPath:
+        """The chamfered outline, inset 1 px so the hairline border isn't clipped."""
+        path = QPainterPath()
+        path.addPolygon(self._polygon(self.rect().adjusted(1, 1, -1, -1)))
+        path.closeSubpath()
+        return path
+
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.rect().adjusted(1, 1, -1, -1)
-        poly = self._polygon(rect)
-        path = QPainterPath()
-        path.addPolygon(poly)
-        path.closeSubpath()
+        path = self._path()
 
         # fill
         p.setClipPath(path)
@@ -204,7 +191,7 @@ class ChamferedFrame(QFrame):
 class PulsingDot(QWidget):
     """7 px circle that fades in/out for running states."""
 
-    def __init__(self, color: QColor = C_GREEN, parent: Optional[QWidget] = None):
+    def __init__(self, color: QColor = PANE.C_GREEN, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._color = color
         self._opacity = 1.0
@@ -309,7 +296,7 @@ class StatusCard(ChamferedFrame):
     def __init__(self, descriptor: AppDescriptor,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent, chamfer=CHAMFER_CARD,
-                         bg=CARD_BG, border=CARD_BORDER)
+                         bg=PANE.CARD_BG, border=PANE.CARD_BORDER)
         self._name = descriptor.name
         self._state = AppState.OFFLINE
         # Set while the button is greyed out. It still takes clicks, so the
@@ -335,12 +322,12 @@ class StatusCard(ChamferedFrame):
         # header row: dot + name (+ inline status on the compact cards)
         hdr = QHBoxLayout()
         hdr.setSpacing(7)
-        self.dot = PulsingDot(C_INACT, self)
-        self.dot.set_color(C_INACT, pulse=False)
+        self.dot = PulsingDot(PANE.C_INACT, self)
+        self.dot.set_color(PANE.C_INACT, pulse=False)
         display = _DISPLAY_NAMES.get(descriptor.name, descriptor.name)
         name_lbl = ElidingLabel(display.upper())
         name_lbl.setFont(font_body(10, QFont.Weight.DemiBold))
-        name_col = C_TDIM if self._inactive else C_NAME
+        name_col = PANE.C_TDIM if self._inactive else PANE.C_NAME
         name_lbl.setStyleSheet(
             f"color: {name_col.name()}; letter-spacing: 1px;")
         hdr.addWidget(self.dot)
@@ -350,7 +337,7 @@ class StatusCard(ChamferedFrame):
         # gone (PIDs are in the activity log) and the status sits up here beside
         # the name rather than on its own row, to cut a row of clutter.
         self.state_lbl = QLabel(AppState.OFFLINE.label)
-        self.state_lbl.setStyleSheet(f"color: {C_INACT.name()};")
+        self.state_lbl.setStyleSheet(f"color: {PANE.C_INACT.name()};")
         self.state_lbl.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.state_lbl.setFont(font_mono(12))
@@ -363,7 +350,7 @@ class StatusCard(ChamferedFrame):
         # — an OFF tag in its place, so every card keeps the same height.
         self.ctrl_btn: Optional[QPushButton] = None
         if self._inactive:
-            vbox.addWidget(make_badge("OFF", C_TDIM), 0,
+            vbox.addWidget(make_badge("OFF", PANE.C_TDIM), 0,
                            Qt.AlignmentFlag.AlignLeft)
         else:
             self.ctrl_btn = QPushButton("START")
@@ -388,7 +375,7 @@ class StatusCard(ChamferedFrame):
 
     def update_state(self, state: AppState, pid: Optional[int]) -> None:
         prev, self._state = self._state, state
-        label_col, dot_col = STATE_COLORS.get(state, (C_INACT, C_INACT))
+        label_col, dot_col = STATE_COLORS.get(state, (PANE.C_INACT, PANE.C_INACT))
         pulse = state in (AppState.ONLINE, AppState.RUNNING,
                           AppState.LAUNCHING, AppState.WAITING)
 
@@ -455,16 +442,16 @@ class LogView(QTextEdit):
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: transparent;
-                color: {C_AMBER.name()};
+                color: {LOG_COLORS["default"].name()};
                 border: none;
                 padding: 4px 8px;
             }}
         """ + _thin_scrollbar_qss())
 
     def append_line(self, message: str, level: str = "default") -> None:
-        color = LOG_COLORS.get(level, C_AMBER)
+        color = LOG_COLORS.get(level, LOG_COLORS["default"])
         ts = time.strftime("[%H:%M:%S]")
-        ts_html = f'<span style="color:{C_TMID.name()};">{ts}</span>'
+        ts_html = f'<span style="color:{LOG_TIME.name()};">{ts}</span>'
         msg_html = f'<span style="color:{color.name()};">&nbsp;{_esc(message)}</span>'
         self.append(f"{ts_html}{msg_html}")
         sb = self.verticalScrollBar()
@@ -476,7 +463,7 @@ def _thin_scrollbar_qss() -> str:
     return f"""
         QScrollBar:vertical {{ background: transparent; width: 4px; }}
         QScrollBar::handle:vertical {{
-            background: {C_DIM.name()}; border-radius: 2px; min-height: 20px;
+            background: {PANE.C_DIM.name()}; border-radius: 2px; min-height: 20px;
         }}
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
             height: 0;
@@ -497,22 +484,41 @@ def _esc(text: str) -> str:
 BTN_H = 38   # shared height for the four bottom-bar buttons
 
 # ── Colour palettes for the four bottom buttons ───────────────────────────────
-_C_LAUNCH = dict(
-    bg="#120C00", bg_h="#1A1000", bg_p="#0A0800",
-    bd="#C8760A", bd_h="#FFB700", fg="#FFB700", fg_h="#FFD040",
-)
-_C_SECONDARY = dict(
-    bg="#111114", bg_h="#120F09", bg_p="#0A0A0A",
-    bd="#2A2A35", bd_h="#C8760A", fg="#686868", fg_h="#FF8C1A",
-)
-_C_SECONDARY_ON = dict(
-    bg="#120C00", bg_h="#1A1000", bg_p="#0A0800",
-    bd="#C8760A", bd_h="#FFB700", fg="#FF8C1A", fg_h="#FFB700",
-)
-_C_DANGER = dict(
-    bg="#0D0805", bg_h="#140A0A", bg_p="#0A0505",
-    bd="#2A1515", bd_h="#CC3D3D", fg="#7A3A3A", fg_h="#CC3D3D",
-)
+_BAR_DARK = {
+    "launch": dict(
+        bg="#120C00", bg_h="#1A1000", bg_p="#0A0800",
+        bd="#C8760A", bd_h="#FFB700", fg="#FFB700", fg_h="#FFD040"),
+    "secondary": dict(
+        bg="#111114", bg_h="#120F09", bg_p="#0A0A0A",
+        bd="#2A2A35", bd_h="#C8760A", fg="#686868", fg_h="#FF8C1A"),
+    "secondary_on": dict(
+        bg="#120C00", bg_h="#1A1000", bg_p="#0A0800",
+        bd="#C8760A", bd_h="#FFB700", fg="#FF8C1A", fg_h="#FFB700"),
+    "danger": dict(
+        bg="#0D0805", bg_h="#140A0A", bg_p="#0A0505",
+        bd="#2A1515", bd_h="#CC3D3D", fg="#7A3A3A", fg_h="#CC3D3D"),
+}
+# Day mode ("Full Daylight" mockup): pale secondary keys, solid orange LAUNCH.
+# The mockup has no pressed state, so bg_p is a step darker than bg.
+_BAR_LIGHT = {
+    "launch": dict(
+        bg="#C25E0A", bg_h="#D46A12", bg_p="#A84F08",
+        bd="#9E4A06", bd_h="#7E3A04", fg="#FFFFFF", fg_h="#FFFFFF"),
+    "secondary": dict(
+        bg="#EEF0F3", bg_h="#FFFFFF", bg_p="#E1E4E8",
+        bd="#A6AEB9", bd_h="#C25E0A", fg="#3A4450", fg_h="#A84F08"),
+    "secondary_on": dict(
+        bg="#FBE9D8", bg_h="#FFF1E3", bg_p="#F3DCC6",
+        bd="#C25E0A", bd_h="#9E4A06", fg="#A84F08", fg_h="#7E3A04"),
+    "danger": dict(
+        bg="#EEF0F3", bg_h="#FBEAE9", bg_p="#F3D9D7",
+        bd="#C9A5A3", bd_h="#C0322B", fg="#9A3A35", fg_h="#C0322B"),
+}
+
+
+def _bar_colors(kind: str) -> dict:
+    """Bottom-bar button palette for the active theme."""
+    return (_BAR_LIGHT if IS_LIGHT else _BAR_DARK)[kind]
 
 
 # ── Chamfered button ──────────────────────────────────────────────────────────
@@ -565,7 +571,9 @@ class ChamferedButton(QPushButton):
         down  = en and self.isDown()
         c     = self._c
 
-        if not en:
+        if not en and IS_LIGHT:
+            bg, bd, fg = QColor("#E1E4E8"), QColor("#C6CCD4"), QColor("#9AA2AC")
+        elif not en:
             bg, bd, fg = QColor("#0A0A0A"), QColor("#181818"), QColor("#303030")
         else:
             bg = c["bg_p"] if down  else (c["bg_h"] if hover else c["bg"])
@@ -604,39 +612,36 @@ class ChamferedButton(QPushButton):
 
 def _btn_ctrl_style(active: bool = False, *, muted: bool = False,
                     error: bool = False) -> str:
-    """Card button QSS. active = STOP (green), muted = greyed out (still
-    clickable, so the click can be explained), error = couldn't close (red)."""
+    """Card button QSS. active = STOP, muted = greyed out (still clickable, so
+    the click can be explained), error = couldn't close (red)."""
     focus = "#C25E0A" if IS_LIGHT else "#FF8C1A"   # keyboard focus outline
     base = ("QPushButton {{ font-family: 'Euro Caps'; font-size: 7px;"
             " font-weight:700; letter-spacing:1px; border:1px solid {bd};"
             " color:{fg}; background:{bg}; padding: 0 4px; }}"
-            " QPushButton:hover {{ border-color:{bdh}; color:{fgh}; }}"
+            " QPushButton:hover {{ border-color:{bdh}; color:{fgh};"
+            " background:{bgh}; }}"
             " QPushButton:focus {{ border:1px dashed " + focus + "; }}")
+
+    def fmt(bd, fg, bg, bdh, fgh, bgh=None) -> str:
+        return base.format(bd=bd, fg=fg, bg=bg, bdh=bdh, fgh=fgh, bgh=bgh or bg)
+
     if IS_LIGHT:
-        # Bright buttons for the light cards: filled green STOP, light grey START.
+        # Day mode: the pale daylight keys from the bottom bar on the dark
+        # cards -- light grey START, pale orange STOP.
         if error:
-            return base.format(bd="#C0322B", fg="#A0261F", bg="#F6D5D3",
-                               bdh="#8E1F19", fgh="#8E1F19")
+            return fmt("#C0322B", "#A0261F", "#F6D5D3", "#8E1F19", "#8E1F19")
         if muted:
-            return base.format(bd="#D0D5DB", fg="#A3ABB5", bg="#EEF0F3",
-                               bdh="#D0D5DB", fgh="#A3ABB5")
-        if active:
-            return base.format(bd="#3FA85F", fg="#1C6B36", bg="#CDEED7",
-                               bdh="#2E9E55", fgh="#15592C")
-        return base.format(bd="#B4BCC6", fg="#5A6573", bg="#E9EDF1",
-                           bdh="#C25E0A", fgh="#C25E0A")
-    # Dark theme (original).
+            return fmt("#C6CCD4", "#9AA2AC", "#E1E4E8", "#C6CCD4", "#9AA2AC")
+        c = _BAR_LIGHT["secondary_on" if active else "secondary"]
+        return fmt(c["bd"], c["fg"], c["bg"], c["bd_h"], c["fg_h"], c["bg_h"])
+    # Dark theme (original): green STOP.
     if error:
-        return base.format(bd="#CC3D3D", fg="#CC3D3D", bg="#1A0A0A",
-                           bdh="#FF5555", fgh="#FF6666")
+        return fmt("#CC3D3D", "#CC3D3D", "#1A0A0A", "#FF5555", "#FF6666")
     if muted:
-        return base.format(bd="#181818", fg="#303030", bg="#0A0A0A",
-                           bdh="#181818", fgh="#303030")
+        return fmt("#181818", "#303030", "#0A0A0A", "#181818", "#303030")
     if active:
-        return base.format(bd="#226622", fg="#44AA44", bg="#0D1A0D",
-                           bdh="#44AA44", fgh="#66CC66")
-    return base.format(bd="#1E1E1E", fg="#484848", bg="#0C0C0C",
-                       bdh="#C8760A", fgh="#C8760A")
+        return fmt("#226622", "#44AA44", "#0D1A0D", "#44AA44", "#66CC66")
+    return fmt("#1E1E1E", "#484848", "#0C0C0C", "#C8760A", "#C8760A")
 
 
 # Icon size for the bottom-bar buttons (~40% larger than the old inline glyphs).
@@ -689,28 +694,19 @@ def make_badge(text: str, color: QColor, *, filled: bool = False) -> QLabel:
 
 # ── Header banner ─────────────────────────────────────────────────────────────
 class TitleBanner(QWidget):
-    """Paints title-bar.png (the wide chamfered frame with the framing chevrons)
-    scaled to the panel width, with the outpost station icon at the left and the
-    suite title centred in the empty span the chevrons bracket. Everything is
-    drawn in paintEvent so the overlay positions are exact regardless of layout.
-    Falls back to a plain amber-edged strip if the banner asset is missing, so
-    the app always runs."""
+    """The suite title, centred in tracked display caps. Transparent: the
+    HeaderPanel around it paints the strip, the accent line, and the mark."""
 
-    # title-bar.png is ~3200×220 — a very wide ~14.5:1 frame.
-    _ASPECT = 3200 / 220
+    # Height tracks width at a wide ~14.5:1 strip, clamped to 50–88 px.
+    _ASPECT = 14.5
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._banner = QPixmap(os.path.join(ASSETS_DIR, BANNER_IMAGE))
-        self._outpost = QPixmap(os.path.join(ASSETS_DIR, "outpost.png"))
-        self._scaled: Optional[QPixmap] = None
-        self._scaled_for = -1
         self.setMinimumHeight(50)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        # Lock height to the banner's aspect so the frame art never distorts.
-        if not self._banner.isNull() and self.width() > 0:
+        if self.width() > 0:
             h = max(50, min(round(self.width() / self._ASPECT), 88))
             if h != self.height():
                 self.setFixedHeight(h)
@@ -719,12 +715,6 @@ class TitleBanner(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = self.rect()
-        p.fillRect(r, BANNER_FILL)
-        p.fillRect(r.left(), r.top(), r.width(), 2, BANNER_ACCENT)
-        if not self._outpost.isNull():
-            icon = self._outpost.scaledToHeight(int(r.height() * 0.60),
-                       Qt.TransformationMode.SmoothTransformation)
-            p.drawPixmap(22, (r.height() - icon.height()) // 2, icon)
         f = font_display(13, QFont.Weight.ExtraBold)
         f.setPixelSize(max(20, int(r.height() * 0.46)))
         f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, TRACK_BANNER)
@@ -737,39 +727,50 @@ class TitleBanner(QWidget):
 
 
 # ── Header panel ──────────────────────────────────────────────────────────────
-class HeaderPanel(QWidget):
-    """The title banner plus the CMDR identity row beneath it. The banner art
-    (title-bar.png + outpost.png) carries the framing decoration, so the old
-    hand-drawn ◆ diamonds and separator line are gone — they'd double up with
-    the frame's own brackets and chevrons."""
+class HeaderPanel(ChamferedFrame):
+    """The title banner and the CMDR nametag in one chamfered panel: a
+    translucent BANNER_FILL strip with the accent line along its top edge, the
+    title mark spanning both rows at the left, the suite title, and the CMDR
+    row beneath it. The mark renders straight from its SVG so it stays crisp at
+    any size; if the file is missing the header just goes without it."""
 
     def __init__(self, cmdr_name: str,
                  parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
+        super().__init__(parent, chamfer=CHAMFER_PANEL, bg=BANNER_FILL,
+                         border=C_BORDER)
+        self.setContentsMargins(0, 0, 0, 0)
+        self._mark = QSvgRenderer(os.path.join(ASSETS_DIR, TITLE_MARK))
         vbox = QVBoxLayout(self)
-        vbox.setSpacing(8)
-        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(0)
+        vbox.setContentsMargins(0, 0, 0, 10)
+        vbox.addWidget(TitleBanner())
 
-        self._banner = TitleBanner()
-        vbox.addWidget(self._banner)
-
-        # CMDR row, framed like the System Status / Activity Log panes
-        cmdr_frame = ChamferedFrame(chamfer=CHAMFER_PANEL, bg=C_PANEL_T)
-        cmdr_row = QHBoxLayout(cmdr_frame)
-        cmdr_row.setContentsMargins(14, 6, 14, 6)
+        cmdr_row = QHBoxLayout()
         cmdr_row.setSpacing(10)
         cmdr_row.addStretch()
-
-        badge = make_badge("CMDR", C_AMBER)
-        cmdr_row.addWidget(badge)
-
+        cmdr_row.addWidget(make_badge("CMDR", C_AMBER))
         self.cmdr_lbl = QLabel(cmdr_name.upper())
         self.cmdr_lbl.setFont(font_body(12, QFont.Weight.DemiBold))
         self.cmdr_lbl.setStyleSheet(
             f"color: {C_CMDR.name()}; letter-spacing: 4px;")
         cmdr_row.addWidget(self.cmdr_lbl)
         cmdr_row.addStretch()
-        vbox.addWidget(cmdr_frame)
+        vbox.addLayout(cmdr_row)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)   # fill + chamfered hairline
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Clipped to the outline, so the accent line stops where the chamfer
+        # cuts the top-right corner.
+        p.setClipPath(self._path())
+        p.fillRect(0, 1, self.width(), 2, BANNER_ACCENT)
+        if self._mark.isValid():
+            ms = self._mark.defaultSize()
+            mh = self.height() * 0.80
+            mw = mh * ms.width() / ms.height()
+            self._mark.render(p, QRectF(22, (self.height() - mh) / 2, mw, mh))
+        p.end()
 
     def set_cmdr(self, name: str) -> None:
         self.cmdr_lbl.setText(name.upper())
@@ -782,7 +783,8 @@ class StatusPanel(ChamferedFrame):
 
     def __init__(self, apps: list[AppDescriptor],
                  parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent, chamfer=CHAMFER_PANEL, bg=C_PANEL_T)
+        super().__init__(parent, chamfer=CHAMFER_PANEL, bg=PANE.C_PANEL_T,
+                         border=PANE.C_BORDER)
         self.cards: dict[str, StatusCard] = {}
 
         vbox = QVBoxLayout(self)
@@ -791,7 +793,7 @@ class StatusPanel(ChamferedFrame):
 
         lbl = QLabel("S Y S T E M   S T A T U S")
         lbl.setFont(font_display(7))
-        lbl.setStyleSheet(f"color: {C_TMID.name()}; letter-spacing: 3px;")
+        lbl.setStyleSheet(f"color: {PANE_TITLE.name()}; letter-spacing: 3px;")
         vbox.addWidget(lbl)
 
         # The card grid scrolls, so the panel can shrink to about one row on a
@@ -869,7 +871,8 @@ class StatusPanel(ChamferedFrame):
 # ── Log panel ─────────────────────────────────────────────────────────────────
 class LogPanel(ChamferedFrame):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent, chamfer=CHAMFER_PANEL, bg=C_PANEL_T)
+        super().__init__(parent, chamfer=CHAMFER_PANEL, bg=PANE.C_PANEL_T,
+                         border=PANE.C_BORDER)
         vbox = QVBoxLayout(self)
         vbox.setSpacing(0)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -879,10 +882,10 @@ class LogPanel(ChamferedFrame):
         hdr.setContentsMargins(14, 8, 14, 6)
         lbl = QLabel("A C T I V I T Y   L O G")
         lbl.setFont(font_display(7))
-        lbl.setStyleSheet(f"color: {C_TMID.name()}; letter-spacing: 3px;")
+        lbl.setStyleSheet(f"color: {PANE_TITLE.name()}; letter-spacing: 3px;")
         file_lbl = QLabel("launcher.log")
         file_lbl.setFont(font_mono(9))
-        file_lbl.setStyleSheet(f"color: {C_TDIM.name()};")
+        file_lbl.setStyleSheet(f"color: {PANE_META.name()};")
         hdr.addWidget(lbl)
         hdr.addStretch()
         hdr.addWidget(file_lbl)
@@ -891,7 +894,8 @@ class LogPanel(ChamferedFrame):
         # amber glow divider
         div = QFrame()
         div.setFixedHeight(1)
-        div.setStyleSheet(f"background: {C_AMBER.name()}; opacity: 0.2;")
+        div.setStyleSheet(
+            f"background: {LOG_COLORS['default'].name()}; opacity: 0.2;")
         vbox.addWidget(div)
 
         self.log = LogView()
@@ -945,21 +949,25 @@ class ButtonBar(QWidget):
         hbox.addLayout(cred_vbox)
         hbox.addStretch()
 
-        self.shutdown_btn  = ChamferedButton("SHUTDOWN",   chamfer=CHAMFER_CARD, **_C_DANGER)
+        self.shutdown_btn  = ChamferedButton("SHUTDOWN",   chamfer=CHAMFER_CARD, **_bar_colors("danger"))
         self.autostart_btn = ChamferedButton("AUTO START", chamfer=CHAMFER_CARD,
-                                             **(_C_SECONDARY_ON if auto_start else _C_SECONDARY))
-        self.settings_btn  = ChamferedButton("SETTINGS",  chamfer=CHAMFER_CARD, **_C_SECONDARY)
-        self.launch_btn    = ChamferedButton("LAUNCH",    chamfer=CHAMFER_CARD, **_C_LAUNCH)
+                                             **_bar_colors("secondary_on" if auto_start else "secondary"))
+        self.settings_btn  = ChamferedButton("SETTINGS",  chamfer=CHAMFER_CARD, **_bar_colors("secondary"))
+        self.launch_btn    = ChamferedButton("LAUNCH",    chamfer=CHAMFER_CARD, **_bar_colors("launch"))
 
         self.shutdown_btn.setFont(font_display(9))
         self.autostart_btn.setFont(font_display(9))
         self.settings_btn.setFont(font_display(9))
         self.launch_btn.setFont(font_display(11))
 
-        self.shutdown_btn.setIcon(power_icon(QColor("#B85555")))
+        # Day mode takes the icons in each button's text colour (white ▶ on the
+        # orange LAUNCH); ⟳ stays the themed orange in both, as in dark mode.
+        power, gear, play = (("#9A3A35", "#3A4450", "#FFFFFF") if IS_LIGHT
+                             else ("#B85555", "#9A9AA0", C_GOLD))
+        self.shutdown_btn.setIcon(power_icon(QColor(power)))
         self.autostart_btn.setIcon(_glyph_icon("⟳", C_ORANGE))
-        self.settings_btn.setIcon(_glyph_icon("⚙", QColor("#9A9AA0")))
-        self.launch_btn.setIcon(_glyph_icon("▶", C_GOLD))
+        self.settings_btn.setIcon(_glyph_icon("⚙", QColor(gear)))
+        self.launch_btn.setIcon(_glyph_icon("▶", QColor(play)))
         for b in (self.shutdown_btn, self.autostart_btn,
                   self.settings_btn, self.launch_btn):
             b.setIconSize(QSize(BTN_ICON, BTN_ICON))
@@ -975,7 +983,7 @@ class ButtonBar(QWidget):
     def _toggle_autostart(self) -> None:
         self._auto_start = not self._auto_start
         self.autostart_btn.set_colors(
-            **(_C_SECONDARY_ON if self._auto_start else _C_SECONDARY))
+            **_bar_colors("secondary_on" if self._auto_start else "secondary"))
         self.autostart_toggled.emit(self._auto_start)
 
     def set_busy(self, busy: bool) -> None:
@@ -983,43 +991,57 @@ class ButtonBar(QWidget):
         self.launch_btn.setText("RUNNING..." if busy else "LAUNCH")
 
 
-# ── Background widget (hex grid + vignette) ───────────────────────────────────
+# ── Background widget (starfield + vignette) ──────────────────────────────────
 class Background(QWidget):
-    """Paints window-bg.png (starfield/nebula/dot-matrix with corner brackets),
-    scaled to cover the window and centered. Falls back to a flat dark fill if
-    the asset is missing, so the app still runs."""
+    """Renders the themed window-bg SVG (starfield/nebula/dot-matrix) to cover
+    the window, centred — the SVG's own `slice` scaling, which QSvgRenderer
+    doesn't do itself. The render is cached per size + DPI, so it's crisp on
+    any display. Falls back to a flat dark fill if the asset is missing, so the
+    app still runs."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._pix = QPixmap()
+        self._svg = QSvgRenderer()
         self._loaded: Optional[str] = None
-        self._scaled: Optional[QPixmap] = None
-        self._scaled_for: Optional[QSize] = None
+        self._cache: Optional[QPixmap] = None
+        self._cache_for: Optional[tuple] = None
 
-    def _ensure_pixmap(self) -> None:
-        """(Re)load the themed background image if the active theme changed it.
+    def _ensure_renderer(self) -> None:
+        """(Re)load the themed background SVG if the active theme changed it.
         The widget persists across theme switches, so this is how it repaints
         with the right asset after apply_theme()."""
         if self._loaded != BG_IMAGE:
-            self._pix = QPixmap(os.path.join(ASSETS_DIR, BG_IMAGE))
+            self._svg.load(os.path.join(ASSETS_DIR, BG_IMAGE))
             self._loaded = BG_IMAGE
-            self._scaled = None
-            self._scaled_for = None
+            self._cache = None
+            self._cache_for = None
+
+    def _render_cover(self, dpr: float) -> QPixmap:
+        vb = self._svg.viewBoxF()
+        scale = max(self.width() / vb.width(), self.height() / vb.height())
+        w, h = vb.width() * scale, vb.height() * scale
+        pm = QPixmap(self.size() * dpr)
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(C_DARK)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._svg.render(p, QRectF((self.width() - w) / 2,
+                                   (self.height() - h) / 2, w, h))
+        p.end()
+        return pm
 
     def paintEvent(self, _event) -> None:  # noqa: N802
-        self._ensure_pixmap()
+        self._ensure_renderer()
         p = QPainter(self)
-        p.fillRect(self.rect(), C_DARK)
-        if not self._pix.isNull():
-            if self._scaled_for != self.size():
-                self._scaled = self._pix.scaled(
-                    self.size(),
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation)
-                self._scaled_for = self.size()
-            x = (self.width() - self._scaled.width()) // 2
-            y = (self.height() - self._scaled.height()) // 2
-            p.drawPixmap(x, y, self._scaled)
+        if self._svg.isValid() and not self.size().isEmpty():
+            dpr = self.devicePixelRatioF()
+            key = (self.size(), dpr)
+            if self._cache_for != key:
+                self._cache = self._render_cover(dpr)
+                self._cache_for = key
+            p.drawPixmap(0, 0, self._cache)
+        else:
+            p.fillRect(self.rect(), C_DARK)
         p.end()
 
 

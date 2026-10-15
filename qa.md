@@ -202,10 +202,11 @@ min-ed-launcher or real tools behave. Those tests are marked **R**.
 
 ### 5.1 The main window
 
-1. **Title banner.** "ELITE : DANGEROUS · LAUNCH SUITE" with a station icon on the left.
-   A gold line runs along the top (orange in light mode). The strip is about 30%
-   see-through.
-2. **CMDR row.** A framed strip with a `CMDR` tag and your commander name in capitals.
+1. **Header.** One panel with cut corners. "ELITE : DANGEROUS · LAUNCH SUITE" on top,
+   and the `CMDR` tag with your commander name in capitals underneath. The ringed-planet
+   title mark spans both rows on the left. A gold line runs along the top edge (orange
+   in light mode) and stops at the cut corner. The panel is about 45% see-through.
+2. *(The CMDR row is now part of the header, item 1.)*
 3. **SYSTEM STATUS.** One card per app, four per row. The order is Steam, Elite, then
    your companion apps in the order Settings lists them.
 4. **ACTIVITY LOG.** Timestamped, colour-coded messages. They're also written to
@@ -284,7 +285,9 @@ either way:
 
 ### 5.5 What a normal session logs
 
-Colours are for the dark theme. The light theme uses darker equivalents.
+Colours are for the dark theme. In the light theme the log sits on a mid-grey pane, so
+it uses pale tints: white for normal lines, pale gold for success, pale orange for
+warnings, pink for errors.
 
 | Message | Colour | When |
 | --- | --- | --- |
@@ -397,8 +400,8 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify**.
 | --- | --- | --- | --- | --- |
 | RG-01 | P1 | A | Get down to 4 or fewer cards: untick apps, and turn off "Show cards for apps that aren't enabled". | Cards stay a sensible height (about 90–110 px) at the top of the panel, with empty space below. They're **not** stretched tall. |
 | RG-02 | P1 | A | Show every card (all apps visible). | Cards are the same height as in RG-01. |
-| RG-03 | P1 | A | Look at the CMDR row, dark and light. | It's framed exactly like SYSTEM STATUS and ACTIVITY LOG: same border colour, same see-through fill, same cut corners. |
-| RG-04 | P1 | A | Look at the title banner, dark and light. | The background art shows faintly through the banner strip (about 30% see-through). Title text and top line are fully solid. |
+| RG-03 | P1 | A | Look at the header, dark and light. | Title and CMDR name share one panel, with the same cut corners and hairline border as SYSTEM STATUS and ACTIVITY LOG. There's no separate CMDR strip. |
+| RG-04 | P1 | A | Look at the header, dark and light. | The background art shows faintly through the header panel (about 45% see-through). The title, CMDR name, mark and top line are fully solid. The top line stops at the cut corner. |
 | RG-05 | P1 | A | Start EDLS and switch theme both ways. Watch the terminal. | No `libpng error` lines. Starfield/nebula background with corner brackets in dark; the light background art in light. |
 | RG-06 | P1 | H | Open the fake game and wait a few seconds. | Elite card: Running, with a greyed "QUIT IN-GAME" that fits its button. EDLS has no way to stop the game. |
 | RG-07 | P1 | R | Run JB-01. | Closing EDLS that was started from VS Code doesn't close Steam or the game. |
@@ -459,14 +462,14 @@ Do this section in **both** themes.
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
 | UI-01 | P1 | A | Look over the dark theme | Starfield/nebula background with corner brackets behind see-through panels. No clipped text. Headings and buttons use the squared Euro Caps font; log and state text use a monospaced font. |
-| UI-02 | P1 | A | Look over the light theme | Light-grey background art, silver banner strip, orange accents, dark readable text. |
+| UI-02 | P1 | A | Look over the light theme | Light-grey background art and a silver header with orange accents. SYSTEM STATUS and ACTIVITY LOG are grey see-through panes with dark cards ("Full Daylight"). Pale bottom and card buttons, with an orange LAUNCH. Every piece of text is readable, especially the pane titles and log lines on the grey. |
 | UI-03 | P1 | A | Drag the window as small as it goes | It stops at 900×640. Nothing overlaps. All four bottom buttons are fully visible. The cards scroll if they don't fit. |
 | UI-04 | P1 | A | Set Windows to 1024×768 (the smallest screen we support), then 1366×768, then 1920×1080 at 150% scaling. Start EDLS each time. | It opens centred and fully on screen, bottom buttons included, with the taskbar visible (R-18 fix). |
 | UI-05 | P2 | A | Maximize → restore → snap to half screen (Win+← / Win+→), on 1920 wide and on 1366 wide | Layout adapts. Record whether half-screen snap works (the window can't be narrower than 900 px). |
 | UI-06 | P2 | A | 4K at 150–200% scaling | Text is crisp. The button icons (▶ ⚙ ⟳ and the power symbol) are crisp. The banner title isn't pixelated. |
 | UI-07 | P2 | A | Ultrawide (e.g. 3440×1440), maximized | The banner stops growing taller (about 88 px). The background covers the window, cropped but not stretched. Cards are wide but readable. |
 | UI-08 | P2 | A | Two monitors with different scaling: drag the window between them | It re-renders at the right size on each, with no blurry text and no broken layout. |
-| UI-09 | P1 | A | Banner at minimum width and maximized | The title is centred and never overlaps the station icon. Gold top line (orange in light mode). |
+| UI-09 | P1 | A | Header at minimum width and maximized | The title and CMDR name are centred and never overlap the title mark, which spans both rows on the left. Gold top line (orange in light mode). |
 | UI-10 | P2 | A | Set a 60-character CMDR name | Record: is it cut off? Does it widen the window or push things off-screen? |
 | UI-11 | P1 | A | Card grid | Four per row. Order: Steam, Elite, then Settings order. All cards the same height. With few cards they sit at the top with empty space below. |
 | UI-12 | P1 | H | Add 20+ dummy apps (copies with different names) | The window doesn't grow. The cards scroll inside SYSTEM STATUS with a thin scrollbar, and the background still shows behind them (no dark box). The mouse wheel scrolls the cards (R-18 fix). |
@@ -477,7 +480,7 @@ Do this section in **both** themes.
 | UI-17 | P1 | H | Produce every state and check it against the [§5.2](#52-status-cards) table: Offline (idle), Not found (wrong path), Failed (path to a `.txt` file → START), Launching (briefly on START), Online, Stopped (STOP), Offline after SHUTDOWN, Waiting... (Elite during LAUNCH), Running (fake game), Error (see SC-16) | Text, colour, pulsing dot, button label and border tint all match the table. There is no "Closed" state any more. |
 | UI-18 | P2 | H | Elite card with the fake game running, and during LAUNCH before the fake game opens | "QUIT IN-GAME" and "STARTING" fit inside the small button (not clipped) in both themes. Both are greyed out; clicking only writes a log line. |
 | UI-19 | P2 | A | Drag the gap between SYSTEM STATUS and ACTIVITY LOG up and down, then resize the window | The log can't shrink below about 130 px. Nothing overlaps or disappears. |
-| UI-20 | P2 | A | Hover and press each bottom button. Start a session to see LAUNCH disabled. | Hover brightens the border and text. Pressing darkens it. LAUNCH greys out and reads "RUNNING...". In light mode the bottom buttons keep their dark look: say whether that's acceptable. |
+| UI-20 | P2 | A | Hover and press each bottom button. Start a session to see LAUNCH disabled. | Hover brightens the border and text. Pressing darkens it. LAUNCH greys out and reads "RUNNING...". In light mode the buttons are pale and LAUNCH is solid orange; disabled LAUNCH is pale grey. |
 | UI-21 | P2 | A | Toggle AUTO START | Off: grey like SETTINGS. On: orange border and text. The state survives a restart. |
 | UI-22 | P2 | A | Click "report issue" | Your browser opens `https://github.com/coyoteware/EDLS-py/issues`. |
 | UI-23 | P3 | A | Look at the version badge | Shows the version you were told you're testing (1.1.0 at the time of writing). |
@@ -729,8 +732,8 @@ Close EDLS before each edit. Keep a backup.
 | TH-05 | P2 | H | Switch theme mid-session, both while LAUNCH waits for the game and after it's running | LAUNCH stays "RUNNING..." and disabled. Every card keeps its state through the switch, including "Waiting..." and any Error (R-14 fix). Closing the fake game still triggers teardown. |
 | TH-06 | P2 | A | Switch theme → open Settings and the add/edit window | They use the new theme. |
 | TH-07 | P2 | A | Switch theme back and forth 10 times | No slowdown and nothing in the terminal. Memory stays roughly flat (Task Manager). |
-| TH-08 | P3 | A | Light mode, bottom bar | The buttons keep their dark style. Say whether that looks intentional. |
-| TH-09 | P2 | A | Light mode, card START/STOP buttons | STOP is green-filled, START is light grey. Both are readable. |
+| TH-08 | P3 | A | Light mode, bottom bar | Pale SHUTDOWN / AUTO START / SETTINGS and a solid orange LAUNCH with a white ▶. AUTO START turns pale orange when it's on. |
+| TH-09 | P2 | A | Light mode, card START/STOP buttons | START is pale grey and STOP is pale orange, both on the dark cards. Hovering turns the border and text orange. Both are readable. |
 
 ### 8.12 Auto start (AS)
 
@@ -851,7 +854,7 @@ Use Task Manager → Details → the `python.exe` whose command line ends in `ma
 | ED-02 | P3 | R | Remote Desktop or fast user switching mid-session | The session carries on. |
 | ED-03 | P2 | A | Change the clock or time zone mid-session | No effect. |
 | ED-04 | P3 | A | With your antivirus active | Record any alerts about EDLS starting or closing programs. |
-| ED-05 | P2 | A | On a **copy** of the repo, delete one at a time: `assets\EUROCAPS.TTF`, `assets\ShareTechMono-Regular.ttf`, `assets\window-bg.png`, `assets\title-bar.png`, `assets\outpost.png`, `assets\icon.ico` → run each time | EDLS always starts. Fonts fall back to system fonts, and the background falls back to a plain colour. No crash. |
+| ED-05 | P2 | A | On a **copy** of the repo, delete one at a time: `assets\EUROCAPS.TTF`, `assets\ShareTechMono-Regular.ttf`, `assets\window-bg.svg`, `assets\title-mark.svg`, `assets\icon.ico` → run each time | EDLS always starts. Fonts fall back to system fonts, the background falls back to a plain colour, and the banner shows without the title mark. No crash. |
 | ED-06 | P3 | A | Non-English Windows display language (e.g. German) | Works. Default tool paths are still found. |
 | ED-07 | P3 | A | `%LOCALAPPDATA%` on a different drive or redirected | Works. |
 | ED-08 | P3 | A | Open `launcher.log` in a program that locks files (e.g. Excel) while EDLS runs and logs | Record. EDLS should keep working, even if the log stops updating. |
@@ -1006,7 +1009,7 @@ These come from reading the code. Each row has a **Status**:
 | R-30 | Any exit of the game ends the session. If the game is restarted (relog or min-ed-launcher restart), the tools are already closed. | Open (design question; the "Close EDLS when the game exits" toggle softens it) | LS-20, SQ-20, JR-11 | Design question |
 | R-31 | EDLS can see other Windows users' programs, so cards may show someone else's game or tools as running. | Open | RF-07 | Minor |
 | R-32 | Unticking an app mid-session: "launched only" still closes it at the end, "all enabled" doesn't. | Fixed — verify (can't untick mid-session) | SC-10 | Design question |
-| R-33 | Light theme: success and warning log lines are nearly the same orange. | Open | LG-01 | Cosmetic |
+| R-33 | Light theme: success and warning log lines are nearly the same orange. | Changed — re-check: the light log now uses pale gold (success) vs pale orange (warning). | LG-01 | Cosmetic |
 | R-34 | With AUTO START on but setup unfinished, the log may say "Auto-start enabled — launching..." although nothing launches. | Fixed — verify | FR-04, AS-04 | Cosmetic |
 | R-35 | The 60 s limit on the game appearing may be too short on a slow PC's cold start (Steam starting, updates, min-ed-launcher login). | Open (new) | LS-31, LS-02, AS-03 | Minor (press LAUNCH again) |
 | R-36 | The 5 s close countdown can't be cancelled, except by closing EDLS yourself. If you change your mind, you have to reopen EDLS. | Open (new, design question) | LS-04, SQ-37 to SQ-40 | Design question |

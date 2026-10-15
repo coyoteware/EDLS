@@ -66,9 +66,15 @@ a visual outcome you haven't confirmed with him.
 - **Display names are a UI concern** (`_DISPLAY_NAMES` in `ui.py`); `descriptor.name`
   stays the key for status routing + settings.
 - **`config.APP_VERSION`** is the single source of truth for the version string.
+- **The panes are the dark HUD in both themes** (the "Full Daylight" look): day mode
+  lightens the window, header, bottom bar and card keys, not the status/log panes or
+  cards. Pane surfaces and everything on a card read the fixed `theme.PANE.*`, never
+  the themed globals of the same name. Only text drawn straight on a pane (its title,
+  the activity log) themes, via `PANE_TITLE` / `PANE_META` / `LOG_TIME` / `LOG_COLORS`,
+  because the see-through pane comes out mid-grey on the light window.
 - Assets are loaded by relative path from `assets/` and must degrade gracefully if
-  missing (the app should always run). `.svg` files are vector sources; the `.png`s
-  are what the code loads.
+  missing (the app should always run). Art is SVG, rendered directly with
+  `QSvgRenderer` — there are no PNGs (`icon.ico` is the only raster asset).
 
 ## How Andrew works
 Casual, direct, technical. Values honest risk-flagging over false confidence; don't
