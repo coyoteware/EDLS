@@ -1,4 +1,4 @@
-# **WIP README!!!**
+# **WIP README!! NEEDS SCREENSHOTS!!**
 
 
 # EDLS — Elite: Dangerous Launch Suite
@@ -77,6 +77,12 @@ disabled, or have its path edited):
 | EDCoPilot | EDHM-UI | opentrack |
 | ICARUS Terminal | EDDiscovery | VoiceAttack |
 | EDCoPTER | Elite Observatory | |
+
+>>*NOTE* on filepaths: The filepath for SrvSurvey is a diabolical beast. You are unlikely to be successful in entering it manually. If for whatever reason EDLS is unable to find its install automatically, please report it at the issues page.
+
+
+
+
 
 
 Open **SETTINGS** from the main window to **Add, remove, enable/disable** companion apps and edit each app's executable path. Paths support `%ENV%` variables (e.g. `%ProgramFiles%`).
