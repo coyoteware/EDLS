@@ -14,7 +14,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from PySide6.QtCore import QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontInfo, QIcon, QPainter, QPen, QPixmap
 
 # Avoid a hard import cycle: Theme is an enum in config.py. We only compare by
 # .name so a light fallback works even if config isn't importable in isolation.
@@ -80,9 +80,15 @@ CARD_BORDER_ONLINE    = QColor(61, 204, 106, 72)
 CARD_BORDER_LAUNCHING = QColor(200, 118, 10, 76)
 CARD_BORDER_FAILED    = QColor(204, 61, 61, 76)
 
-# Toggle-switch track colours.
-TOGGLE_OFF = QColor("#8A929C")
-TOGGLE_ON  = QColor("#C25E0A")
+# HUD toggles: ToggleSwitch ("Chamfer Slide") and ThemeToggle ("Night Sky") --
+# the design's --tg-* tokens. glow is the knob's halo when on (None: no glow).
+TOGGLE = {
+    "off_bd": QColor("#3A2E18"), "off_bg": QColor("#120F0A"),
+    "off_knob": QColor("#6A5030"), "off_txt": QColor("#6A5030"),
+    "on_bd": QColor("#FF8C1A"), "on_bg": QColor("#2A1804"),
+    "on_knob": QColor("#FFB700"), "on_txt": QColor("#FFB700"),
+    "glow": QColor(255, 183, 0, 140), "icon": QColor("#A07A3A"),
+}
 
 # ── Header banner ───────────────────────────────────────────────────────────────
 # TitleBanner is a translucent fill strip with a top accent line, the title mark,
@@ -98,7 +104,7 @@ _THEMED_NAMES = (
     "C_DARK", "C_PANEL", "C_BORDER", "C_AMBER", "C_ORANGE", "C_TMID",
     "C_TDIM", "C_CMDR", "C_SUCCESS", "CARD_BORDER_OFF", "BG_IMAGE",
     "BANNER_FILL", "BANNER_ACCENT", "TITLE_MARK",
-    "PANE_TITLE", "PANE_META", "LOG_TIME", "LOG_COLORS",
+    "PANE_TITLE", "PANE_META", "LOG_TIME", "LOG_COLORS", "TOGGLE",
 )
 _DARK_PALETTE = {name: globals()[name] for name in _THEMED_NAMES}
 
@@ -122,6 +128,13 @@ _LIGHT_PALETTE = {
         "success": QColor("#FFE08A"), "default": QColor("#F4F6F8"),
         "info": QColor("#F4F6F8"), "warning": QColor("#FFC489"),
         "error": QColor("#FFB8B0"), "dim": QColor("#C3C8CE"),
+    },
+    "TOGGLE": {
+        "off_bd": QColor("#9AA2AC"), "off_bg": QColor("#DDE1E6"),
+        "off_knob": QColor("#7E8893"), "off_txt": QColor("#586573"),
+        "on_bd": QColor("#C25E0A"), "on_bg": QColor("#F6DEC6"),
+        "on_knob": QColor("#C25E0A"), "on_txt": QColor("#A84F08"),
+        "glow": None, "icon": QColor("#586573"),
     },
     "BG_IMAGE": "window-bg-light.svg",
     "BANNER_FILL":  QColor(0xC8, 0xCD, 0xD4, 140),   # silver strip, 55% opaque
@@ -161,7 +174,9 @@ def font_body(size: int, weight: QFont.Weight = QFont.Weight.Medium) -> QFont:
 
 def font_mono(size: int) -> QFont:
     f = QFont(FONT_MONO, size)
-    if not f.exactMatch():
+    # Fall back only if the TTF really didn't load. (Not exactMatch(): it's
+    # False at some point sizes -- 10 and 11 -- even with the font loaded.)
+    if QFontInfo(f).family() != FONT_MONO:
         f = QFont("Consolas", size)
     return f
 

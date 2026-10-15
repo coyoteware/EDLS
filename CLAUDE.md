@@ -51,8 +51,9 @@ a visual outcome you haven't confirmed with him.
   caused an escaping mess — avoid.
 - **Fonts** (`assets/`): `EUROCAPS.TTF` → family **"Euro Caps"** (with a space),
   the display/body face. `ShareTechMono-Regular.ttf` → "Share Tech Mono", used by
-  `font_mono()` for status text + the activity log; it falls back to Consolas only
-  if the TTF is missing.
+  `font_mono()` for status text, the activity log and Settings; it falls back to
+  Consolas only if the TTF is missing (checked via `QFontInfo` — `exactMatch()` is
+  False at some point sizes even when the font is loaded).
 - **JSON settings keys are snake_case** — intentionally NOT compatible with the old
   PowerShell PascalCase (settings reset once on migration; that's fine).
 - **`ShutdownScope` is a user setting** (`LAUNCHED_ONLY` | `ALL_ENABLED`); both the
@@ -72,6 +73,10 @@ a visual outcome you haven't confirmed with him.
   the themed globals of the same name. Only text drawn straight on a pane (its title,
   the activity log) themes, via `PANE_TITLE` / `PANE_META` / `LOG_TIME` / `LOG_COLORS`,
   because the see-through pane comes out mid-grey on the light window.
+- **No native popups.** Small dialogs are `HudPopover` subclasses (frameless,
+  chamfered, centred on the parent); notices/confirms go through `hud_notice()` /
+  `hud_confirm()`, never `QMessageBox`. Settings (a normal window) and the popovers
+  take their colours from `_dialog_colors()` and buttons from `_key()`.
 - Assets are loaded by relative path from `assets/` and must degrade gracefully if
   missing (the app should always run). Art is SVG, rendered directly with
   `QSvgRenderer` — there are no PNGs (`icon.ico` is the only raster asset).

@@ -38,12 +38,14 @@ from dataclasses import replace
 from typing import Optional
 
 from PySide6.QtCore import (
-    QEasingCurve, QEvent, QParallelAnimationGroup, QPoint, Property,
-    QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal, Slot,
+    QByteArray, QEasingCurve, QEvent, QParallelAnimationGroup, QPoint, QPointF,
+    Property, QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl,
+    Signal, Slot,
 )
 from PySide6.QtGui import (
     QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QIcon,
-    QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon, QRadialGradient,
+    QLinearGradient, QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon,
+    QRadialGradient,
 )
 from PySide6.QtWidgets import (
     QApplication, QFrame, QGraphicsOpacityEffect,
@@ -51,8 +53,7 @@ from PySide6.QtWidgets import (
     QSpacerItem, QSplitter, QStyle, QStyleOptionButton, QStylePainter,
     QTextEdit, QVBoxLayout, QWidget, QPushButton,
     QDialog, QCheckBox, QLineEdit, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QDialogButtonBox, QMessageBox,
-    QFileDialog, QScrollArea,
+    QHeaderView, QAbstractItemView, QFileDialog, QScrollArea,
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtSvg import QSvgRenderer
@@ -72,7 +73,7 @@ from theme import (
     IS_LIGHT, CHAMFER_CARD, CHAMFER_PANEL, PULSE_MS,
     BOOT_DURATION, BOOT_OFFSET, BOOT_STAGGER,
     CARD_BORDER_ONLINE, CARD_BORDER_LAUNCHING, CARD_BORDER_FAILED,
-    TOGGLE_OFF, TOGGLE_ON, TRACK_BANNER,
+    TOGGLE, TRACK_BANNER,
     font_display, font_body, font_mono, power_icon,
 )
 
@@ -1045,27 +1046,71 @@ class Background(QWidget):
         p.end()
 
 
-# ── Toggle switch ─────────────────────────────────────────────────────────────
+# ── Toggle switches ───────────────────────────────────────────────────────────
+def _chamfer_path(r: QRectF, cut: float) -> QPainterPath:
+    """`r` with its top-right and bottom-left corners cut by `cut` px -- the
+    HUD's chamfer, at sub-pixel precision for the small toggle parts."""
+    path = QPainterPath()
+    path.moveTo(r.left(), r.top())
+    path.lineTo(r.right() - cut, r.top())
+    path.lineTo(r.right(), r.top() + cut)
+    path.lineTo(r.right(), r.bottom())
+    path.lineTo(r.left() + cut, r.bottom())
+    path.lineTo(r.left(), r.bottom() - cut)
+    path.closeSubpath()
+    return path
+
+
+def _mix(a: QColor, b: QColor, t: float) -> QColor:
+    """Blend a -> b by t (0..1), alpha included."""
+    return QColor(round(a.red() + (b.red() - a.red()) * t),
+                  round(a.green() + (b.green() - a.green()) * t),
+                  round(a.blue() + (b.blue() - a.blue()) * t),
+                  round(a.alpha() + (b.alpha() - a.alpha()) * t))
+
+
+# ThemeToggle's moon and sun, straight from the design's SVG (24x24 viewBox).
+_TOGGLE_ICONS = {
+    "moon": '<path d="M15.5 3.5a8.5 8.5 0 1 0 5 15 7 7 0 0 1-5-15z" fill="{c}"/>',
+    "sun": ('<circle cx="12" cy="12" r="4.5" fill="{c}"/>'
+            '<path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8'
+            'M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" stroke="{c}"'
+            ' stroke-width="2" stroke-linecap="round"/>'),
+}
+
+
+def _draw_toggle_icon(p: QPainter, name: str, color: QColor,
+                      rect: QRectF) -> None:
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+           + _TOGGLE_ICONS[name].format(c=color.name()) + "</svg>")
+    QSvgRenderer(QByteArray(svg.encode())).render(p, rect)
+
+
 class ToggleSwitch(QWidget):
-    """An iOS-style sliding switch: a rounded track with a circular knob that
-    animates between off (grey) and on (amber). Exposes a QCheckBox-like API
-    (isChecked / setChecked / toggled) so it drops in for a checkbox."""
+    """The design's "Chamfer Slide" switch: a chamfered track with a 1 px
+    hairline, a chamfered knob with a grip notch that slides across, tiny OFF /
+    ON labels, and a gold glow when on (none in day mode). Colours are the
+    themed TOGGLE tokens. Exposes a QCheckBox-like API (isChecked / setChecked
+    / toggled) so it drops in for a checkbox."""
 
     toggled = Signal(bool)
+
+    _TRACK = (58, 24)   # the design's track size; the knob travels within it
+    _PAD = 3            # room around the track for the keyboard focus ring
 
     def __init__(self, checked: bool = False,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._checked = checked
         self._pos = 1.0 if checked else 0.0   # knob travel, 0 (off) .. 1 (on)
-        # 3-4 px around the 48x24 track leaves room for the focus ring.
-        self.setFixedSize(56, 30)
+        w, h = self._TRACK
+        self.setFixedSize(w + 2 * self._PAD, h + 2 * self._PAD)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._kb_focus = False
         self._anim = QPropertyAnimation(self, b"knobPos", self)
-        self._anim.setDuration(150)
-        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._anim.setDuration(180)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def isChecked(self) -> bool:  # noqa: N802
         return self._checked
@@ -1117,31 +1162,114 @@ class ToggleSwitch(QWidget):
 
     knobPos = Property(float, _get_pos, _set_pos)
 
-    def paintEvent(self, _event) -> None:  # noqa: N802
+    def _track_rect(self) -> QRectF:
+        w, h = self._TRACK
+        return QRectF(self._PAD, self._PAD, w, h)
+
+    def _begin_paint(self) -> tuple[QPainter, QRectF]:
+        """Painter + track rect, with the shared bits done: dimmed when
+        disabled, and the chamfered focus ring for keyboard focus."""
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if not self.isEnabled():
+            p.setOpacity(0.5)
+        track = self._track_rect()
         if self.hasFocus() and self._kb_focus:
-            ring = self.rect().adjusted(1, 1, -1, -1)
-            p.setPen(QPen(TOGGLE_ON, 1.2))
+            p.setPen(QPen(TOGGLE["on_bd"], 1, Qt.PenStyle.DashLine))
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRoundedRect(ring, ring.height() / 2.0, ring.height() / 2.0)
-        r = self.rect().adjusted(4, 3, -4, -3)   # the 48x24 track
-        radius = r.height() / 2.0
+            p.drawPath(_chamfer_path(track.adjusted(-2.5, -2.5, 2.5, 2.5), 9))
+        return p, track
 
-        off, on = TOGGLE_OFF, TOGGLE_ON
-        t = self._pos
-        track = QColor(int(off.red()   + (on.red()   - off.red())   * t),
-                       int(off.green() + (on.green() - off.green()) * t),
-                       int(off.blue()  + (on.blue()  - off.blue())  * t))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(track)
-        p.drawRoundedRect(r, radius, radius)
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p, track = self._begin_paint()
+        c, t = TOGGLE, self._pos
+        outer = _chamfer_path(track, 7)
+        p.fillPath(outer, _mix(c["off_bd"], c["on_bd"], t))       # 1 px hairline
+        p.fillPath(_chamfer_path(track.adjusted(1, 1, -1, -1), 7),
+                   _mix(c["off_bg"], c["on_bg"], t))
+        p.setClipPath(outer)
 
-        margin = 3
-        d = r.height() - 2 * margin
-        x = r.left() + margin + int(self._pos * (r.width() - d - 2 * margin))
-        p.setBrush(QColor("#FFFFFF"))
-        p.drawEllipse(x, r.top() + margin, d, d)
+        # Micro-labels: OFF sits right while off, ON sits left while on.
+        f = font_mono(8)
+        f.setPixelSize(8)
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 110)
+        p.setFont(f)
+        for text, col, alpha, rect, align in (
+                ("OFF", c["off_txt"], 1 - t, track.adjusted(0, 0, -8, 0),
+                 Qt.AlignmentFlag.AlignRight),
+                ("ON", c["on_txt"], t, track.adjusted(9, 0, 0, 0),
+                 Qt.AlignmentFlag.AlignLeft)):
+            if alpha > 0.01:
+                ink = QColor(col)
+                ink.setAlphaF(ink.alphaF() * alpha)
+                p.setPen(ink)
+                p.drawText(rect, align | Qt.AlignmentFlag.AlignVCenter, text)
+
+        # Knob: 20x16, 4 px chamfer, slides 4 -> 34 px, glows when on.
+        knob = QRectF(track.left() + 4 + 30 * t, track.top() + 4, 20, 16)
+        glow = c["glow"]
+        if glow is not None and t > 0:
+            # A faint halo. (The design's drop-shadow is mostly clipped off by
+            # the knob's own clip-path, so it barely shows there either.)
+            for spread in (3.0, 1.5):
+                halo = QColor(glow)
+                halo.setAlphaF(glow.alphaF() * t * 0.22)
+                p.fillPath(_chamfer_path(
+                    knob.adjusted(-spread, -spread, spread, spread),
+                    4 + spread), halo)
+        p.fillPath(_chamfer_path(knob, 4), _mix(c["off_knob"], c["on_knob"], t))
+        # Grip notch: two 1 px dark lines.
+        p.setPen(QPen(QColor(0, 0, 0, 89), 1))
+        for dx in (7.5, 12.5):
+            p.drawLine(QPointF(knob.left() + dx, knob.top() + 4),
+                       QPointF(knob.left() + dx, knob.top() + 12))
+        p.end()
+
+
+class ThemeToggle(ToggleSwitch):
+    """The design's "Night Sky" day/night switch. checked = light theme. A wide
+    chamfered track holds a moon (left) and a sun (right); the orange knob
+    slides over the active side carrying that icon, rotating it in. The track is
+    plain near-black at night and daylight slate by day."""
+
+    _TRACK = (84, 32)
+    _NIGHT = QColor("#0B0A07")
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p, track = self._begin_paint()
+        c, t = TOGGLE, self._pos
+        base = p.opacity()
+        p.fillPath(_chamfer_path(track, 7), c["off_bd"])   # 1 px hairline
+        inner = _chamfer_path(track.adjusted(1, 1, -1, -1), 7)
+        if self._checked:
+            day = QLinearGradient(0, track.top(), 0, track.bottom())
+            day.setColorAt(0, QColor("#E6E9ED"))
+            day.setColorAt(1, QColor("#C8CDD4"))
+            p.fillPath(inner, QBrush(day))
+        else:
+            p.fillPath(inner, self._NIGHT)
+
+        # The idle icons in the track, at 70%.
+        p.setOpacity(base * 0.7)
+        _draw_toggle_icon(p, "moon", c["icon"],
+                          QRectF(track.left() + 10, track.top() + 8, 16, 16))
+        _draw_toggle_icon(p, "sun", c["icon"],
+                          QRectF(track.right() - 26, track.top() + 8, 16, 16))
+        p.setOpacity(base)
+
+        # Knob: 36x24, slides 4 -> 44 px, carries the active icon.
+        knob = QRectF(track.left() + 4 + 40 * t, track.top() + 4, 36, 24)
+        p.fillPath(_chamfer_path(knob, 4), c["on_bd"])
+        ink = _mix(QColor("#120C00"), QColor("#FFFFFF"), t)
+        for name, alpha, angle in (("moon", 1 - t, 90 * t),
+                                   ("sun", t, -90 * (1 - t))):
+            if alpha > 0.01:
+                p.save()
+                p.setOpacity(base * alpha)
+                p.translate(knob.center())
+                p.rotate(angle)
+                _draw_toggle_icon(p, name, ink, QRectF(-8, -8, 16, 16))
+                p.restore()
         p.end()
 
 
@@ -1153,51 +1281,268 @@ def _derive_process(path: str) -> str:
     return os.path.splitext(base)[0]
 
 
+# ── Dialog styling (Settings + HUD popovers) ──────────────────────────────────
+def _dialog_colors() -> dict:
+    """Colours for Settings and the HUD popovers, from the live themed globals:
+    the design's dark Settings panel in dark mode, and the same roles mapped onto
+    the light palette in day mode (the design only draws the dark one)."""
+    light = IS_LIGHT
+    return dict(
+        bg=C_PANEL.name(),            # dialog / popover surface
+        field=C_DARK.name(),          # text fields + the app list
+        edge="#A6AEB9" if light else "#2E2414",   # field + list outlines, rules
+        sep="#C6CCD4" if light else C_BORDER.name(),   # list row separators
+        text=C_AMBER.name(),          # body text
+        label=C_TMID.name(),          # field labels, intro text
+        meta=C_TDIM.name(),           # eyebrows, paths
+        accent="#C25E0A" if light else C_GOLD.name(),  # field text, headings
+        check="#C25E0A" if light else "#C8760A",       # ticked box, focus edge
+        tick=C_DARK.name(),
+        ghost="#8A929C" if light else "#5C574D",       # placeholder text
+        zebra="rgba(255,255,255,0.3)" if light else "rgba(255,255,255,0.015)",
+        sel="#F0E3CC" if light else "#1C1408",
+        error="#C0322B" if light else "#CC3D3D",
+    )
+
+
+def _dialog_qss(c: dict) -> str:
+    """Stylesheet shared by Settings and the popovers. The window background is
+    only set on Settings (#settingsDialog): a popover's own top level stays
+    transparent so its chamfered corners show."""
+    return f"""
+        QDialog#settingsDialog {{ background: {c['bg']}; }}
+        QLabel {{ color: {c['text']}; background: transparent; }}
+        QLineEdit {{ background: {c['field']}; color: {c['accent']};
+                     border: 1px solid {c['edge']}; padding: 6px 8px;
+                     placeholder-text-color: {c['ghost']};
+                     selection-background-color: {c['check']};
+                     selection-color: {c['tick']}; }}
+        QLineEdit:focus {{ border-color: {c['check']}; }}
+        QTableWidget {{ background: {c['field']}; color: {c['text']};
+                        alternate-background-color: {c['zebra']};
+                        border: 1px solid {c['edge']}; outline: none; }}
+        QTableWidget:focus {{ border-color: {c['check']}; }}
+        QTableWidget::item {{ padding: 6px 8px; border: none;
+                              border-bottom: 1px solid {c['sep']}; }}
+        QTableWidget::item:selected {{ background: {c['sel']};
+                                       color: {c['accent']}; }}
+        QTableCornerButton::section {{ background: {c['field']}; border: none; }}
+    """ + _thin_scrollbar_qss()
+
+
+def _spaced(text: str) -> str:
+    """'App list' -> 'A P P   L I S T': the HUD's spaced-out eyebrow lettering."""
+    return "   ".join(" ".join(word) for word in text.upper().split())
+
+
+def _eyebrow(text: str, color: str) -> QLabel:
+    lbl = QLabel(_spaced(text))
+    lbl.setFont(font_display(8))
+    lbl.setStyleSheet(f"color: {color}; letter-spacing: 2px;")
+    return lbl
+
+
+def _hairline(color: str) -> QFrame:
+    line = QFrame()
+    line.setFixedHeight(1)
+    line.setStyleSheet(f"background: {color};")
+    return line
+
+
+def _stacked_field(label: str, field, c: dict) -> QVBoxLayout:
+    """The design's TextField: a tracked caps label stacked above the field (a
+    widget, or a layout such as field + Browse)."""
+    box = QVBoxLayout()
+    box.setSpacing(4)
+    lbl = QLabel(label)
+    lbl.setFont(font_display(8))
+    lbl.setStyleSheet(f"color: {c['label']}; letter-spacing: 1px;")
+    box.addWidget(lbl)
+    if isinstance(field, QWidget):
+        box.addWidget(field)
+    else:
+        box.addLayout(field)
+    return box
+
+
+def _key(text: str, kind: str = "secondary", height: int = 32) -> ChamferedButton:
+    """A chamfered dialog button in the bottom bar's style (themed palette).
+    Not an auto-default: only the dialog's primary button answers Enter."""
+    btn = ChamferedButton(text, chamfer=CHAMFER_CARD, **_bar_colors(kind))
+    btn.setFont(font_display(9))
+    btn.setFixedHeight(height)
+    btn.setMinimumWidth(84)
+    btn.setAutoDefault(False)
+    return btn
+
+
+class HudCheckBox(QCheckBox):
+    """The design's square HUD checkbox: a hairline box on the field colour that
+    fills with the accent and a dark tick when checked. Painted rather than QSS,
+    which can't draw the tick without an image asset."""
+
+    _BOX = 15
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._c = _dialog_colors()
+        self.setFixedSize(self._BOX + 1, self._BOX + 1)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def hitButton(self, pos) -> bool:  # noqa: N802
+        return self.rect().contains(pos)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        c, on = self._c, self.isChecked()
+        fill = QColor(c["check"] if on else c["field"])
+        edge = QColor(c["check"] if on else c["edge"])
+        if not self.isEnabled():     # locked during a session
+            fill.setAlphaF(0.45)
+            edge.setAlphaF(0.45)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        s = self._BOX
+        p.setPen(QPen(edge, 1))
+        p.setBrush(fill)
+        p.drawRect(QRectF(0.5, 0.5, s - 1, s - 1))
+        if on:   # the design's "M1 5 L4 8 L9 2" tick, scaled into the box
+            k, o = (s - 5) / 10.0, 2.5
+            tick = QPainterPath()
+            tick.moveTo(o + 1 * k, o + 5 * k)
+            tick.lineTo(o + 4 * k, o + 8 * k)
+            tick.lineTo(o + 9 * k, o + 2 * k)
+            pen = QPen(QColor(c["tick"]), 1.8)
+            pen.setCapStyle(Qt.PenCapStyle.SquareCap)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(tick)
+        p.end()
+
+
+class HudPopover(QDialog):
+    """A frameless, chamfered modal popover centred over its parent window: the
+    HUD stand-in for small native dialogs (the app editor, notices, confirms).
+    Content goes in `self.body`. Esc rejects it, as with any QDialog."""
+
+    def __init__(self, parent: Optional[QWidget] = None,
+                 width: int = 420) -> None:
+        super().__init__(parent, Qt.WindowType.Dialog
+                         | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setModal(True)
+        self._c = c = _dialog_colors()
+        self.setStyleSheet(_dialog_qss(c))
+        self.setMinimumWidth(width)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        frame = ChamferedFrame(chamfer=CHAMFER_PANEL, bg=QColor(c["bg"]),
+                               border=QColor(c["check"]))
+        frame.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(frame)
+        self.body = QVBoxLayout(frame)
+        self.body.setSpacing(12)
+        self.body.setContentsMargins(22, 18, 22, 16)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        host = self.parentWidget()
+        if host is not None:
+            geo = self.frameGeometry()
+            geo.moveCenter(host.window().frameGeometry().center())
+            self.move(geo.topLeft())
+
+
+class _HudMessage(HudPopover):
+    """Title, wrapped text, and one or two keys: `yes` accepts, `no` rejects.
+    With a `no`, Enter answers `no` -- the safe choice."""
+
+    def __init__(self, parent: Optional[QWidget], title: str, text: str,
+                 yes: str, no: Optional[str] = None) -> None:
+        super().__init__(parent)
+        c = self._c
+        self.body.addWidget(_eyebrow(title, c["meta"]))
+        msg = QLabel(text)
+        msg.setWordWrap(True)
+        msg.setFont(font_mono(10))
+        msg.setStyleSheet(f"color: {c['text']};")
+        self.body.addWidget(msg)
+        row = QHBoxLayout()
+        row.addStretch()
+        yes_btn = _key(yes, "launch")
+        yes_btn.clicked.connect(self.accept)
+        default = yes_btn
+        if no is not None:
+            no_btn = _key(no)
+            no_btn.clicked.connect(self.reject)
+            row.addWidget(no_btn)
+            default = no_btn
+        row.addWidget(yes_btn)
+        default.setDefault(True)
+        default.setFocus()
+        self.body.addLayout(row)
+
+
+def hud_notice(parent: Optional[QWidget], title: str, text: str) -> None:
+    """HUD stand-in for QMessageBox.information: a title, the text, and OK."""
+    _HudMessage(parent, title, text, "OK").exec()
+
+
+def hud_confirm(parent: Optional[QWidget], title: str, text: str,
+                yes: str = "YES", no: str = "CANCEL") -> bool:
+    """HUD stand-in for QMessageBox.question. True only if `yes` was chosen."""
+    dlg = _HudMessage(parent, title, text, yes, no)
+    return dlg.exec() == QDialog.DialogCode.Accepted
+
+
 # ── Add / edit app dialog ─────────────────────────────────────────────────────
-class AppEntryDialog(QDialog):
+class AppEntryDialog(HudPopover):
     """Modal editor for a single companion app: a Name plus a browsable file
     path. The process name is derived from the file (see `_derive_process`), so
-    it isn't shown here. Reuses the parent SettingsDialog's stylesheet so it
-    picks up the active theme with no duplicated QSS."""
+    it isn't shown here. A problem with the entry shows inline, in red."""
 
     def __init__(self, name: str = "", path: str = "", *,
                  taken_names: Optional[list[str]] = None,
                  parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self.setModal(True)
+        super().__init__(parent, width=480)
         self.setWindowTitle("Edit app" if name else "Add app")
-        self.setMinimumWidth(460)
         # Names already in use (case-insensitive) — a name is the key for status
         # routing and launch tracking, so duplicates would collide silently.
         self._taken = {n.strip().lower() for n in (taken_names or [])}
-        if parent is not None:
-            self.setStyleSheet(parent.styleSheet())
+        c = self._c
 
-        vbox = QVBoxLayout(self)
-        vbox.setSpacing(12)
-        vbox.setContentsMargins(20, 18, 20, 16)
+        self.body.addWidget(_eyebrow("Edit app" if name else "Add app", c["meta"]))
 
-        name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("NAME"))
         self.name_edit = QLineEdit(name)
-        name_row.addWidget(self.name_edit, 1)
-        vbox.addLayout(name_row)
+        self.name_edit.setFont(font_mono(10))
+        self.body.addLayout(_stacked_field("NAME", self.name_edit, c))
 
         path_row = QHBoxLayout()
-        path_row.addWidget(QLabel("FILE"))
+        path_row.setSpacing(8)
         self.path_edit = QLineEdit(path)
-        browse_btn = QPushButton("Browse…")
+        self.path_edit.setFont(font_mono(10))
+        browse_btn = _key("BROWSE…")
         browse_btn.clicked.connect(self._browse)
         path_row.addWidget(self.path_edit, 1)
         path_row.addWidget(browse_btn)
-        vbox.addLayout(path_row)
+        self.body.addLayout(_stacked_field("FILE", path_row, c))
 
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save |
-            QDialogButtonBox.StandardButton.Cancel)
-        btn_box.accepted.connect(self._on_accept)
-        btn_box.rejected.connect(self.reject)
-        vbox.addWidget(btn_box)
+        self.error_lbl = QLabel()
+        self.error_lbl.setWordWrap(True)
+        self.error_lbl.setFont(font_mono(9))
+        self.error_lbl.setStyleSheet(f"color: {c['error']};")
+        self.error_lbl.hide()
+        self.body.addWidget(self.error_lbl)
+
+        btns = QHBoxLayout()
+        btns.addStretch()
+        cancel_btn = _key("CANCEL")
+        save_btn = _key("SAVE", "launch")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn.clicked.connect(self._on_accept)
+        save_btn.setDefault(True)
+        btns.addWidget(cancel_btn)
+        btns.addWidget(save_btn)
+        self.body.addLayout(btns)
 
     def _browse(self) -> None:
         start = os.path.dirname(self.path_edit.text().strip())
@@ -1220,7 +1565,9 @@ class AppEntryDialog(QDialog):
     def _on_accept(self) -> None:
         err = self._validation_error(self.name_edit.text().strip())
         if err:
-            QMessageBox.warning(self, "Invalid entry", err)
+            self.error_lbl.setText(err.replace("\n", " "))
+            self.error_lbl.show()
+            self.name_edit.setFocus()
             return
         self.accept()
 
@@ -1252,56 +1599,28 @@ class SettingsDialog(QDialog):
         self._lock_reported = False
         self.setWindowTitle("EDLS — First-Time Setup" if first_run else "EDLS — Settings")
         self.setModal(True)
-        self.setMinimumSize(620, 500)
-        # The dialog follows the active theme: a dark amber popover in dark mode,
-        # a light slate-on-grey one in day mode. (_fg = body text, _amber = accent,
-        # _gold = highlight.)
-        if settings.theme is Theme.LIGHT:
-            _bg, _fg, _field, _border = "#E6E9ED", "#252C36", "#FFFFFF", "#B4BCC6"
-            _amber, _gold, _field_fg = "#C25E0A", "#C25E0A", "#252C36"
-            _head_fg, _btn_bg = "#5A6573", "#DCE0E5"
-            _alt, _sel = "#EFF1F4", "#F0E3CC"
-        else:
-            _bg, _fg, _field, _border = "#0C0C0F", "#C8760A", "#0A0A0D", "#252530"
-            _amber, _gold, _field_fg = "#C8760A", "#FFB700", "#FFB700"
-            _head_fg, _btn_bg = "#666670", "#111114"
-            _alt, _sel = "#101014", "#1C1408"
+        self.setMinimumSize(640, 560)
+        # Open tall enough to show a good run of the app list (first run has
+        # the intro text too), but never taller than the screen.
+        avail = self.screen().availableGeometry().height() - 60
+        self.resize(660, min(760 if first_run else 680, avail))
+        self.setObjectName("settingsDialog")
+        # Styled after the design's Settings panel. It follows the active theme
+        # (see _dialog_colors); the window keeps its native title bar.
+        self._c = c = _dialog_colors()
         # Dim brush for the secondary (process/path) cells, so the app NAME reads
         # as primary and the rest recedes — mirrors the design's name/proc split.
-        self._row_dim = QColor(_head_fg)
-        self.setStyleSheet(f"""
-            QDialog   {{ background: {_bg}; color: {_fg}; }}
-            QLabel    {{ color: {_fg}; }}
-            QLineEdit {{ background: {_field}; color: {_field_fg};
-                         border: 1px solid {_border}; padding: 4px 6px; }}
-            QCheckBox {{ color: {_fg}; spacing: 6px; }}
-            QCheckBox::indicator {{ width:14px; height:14px; border:1px solid {_border};
-                                    background:{_field}; }}
-            QCheckBox::indicator:hover {{ border-color:{_amber}; }}
-            QCheckBox::indicator:checked {{ background:{_amber}; border-color:{_amber}; }}
-            QTableWidget {{ background:{_field}; color:{_fg};
-                            alternate-background-color:{_alt};
-                            gridline-color:transparent; border:1px solid {_border};
-                            outline:none; }}
-            QTableWidget::item {{ padding:6px 8px; border:none; }}
-            QTableWidget::item:selected {{ background:{_sel}; color:{_gold}; }}
-            QTableCornerButton::section {{ background:{_field}; border:none; }}
-            QPushButton {{ background:{_btn_bg}; color:{_fg};
-                           border:1px solid {_border}; padding:4px 12px; }}
-            QPushButton:hover {{ border-color:{_amber}; color:{_gold}; }}
-            QPushButton:focus {{ border:1px dashed {_amber}; }}
-            QLineEdit:focus {{ border-color:{_amber}; }}
-            QTableWidget:focus {{ border:1px solid {_amber}; }}
-        """)
+        self._row_dim = QColor(c["meta"])
+        self.setStyleSheet(_dialog_qss(c))
 
         vbox = QVBoxLayout(self)
         vbox.setSpacing(12)
-        vbox.setContentsMargins(20, 18, 20, 16)
+        vbox.setContentsMargins(22, 18, 22, 16)
 
         if first_run:
-            welcome = QLabel("Welcome to EDLS, CMDR")
-            welcome.setFont(font_display(14))
-            welcome.setStyleSheet(f"color: {_gold};")
+            welcome = QLabel("WELCOME TO EDLS, CMDR")
+            welcome.setFont(font_display(16))
+            welcome.setStyleSheet(f"color: {c['accent']}; letter-spacing: 1px;")
             vbox.addWidget(welcome)
             desc = QLabel(
                 "Select which companion apps to enable on launch. "
@@ -1310,29 +1629,41 @@ class SettingsDialog(QDialog):
             )
             desc.setWordWrap(True)
             desc.setFont(font_mono(10))
-            desc.setStyleSheet(f"color: {_fg};")
+            desc.setStyleSheet(f"color: {c['label']};")
             vbox.addWidget(desc)
         else:
-            hdr = QLabel("S E T T I N G S")
-            hdr.setFont(font_display(9))
-            hdr.setStyleSheet(f"color: {C_TDIM.name()}; letter-spacing:3px;")
-            vbox.addWidget(hdr)
+            vbox.addWidget(_eyebrow("Settings", c["meta"]))
 
-        # CMDR name
-        cmdr_row = QHBoxLayout()
-        cmdr_row.addWidget(QLabel("CMDR NAME"))
-        self.cmdr_edit = QLineEdit(settings.cmdr_name)
-        cmdr_row.addWidget(self.cmdr_edit, 1)
-        vbox.addLayout(cmdr_row)
+        # CMDR name. The default name is ghost (placeholder) text, never real
+        # text, so clearing the field and saving puts the default back.
+        self._default_cmdr = config.default_settings().cmdr_name
+        custom = settings.cmdr_name != self._default_cmdr
+        self.cmdr_edit = QLineEdit(settings.cmdr_name if custom else "")
+        self.cmdr_edit.setPlaceholderText(self._default_cmdr)
+        self.cmdr_edit.setFont(font_mono(11))
+        vbox.addLayout(_stacked_field("CMDR NAME", self.cmdr_edit, c))
 
-        # Boolean options as sliding toggles (label left, switch right).
-        def _toggle_row(text: str, checked: bool) -> ToggleSwitch:
+        # Boolean options as HUD toggles (label left, switch right), one per
+        # row with a hairline between rows -- the design's settings rows.
+        vbox.addSpacing(2)
+        vbox.addWidget(_hairline(c["edge"]))
+        toggles = QVBoxLayout()
+        toggles.setSpacing(0)
+        vbox.addLayout(toggles)
+
+        def _toggle_row(text: str, checked: bool,
+                        kind: type = ToggleSwitch) -> ToggleSwitch:
+            if toggles.count():
+                toggles.addWidget(_hairline(C_BORDER.name()))
             row = QHBoxLayout()
-            row.addWidget(QLabel(text))
+            row.setContentsMargins(0, 6, 0, 6)
+            lbl = QLabel(text)
+            lbl.setFont(font_mono(10))
+            row.addWidget(lbl)
             row.addStretch()
-            tog = ToggleSwitch(checked)
+            tog = kind(checked)
             row.addWidget(tog)
-            vbox.addLayout(row)
+            toggles.addLayout(row)
             return tog
 
         self.toggle_inactive = _toggle_row(
@@ -1349,20 +1680,19 @@ class SettingsDialog(QDialog):
             settings.close_on_shutdown)
         self.toggle_light = _toggle_row(
             "Light mode",
-            settings.theme is Theme.LIGHT)
+            settings.theme is Theme.LIGHT, ThemeToggle)
 
         # Companion-app list. Styled as a flat HUD row-list rather than a grid:
         # no column headers, no gridlines, zebra rows, hairline container.
-        apps_lbl = QLabel("C O M P A N I O N   A P P S")
-        apps_lbl.setFont(font_display(8))
-        apps_lbl.setStyleSheet(f"color: {_head_fg}; letter-spacing:3px;")
+        vbox.addSpacing(4)
+        apps_lbl = _eyebrow("Companion apps", c["meta"])
         if locked:
             apps_hdr = QHBoxLayout()
             apps_hdr.addWidget(apps_lbl)
             apps_hdr.addStretch()
             lock_lbl = QLabel("LOCKED WHILE A SESSION IS RUNNING")
             lock_lbl.setFont(font_display(7))
-            lock_lbl.setStyleSheet(f"color: {_amber}; letter-spacing:2px;")
+            lock_lbl.setStyleSheet(f"color: {c['check']}; letter-spacing:2px;")
             apps_hdr.addWidget(lock_lbl)
             vbox.addLayout(apps_hdr)
         else:
@@ -1372,7 +1702,8 @@ class SettingsDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["ON", "NAME", "PROCESS", "PATH"])
         hh = self.table.horizontalHeader()
         hh.setVisible(False)
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 40)   # the HudCheckBox column
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
@@ -1395,19 +1726,22 @@ class SettingsDialog(QDialog):
         self.table.installEventFilter(self)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(30)
+        self.table.setFont(font_mono(10))
         self._populate_table(settings.apps)
         vbox.addWidget(self.table, 1)
 
-        # add / remove buttons
+        # add / edit / remove keys
         tbl_btns = QHBoxLayout()
-        add_btn = QPushButton("+ ADD")
-        edit_btn = QPushButton("EDIT")
+        tbl_btns.setSpacing(8)
+        add_btn = _key("+ ADD", height=28)
+        edit_btn = _key("EDIT", height=28)
         # The pencil is drawn as a coloured icon (via 'Segoe UI Symbol') rather
         # than a text glyph: in the button's inherited font U+270E falls back to
-        # an emoji font that ignores the QSS colour and clashes with the theme.
-        edit_btn.setIcon(_glyph_icon("✎", QColor(_fg), px=14))
+        # an emoji font that ignores the colour and clashes with the theme.
+        edit_btn.setIcon(_glyph_icon("✎", QColor(_bar_colors("secondary")["fg"]),
+                                     px=14))
         edit_btn.setIconSize(QSize(14, 14))
-        rem_btn = QPushButton("— REMOVE")
+        rem_btn = _key("— REMOVE", height=28)
         add_btn.clicked.connect(self._add_row)
         edit_btn.clicked.connect(self._edit_selected)
         rem_btn.clicked.connect(self._remove_row)
@@ -1417,24 +1751,27 @@ class SettingsDialog(QDialog):
         tbl_btns.addStretch()
         vbox.addLayout(tbl_btns)
 
-        # Bottom bar: utility buttons (reset + open log folder) on the left,
-        # Save / Cancel on the right. Reset/folder don't close the dialog.
-        reset_btn = QPushButton("RESTORE DEFAULTS")
-        folder_btn = QPushButton("OPEN LOG FOLDER")
+        # Bottom bar: utility keys (reset + open log folder) on the left,
+        # CANCEL / SAVE on the right. Reset/folder don't close the dialog.
+        # SAVE is the default button, so Enter in the CMDR field still saves.
+        reset_btn = _key("RESTORE DEFAULTS")
+        folder_btn = _key("OPEN LOG FOLDER")
         reset_btn.clicked.connect(self._reset_defaults)
         folder_btn.clicked.connect(self._open_data_dir)
+        cancel_btn = _key("CANCEL")
+        save_btn = _key("BEGIN" if first_run else "SAVE", "launch")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn.clicked.connect(self._save)
+        save_btn.setDefault(True)
 
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save |
-            QDialogButtonBox.StandardButton.Cancel)
-        btn_box.accepted.connect(self._save)
-        btn_box.rejected.connect(self.reject)
-
+        vbox.addSpacing(4)
         bottom = QHBoxLayout()
+        bottom.setSpacing(8)
         bottom.addWidget(reset_btn)
         bottom.addWidget(folder_btn)
         bottom.addStretch()
-        bottom.addWidget(btn_box)
+        bottom.addWidget(cancel_btn)
+        bottom.addWidget(save_btn)
         vbox.addLayout(bottom)
 
     def _set_row(self, r: int, name: str, process: str,
@@ -1444,7 +1781,7 @@ class SettingsDialog(QDialog):
         `origin` is the registry name this row derives from (empty for custom
         apps); it's stashed on the name cell so a rename still re-attaches the
         default's resolver/path on save (see `_save`)."""
-        chk = QCheckBox()
+        chk = HudCheckBox()
         chk.setChecked(enabled)
         chk.setEnabled(not self._locked)
         # Not a Tab stop of its own (11 of them would bury the buttons);
@@ -1455,6 +1792,9 @@ class SettingsDialog(QDialog):
         cl.addWidget(chk)
         cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cl.setContentsMargins(0, 0, 0, 0)
+        # An empty item under the checkbox so the row's separator line and
+        # selection tint run under the checkbox column too.
+        self.table.setItem(r, 0, QTableWidgetItem())
         self.table.setCellWidget(r, 0, cell)
         name_item = QTableWidgetItem(name)
         name_item.setData(Qt.ItemDataRole.UserRole, origin)
@@ -1525,7 +1865,7 @@ class SettingsDialog(QDialog):
         if not self._lock_reported:
             self._lock_reported = True
             self.locked_attempt.emit()
-        QMessageBox.information(self, "App list locked", self.LOCKED_MSG)
+        hud_notice(self, "App list locked", self.LOCKED_MSG)
         return True
 
     def _add_row(self) -> None:
@@ -1581,15 +1921,13 @@ class SettingsDialog(QDialog):
         this is reversible with Cancel."""
         if self._blocked():   # a reset replaces the app list too
             return
-        if QMessageBox.question(
-                self, "Reset to default",
+        if not hud_confirm(
+                self, "Restore defaults",
                 "Reset all settings, apps, and config to their defaults?\n\n"
-                "Nothing is saved until you press Save.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                "Nothing is saved until you press Save.", yes="RESET"):
             return
         defaults = config.default_settings()
-        self.cmdr_edit.setText(defaults.cmdr_name)
+        self.cmdr_edit.clear()   # back to the default, shown as ghost text
         self.toggle_inactive.setChecked(defaults.show_inactive_cards)
         self.toggle_scope.setChecked(
             defaults.shutdown_scope is ShutdownScope.ALL_ENABLED)
@@ -1639,7 +1977,8 @@ class SettingsDialog(QDialog):
 
         updated = replace(
             self._settings,
-            cmdr_name=self.cmdr_edit.text().strip() or self._settings.cmdr_name,
+            # An empty field (ghost text showing) means the default name.
+            cmdr_name=self.cmdr_edit.text().strip() or self._default_cmdr,
             show_inactive_cards=self.toggle_inactive.isChecked(),
             shutdown_scope=(ShutdownScope.ALL_ENABLED
                             if self.toggle_scope.isChecked()

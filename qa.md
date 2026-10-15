@@ -447,11 +447,11 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify**.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "Welcome to EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is pre-filled. Toggles: show cards **on**, shutdown-all **off**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, light mode **off**. All 11 default apps are listed and ticked. Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, Save, Cancel. |
+| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "WELCOME TO EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is empty, with the default name as grey ghost text and the caret in the field. Toggles: show cards **on**, shutdown-all **off**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, light mode **off**. All 11 default apps are listed and ticked. Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, CANCEL, BEGIN. |
 | FR-02 | P1 | A | Enter a name → untick tools you don't have → Save → restart EDLS | The CMDR row shows the name in capitals. Unticked apps appear as dimmed OFF cards. After restart there's no setup window and everything is kept. |
 | FR-03 | P1 | A | Fresh start → close the setup window with Cancel, then repeat with Esc, then with X | The window closes and the main window works with defaults. SETTINGS opens the first-run version again. On the next start the setup window reappears. |
 | FR-04 | P2 | A | Turn AUTO START on → close EDLS → set `"setup_complete": false` in settings.json → start EDLS | The setup window opens and **no launch starts**. The log says "Auto-start skipped - finish first-time setup first." and never "Auto-start enabled — launching..." (R-34 fix). |
-| FR-05 | P2 | A | In the setup window, clear the CMDR name → Save | The default name is kept. A blank name is never saved. |
+| FR-05 | P2 | A | In the setup window, type a name, clear it again → BEGIN | The default name is used. A blank name is never saved. |
 | FR-06 | P2 | A | In the setup window, turn Light mode on → Save | The whole window switches to light. |
 | FR-07 | P3 | R | Leave all 11 ticked on a PC with only a few installed → LAUNCH | Each missing app logs "… not found - will be skipped." and shows "Not found". Record whether this pile of warnings is OK for a new user (R-26). |
 
@@ -627,10 +627,10 @@ about every 5 s otherwise.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| SE-01 | P1 | A | SETTINGS | Opens quickly (under half a second). Title "EDLS — Settings", heading "S E T T I N G S". It shows the current values. |
+| SE-01 | P1 | A | SETTINGS | Opens quickly (under half a second). Title "EDLS — Settings", heading "S E T T I N G S". It shows the current values. It's styled like the main window: mono text, square tick boxes, and chamfered buttons with an orange or gold SAVE. Only the Windows title bar looks standard. |
 | SE-02 | P1 | A | Change several things → Cancel. Repeat with Esc and with X. | Nothing is saved. Check by reopening, and again after a restart. |
 | SE-03 | P1 | A | Change several things → Save | Applied straight away, and still there after a restart. |
-| SE-04 | P2 | A | Resize the Settings window | It can't go below about 620×500. The table grows and the buttons stay visible. |
+| SE-04 | P2 | A | Resize the Settings window | It can't go below about 640×560. The table grows and the buttons stay visible. On a 768-pixel-high screen it opens fully on screen. |
 | SE-05 | P2 | A | Press Enter while typing in CMDR NAME | Record. It probably saves and closes immediately; say whether that surprised you. |
 
 **CMDR name**
@@ -638,7 +638,8 @@ about every 5 s otherwise.
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
 | SE-06 | P1 | A | Change the name → Save | The CMDR row shows the new name in capitals. |
-| SE-07 | P2 | A | Blank, or only spaces → Save | The previous name is kept. |
+| SE-07 | P2 | A | Blank, or only spaces → Save | The name resets to the default. Reopen Settings: the field is empty and the default shows as grey ghost text. |
+| SE-54 | P1 | A | With the default name, open Settings and look at CMDR NAME. Type a letter, then delete it. | The field is empty with the default name in grey and the caret blinking at the start. Typing replaces the grey text; emptying the field brings it back. A custom name shows as normal text. |
 | SE-08 | P2 | A | "  Jameson  " with spaces at the ends → Save | Saved as "Jameson". |
 | SE-09 | P2 | A | Accented letters, Cyrillic, Chinese/Japanese, an emoji | Shown correctly in the CMDR row. Record any boxes or missing characters. |
 | SE-10 | P3 | A | `<b>Bold</b>` and `A & B <C>` | Record (R-19): shown literally, or turned into formatting or swallowed? |
@@ -648,8 +649,8 @@ about every 5 s otherwise.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| SE-12 | P1 | A | Click each of the five toggles | It slides over and changes colour. Save keeps it. Cancel undoes it. A mouse click doesn't leave a focus ring behind. |
-| SE-13 | P2 | A | Keyboard only: Tab through the window and change each toggle | Tab reaches every toggle and an orange ring shows which one has focus. Space or Enter flips it; ← turns it off, → on (R-20 fix). |
+| SE-12 | P1 | A | Click each of the five toggles | The four on/off settings are chamfered switches: the knob slides across, the OFF/ON label swaps, and the knob turns gold (orange in light mode). Light mode is a wider moon/sun switch: the orange knob slides over and its icon turns from moon to sun. Save keeps it. Cancel undoes it. A mouse click doesn't leave a focus ring behind. |
+| SE-13 | P2 | A | Keyboard only: Tab through the window and change each toggle | Tab reaches every toggle and a dashed orange outline shows which one has focus. Space or Enter flips it; ← turns it off, → on (R-20 fix). |
 | SE-14 | P1 | A | "Show cards for apps that aren't enabled" on and off → Save | Cards for unticked apps appear and disappear (UI-15, UI-16). |
 | SE-52 | P1 | A | Look at the toggles "Close EDLS when the game exits" and "Close EDLS after SHUTDOWN" | Defaults: on and off. They survive Save, restart and RESTORE DEFAULTS (back to on/off). What they do: LS-04, LS-28, SC-12, SC-18. |
 
@@ -669,8 +670,8 @@ about every 5 s otherwise.
 | SE-24 | P3 | A | Path to a `.bat` or `.cmd` → LAUNCH | Record: does a console window appear? Is the card status right afterwards? |
 | SE-25 | P3 | A | Path on an unplugged USB drive or an unreachable network share → LAUNCH | Not found. No long freeze. |
 | SE-26 | P2 | A | + ADD with a name but an empty path | Allowed. The card shows Not found on LAUNCH. |
-| SE-27 | P1 | A | + ADD with a blank name | Warning "Please enter a name for the app." The add window stays open. |
-| SE-28 | P1 | A | + ADD with an existing name in different capitals (e.g. `dummy a`) | Warning "An app named '…' already exists.". |
+| SE-27 | P1 | A | + ADD with a blank name | A red line under the fields: "Please enter a name for the app." The add window stays open, with no extra popup. |
+| SE-28 | P1 | A | + ADD with an existing name in different capitals (e.g. `dummy a`) | A red line: "An app named '…' already exists. …". |
 | SE-29 | P1 | A | + ADD with the name `Steam`, then `Elite` | Expected: rejected like a duplicate. Record what happens. If it's accepted, check whether the Steam/Elite cards, statuses or buttons misbehave (R-08). |
 | SE-30 | P2 | A | Name with spaces at the ends | Trimmed. |
 | SE-31 | P1 | A | Edit a row by double-clicking it, and again via select → EDIT | The edit window opens pre-filled. Changes are saved to the row. Keeping the same name gives no duplicate warning. |
@@ -683,7 +684,7 @@ about every 5 s otherwise.
 | SE-38 | P2 | A | Rename SrvSurvey (path blank) → Save → LAUNCH → restart EDLS → LAUNCH | Expected: found both times. Record (R-07: suspected "Not found" after the restart). |
 | SE-39 | P2 | A | Clear the path of a default app that has one (e.g. EDMarketConnector) → Save → reopen | The default path comes back. Record whether that's confusing. |
 | SE-40 | P3 | A | EDIT a default app whose path has a `%…%` placeholder → Browse… | Record which folder the file picker opens in. |
-| SE-41 | P1 | A | RESTORE DEFAULTS → **No**. Then RESTORE DEFAULTS → **Yes** → Cancel. Then RESTORE DEFAULTS → Yes → Save. | No: nothing changes. Yes: every field resets in the window (default name, default toggles, the 11 defaults ticked, custom apps gone). Cancel: nothing saved. Save: the defaults are kept after a restart. AUTO START is unchanged. |
+| SE-41 | P1 | A | RESTORE DEFAULTS → **CANCEL**. Then RESTORE DEFAULTS → **RESET** → Cancel. Then RESTORE DEFAULTS → RESET → Save. | The confirmation is a chamfered popover over Settings, and Enter picks CANCEL. CANCEL: nothing changes. RESET: every field resets in the window (the name field empties to the grey default, default toggles, the 11 defaults ticked, custom apps gone). Cancel: nothing saved. Save: the defaults are kept after a restart. AUTO START is unchanged. |
 | SE-42 | P2 | A | Remove some defaults → Save → RESTORE DEFAULTS → Yes → Save → restart | All 11 are back and stay back. |
 | SE-43 | P2 | A | OPEN LOG FOLDER | Explorer opens `%LOCALAPPDATA%\EDLS`. |
 | SE-44 | P2 | H | 25+ apps in the list | The list scrolls. Save works. (Cards: UI-12.) |
@@ -691,7 +692,7 @@ about every 5 s otherwise.
 | SE-51 | P1 | H | LAUNCH → open Settings → try every way of changing the app list: + ADD, EDIT, double-click a row, — REMOVE, RESTORE DEFAULTS, Space/Enter/Delete on a row, the ON boxes | The list header says "LOCKED WHILE A SESSION IS RUNNING" and the ON boxes are greyed. Every attempt shows the popup "The companion app list is locked while a session is running…" and changes nothing. The activity log gets **one** warning per Settings opening, not one per attempt. After the game closes (with "Close EDLS when the game exits" off), reopen Settings: it's unlocked (R-15 fix). |
 | SE-53 | P2 | A | In the app list, select a row with the arrow keys → Space → Enter → Delete | Space ticks or unticks ON; Enter opens the edit window; Delete removes the row (R-20 fix). |
 | SE-46 | P2 | H | Leave Settings open while the fake game closes (session ends, countdown runs) | Record (R-22): does EDLS close after the countdown, leave the window orphaned, or print a traceback? |
-| SE-47 | P2 | A | Settings, the add/edit window, and their warning popups ("Invalid entry", "Reset to default") in both themes | Everything is readable. Nothing is light-on-light or dark-on-dark. |
+| SE-47 | P2 | A | Settings, the add/edit popover (with an error showing), and the "Restore defaults" and "App list locked" popovers, in both themes | Everything is readable. Nothing is light-on-light or dark-on-dark. The popovers have no Windows title bar: chamfered panels with an orange or amber edge, centred over Settings. Esc closes them. |
 | SE-48 | P3 | A | Very long paths in the list | Record whether you can still tell which app is which. |
 | SE-49 | P2 | A | Add/edit window → change things → Cancel | The row is unchanged. |
 | SE-50 | P2 | H | EDIT Dummy A's path → `DummyB.exe` → Save → open DummyB yourself | Within a few seconds Dummy A's card follows the new program and shows Online. |

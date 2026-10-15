@@ -10,3 +10,6 @@
 
 -light mode toggle that looks neat
 
+-first time setup, cmdr name, ghost text
+
+version??

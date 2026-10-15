@@ -269,18 +269,17 @@ def main():
     def locked_settings():
         # R-15: during a session the app list can't change -- every edit path
         # is refused and reported (once) for the activity log.
-        from PySide6.QtWidgets import QMessageBox
         dlg = ui.SettingsDialog(settings, locked=True)
         reports, popups = [], []
         dlg.locked_attempt.connect(lambda: reports.append(1))
-        real = QMessageBox.information
-        QMessageBox.information = lambda *a, **k: popups.append(a)
+        real = ui.hud_notice
+        ui.hud_notice = lambda *a, **k: popups.append(a)
         try:
             rows = dlg.table.rowCount()
             dlg._add_row(); dlg._edit_row(0); dlg._reset_defaults()
             dlg.table.selectRow(0); dlg._remove_row()
         finally:
-            QMessageBox.information = real
+            ui.hud_notice = real
         assert dlg.table.rowCount() == rows, "locked list was changed"
         assert len(popups) == 4 and reports == [1], (popups, reports)
         dlg.deleteLater()
@@ -334,6 +333,16 @@ def main():
         dlg.deleteLater()
     run("keyboard: toggles, buttons, app list", keyboard_focus)
 
+    def toggles_paint():
+        # Settings is built but never shown here, so paint the HUD toggles
+        # directly: both kinds, off and on, in both themes (day mode has no glow).
+        for theme in (config.Theme.LIGHT, config.Theme.DARK):
+            ui.apply_theme(theme)
+            for cls in (ui.ToggleSwitch, ui.ThemeToggle):
+                for on in (False, True):
+                    assert not cls(on).grab().isNull()
+    run("HUD toggles paint (switch + theme toggle)", toggles_paint)
+
     def single_instance():
         # R-23: a second copy finds the first and backs off. A throwaway key,
         # so a real EDLS running alongside the test isn't involved.
@@ -367,6 +376,45 @@ def main():
         lambda: settings_dialog(False))
     run("settings dialog (first-run) build + save",
         lambda: settings_dialog(True))
+
+    def ghost_cmdr_name():
+        # The default CMDR name is placeholder (ghost) text, never real text,
+        # and saving an empty field resets the name to the default.
+        from dataclasses import replace
+        default = config.default_settings().cmdr_name
+
+        def saved_name(start, typed):
+            dlg = ui.SettingsDialog(replace(settings, cmdr_name=start))
+            got = []
+            dlg.saved.connect(got.append)
+            shown = dlg.cmdr_edit.text()
+            assert dlg.cmdr_edit.placeholderText() == default
+            if typed is not None:
+                dlg.cmdr_edit.setText(typed)
+            dlg._save()
+            dlg.deleteLater()
+            return shown, got[0].cmdr_name
+
+        assert saved_name(default, None) == ("", default), "default isn't ghost"
+        assert saved_name("Jameson", None) == ("Jameson", "Jameson")
+        assert saved_name("Jameson", "   ")[1] == default, "blank didn't reset"
+    run("settings: ghost-text CMDR name", ghost_cmdr_name)
+
+    def hud_popovers():
+        # The HUD stand-ins for native dialogs build and show without error; an
+        # invalid app entry is reported inline rather than in another popup.
+        from PySide6.QtCore import QTimer
+        entry = ui.AppEntryDialog(taken_names=["Steam"], parent=win)
+        entry.name_edit.setText("steam")
+        entry._on_accept()
+        assert entry.error_lbl.isVisibleTo(entry) and not entry.result(), \
+            "duplicate name should be refused inline"
+        entry.show(); entry.close(); entry.deleteLater()
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().reject())
+        assert ui.hud_confirm(win, "Restore defaults", "Sure?") is False
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().accept())
+        ui.hud_notice(win, "App list locked", "Locked.")
+    run("HUD popovers (app editor, confirm, notice)", hud_popovers)
 
     def theme_switch():
         from dataclasses import replace
