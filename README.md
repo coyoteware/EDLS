@@ -60,9 +60,9 @@ full Epic Games launcher installed.
 
 ## Installation
 
-Release coming soon :)))
+Download EDLS-Setup-1.2.1.exe from the [Releases page](https://github.com/coyoteware/EDLS/releases/tag/1.2)
 
-VirusTotal cert link:
+VirusTotal analysis: [https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection](https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection)
 
 ---
 
