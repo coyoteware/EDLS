@@ -15,13 +15,10 @@ Each stage is isolated, so a failure points at the exact spot, and the run
 keeps going to collect every failure rather than stopping at the first.
 Exits 0 if everything passes, 1 otherwise.
 
-WARNING: the first stage DELETES the app's data dir (%LOCALAPPDATA%\\EDLS —
-settings.json, launcher.log) so every run exercises the fresh-install path.
-Afterwards the dir holds fresh defaults, and the next real launch will show
-the first-run setup dialog again.
+Note: this calls config.load_settings(), which will create the app's normal
+settings.json under %LOCALAPPDATA%\\EDLS if you don't already have one.
 """
 import os
-import shutil
 import sys
 import traceback
 
@@ -63,14 +60,20 @@ def main():
     app = QApplication.instance() or QApplication(sys.argv)
     ui._load_fonts()
 
-    def wipe_app_data():
-        # Fresh-install state every run. No ignore_errors: a partial wipe (e.g.
-        # launcher.log locked by a running EDLS) must FAIL loudly, not fake it.
-        if os.path.isdir(config.DATA_DIR):
-            shutil.rmtree(config.DATA_DIR)
+    def assets_decode():
+        # A corrupt SVG doesn't raise -- Qt prints a line and hands back an
+        # invalid renderer, so the UI silently drops the art. (That's how
+        # truncated window-bg PNGs went unnoticed for months.)
+        import glob
+        from PySide6.QtSvg import QSvgRenderer
+        svgs = glob.glob(os.path.join(ui.ASSETS_DIR, "*.svg"))
+        assert svgs, "no SVG assets found"
+        bad = [os.path.basename(p) for p in svgs
+               if not QSvgRenderer(p).isValid()]
+        assert not bad, f"assets that don't decode: {bad}"
+    run("assets decode", assets_decode)
 
     ctx = {}
-    run("wipe preexisting app data", wipe_app_data)
     run("load settings", lambda: ctx.update(settings=config.load_settings()))
     run("build engine",  lambda: ctx.update(engine=eng.Engine(ctx["settings"])))
     run("build window",  lambda: ctx.update(
@@ -97,7 +100,394 @@ def main():
     run("busy toggle (launch button)",
         lambda: (win._btns.set_busy(True), win._btns.set_busy(False)))
 
-    run("boot animation", win._play_boot_animation)
+    def status_watcher():
+        # The watcher replaced REFRESH. Feed _watch_tick() fake scans on a
+        # headless engine (inline dispatch) and check it reports exactly the
+        # changes: nothing more, nothing less.
+        import time as _time
+        S = config.AppState
+        w = eng.Engine(settings)
+        emits, logs = [], []
+        w.on_status.connect(lambda k, s, p: emits.append((k, s)))
+        w.on_log.connect(lambda m, lvl: logs.append(m))
+        apps = w.tracked_apps
+        steam = config.SYSTEM_APPS["Steam"].process_name
+        elite = config.SYSTEM_APPS["Elite"].process_name
+
+        class P:   # stands in for a psutil.Process
+            pid = 4242
+
+        def tick(found, started=None):
+            # Real ticks are seconds apart; these run back to back. A plain tick
+            # therefore pretends its scan began after every earlier update.
+            emits.clear(); logs.clear()
+            w._watch_tick(apps, found, started or _time.monotonic() + 1,
+                          quiet=False)
+            return dict(emits)
+
+        # First sight: every card gets a state, and nothing is logged.
+        emits.clear()
+        w._watch_tick(apps, {steam: P()}, _time.monotonic(), quiet=True)
+        got = dict(emits)
+        assert got["Steam"] is S.ONLINE and got["Elite"] is S.OFFLINE, got
+        assert len(got) == len(apps) and not logs, (got, logs)
+        # Steam closes on its own -> Offline, with a log line.
+        assert tick({}) == {"Steam": S.OFFLINE} and logs, logs
+        # Nothing changed -> silence.
+        assert tick({}) == {} and not logs
+        # "Waiting..." is left alone until the game actually appears.
+        w._status("Elite", S.WAITING)
+        assert tick({}) == {}, "watcher overwrote Waiting..."
+        assert tick({elite: P()}) == {"Elite": S.RUNNING}
+        # A card set by an action after the scan began is skipped (no race).
+        before = _time.monotonic()
+        w._status("Steam", S.ONLINE)
+        assert "Steam" not in tick({}, started=before)
+        # ERROR (couldn't close) counts as running: kept while it runs,
+        # cleared to Offline once it's gone.
+        w._status("Steam", S.ERROR)
+        assert tick({steam: P(), elite: P()}) == {}
+        assert tick({elite: P()}) == {"Steam": S.OFFLINE}
+    run("status watcher reports only changes", status_watcher)
+
+    def system_card_paint():
+        # Steam/Elite are ordinary cards now (no more double-wide Elite). Render
+        # explicitly: offscreen Qt doesn't guarantee a repaint, so a throwing
+        # paintEvent would otherwise slip through the whole test.
+        from PySide6.QtGui import QPixmap
+        for key in ("Steam", "Elite"):
+            card = win._status.cards[key]
+            assert card.ctrl_btn is not None, f"{key} card has no START/STOP button"
+            card.resize(190, 96)
+            for st in (config.AppState.OFFLINE, config.AppState.LAUNCHING,
+                       config.AppState.RUNNING, config.AppState.FAILED):
+                card.update_state(st, 4321)
+                card.render(QPixmap(card.size()))
+    run("system card paint (every state)", system_card_paint)
+
+    def inactive_cards():
+        # Cards for apps the user hasn't enabled are read-only: dimmed, DISABLED
+        # tag, no control button. Driving every state over BOTH kinds is what catches
+        # a missing `if self.ctrl_btn is not None` guard in update_state.
+        from dataclasses import replace as _replace
+        from PySide6.QtGui import QPixmap
+        base = settings.apps[0]
+        panel = ui.StatusPanel([_replace(base, name="OnApp", enabled=True),
+                                _replace(base, name="OffApp", enabled=False)])
+        assert panel.cards["OnApp"].ctrl_btn is not None, \
+            "enabled card lost its START button"
+        assert panel.cards["OffApp"].ctrl_btn is None, \
+            "not-enabled card should have no START button"
+        for card in panel.cards.values():
+            card.resize(190, 96)
+            for st in config.AppState:
+                card.update_state(st, 4321)
+                card.render(QPixmap(card.size()))
+        for card in panel.cards.values():
+            card.update_state(config.AppState.OFFLINE, None)
+        assert panel.cards["OffApp"].state_lbl.text() == "", \
+            "disabled card still says OFFLINE"
+        assert panel.cards["OnApp"].state_lbl.text() == \
+            config.AppState.OFFLINE.label, "enabled card lost its OFFLINE label"
+        panel.deleteLater()
+    run("inactive (not-enabled) cards", inactive_cards)
+
+    def visible_apps_toggle():
+        # The setting that was doing nothing: on -> every app gets a card,
+        # off -> only enabled ones.
+        from dataclasses import replace as _replace
+        total, enabled = len(settings.apps), sum(a.enabled for a in settings.apps)
+        win._settings = _replace(settings, show_inactive_cards=True)
+        assert len(win._visible_apps()) == total, "setting ON should show all apps"
+        win._settings = _replace(settings, show_inactive_cards=False)
+        assert len(win._visible_apps()) == enabled, \
+            "setting OFF should show only enabled apps"
+        win._settings = settings
+    run("show_inactive_cards selects the card list", visible_apps_toggle)
+
+    def system_descriptors():
+        # The regression that was shipping: Steam/Elite aren't in settings.apps,
+        # so their cards' START/STOP resolved to nothing and silently no-opped.
+        # Deliberately NOT calling _on_start_stop -- that would really launch Steam.
+        for key in ("Steam", "Elite"):
+            assert ctx["engine"]._find_descriptor(key) is not None, \
+                f"{key} has no descriptor - its card button would no-op"
+    run("system app descriptor lookup", system_descriptors)
+
+    def protected_processes():
+        # Killing the game violates the ToS; EDLS must refuse even if asked.
+        # Safe to call for real: the guard returns before any process lookup.
+        from dataclasses import replace as _replace
+        import main as _main
+        for key in ("Steam", "Elite"):
+            desc = config.SYSTEM_APPS[key]
+            # ...and under a custom app's name, without the .exe, in any case.
+            alias = _replace(desc, name="Custom",
+                             process_name=desc.process_name[:-4].upper())
+            for d in (desc, alias):
+                assert _main.ProcessManager().stop(d) is \
+                    _main.StopResult.PROTECTED, \
+                    f"ProcessManager.stop would kill {d.process_name}"
+    run("Steam / Elite are never killed", protected_processes)
+
+    def crash_logging():
+        # Uncaught errors -- a worker's, or a slot's via sys.excepthook -- must
+        # reach launcher.log: the installed build has no console to print to.
+        # The previous hooks are swapped for no-ops so nothing prints here.
+        import logging
+        import threading
+        records = []
+
+        class Grab(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        grab = Grab()
+        eng.log.addHandler(grab)
+        saved = sys.excepthook, threading.excepthook
+        sys.excepthook = lambda *a: None
+        threading.excepthook = lambda a: None
+        try:
+            eng.install_crash_logging()
+            worker = threading.Thread(target=lambda: 1 / 0)
+            worker.start()
+            worker.join()
+            try:
+                raise RuntimeError("selftest slot error")
+            except RuntimeError:
+                sys.excepthook(*sys.exc_info())
+        finally:
+            sys.excepthook, threading.excepthook = saved
+            eng.log.removeHandler(grab)
+        crit = [r for r in records if r.levelname == "CRITICAL" and r.exc_info]
+        assert len(crit) == 2, records
+    run("uncaught errors reach launcher.log", crash_logging)
+
+    def game_safety_guards():
+        # R-01: never steam://exit while the game runs. R-02: LAUNCH attaches
+        # to a running game instead of asking Steam to start it again. Fakes
+        # only -- nothing here may reach a real Steam, game or process.
+        w = eng.Engine(settings)
+        running, opened, logs = set(), [], []
+
+        def fake_open(uri):
+            opened.append(uri)
+            if uri == eng.STEAM_URI_EXIT:
+                running.discard(config.STEAM_PROCESS)
+            else:                       # steam://run/<id>
+                running.add(config.ELITE_PROCESS)
+
+        class P:   # stands in for a psutil.Process
+            pid = 4242
+
+        w._open_uri = fake_open
+        w.pm.find = lambda name: P() if name in running else None
+        w.on_log.connect(lambda m, lvl: logs.append(lvl))
+
+        running.update({config.STEAM_PROCESS, config.ELITE_PROCESS})
+        w._card_stop_steam()
+        assert not opened and logs[-1] == "warning", (opened, logs)
+        assert w._launch_elite(timeout=0) is not None and not opened, opened
+        # ...while the normal paths still work.
+        running.discard(config.ELITE_PROCESS)
+        assert w._launch_elite(timeout=0) is not None
+        assert opened == [f"steam://run/{settings.elite_app_id}"], opened
+        running.discard(config.ELITE_PROCESS)
+        w._card_stop_steam()
+        assert opened[-1] == eng.STEAM_URI_EXIT, opened
+    run("game safety: no Steam exit or relaunch mid-game", game_safety_guards)
+
+    def polite_close():
+        # R-17: a tool is asked to close first and only killed if it ignores
+        # that. Fake processes and a fake taskkill: a real PID must never
+        # reach _ask_to_close from here.
+        import time
+        from dataclasses import replace as _replace
+        import psutil
+        asked, events = [], []
+        real_ask = eng._ask_to_close
+
+        def fake_ask(pid):
+            asked.append(pid)
+            events.append(("ask", pid))
+
+        class Fake:
+            def __init__(self, pid, obeys):
+                self.pid, self.obeys, self.killed = pid, obeys, False
+
+            def wait(self, timeout=None):
+                events.append(("wait", self.pid))
+                if (self.obeys and self.pid in asked) or self.killed:
+                    return 0
+                raise psutil.TimeoutExpired(timeout)
+
+            def kill(self):
+                self.killed = True
+
+        def tool(name):
+            return _replace(settings.apps[0], name=name, process_name=name,
+                            enabled=True)
+
+        eng._ask_to_close = fake_ask
+        try:
+            pm = eng.ProcessManager()
+            for obeys in (True, False):
+                asked.clear()
+                proc = Fake(990001, obeys)
+                pm.find = lambda name, proc=proc: proc
+                result = pm.stop(tool("FakeTool"), deadline=time.monotonic())
+                assert result is eng.StopResult.STOPPED, result
+                assert asked == [proc.pid], asked
+                assert proc.killed is not obeys, (obeys, proc.killed)
+            # Teardown asks every tool before it waits on any of them, so the
+            # grace periods overlap.
+            asked.clear()
+            events.clear()
+            procs = {"ToolA": Fake(990002, True), "ToolB": Fake(990003, True)}
+            w = eng.Engine(_replace(settings, apps=[tool("ToolA"), tool("ToolB")]))
+            w.pm.find = procs.get
+            w.pm.find_many = lambda names: {n: procs[n] for n in names
+                                            if n in procs}
+            w._teardown(config.ShutdownScope.ALL_ENABLED)
+            kinds = [kind for kind, _pid in events]
+            assert kinds[:2] == ["ask", "ask"] and "ask" not in kinds[2:], events
+            assert not any(p.killed for p in procs.values())
+        finally:
+            eng._ask_to_close = real_ask
+    run("tools are asked to close before they're killed", polite_close)
+
+    def elite_card_muting():
+        # R-09: while the game is starting (or running) the Elite card button
+        # greys out but still answers clicks -- with a log line, never an action.
+        # Clicks go to a standalone panel: a real one is wired to the engine,
+        # and a regression here must not be able to start the actual game.
+        S = config.AppState
+        panel = ui.StatusPanel([])
+        card = panel.cards["Elite"]
+        notices, actions = [], []
+        card.notice.connect(notices.append)
+        card.start_stop_clicked.connect(lambda *a: actions.append(a))
+        for st in (S.WAITING, S.RUNNING):
+            card.update_state(st, None)
+            card.ctrl_btn.click()
+        assert len(notices) == 2 and not actions, (notices, actions)
+        # Right after the game stops, START is held for a moment.
+        card.update_state(S.OFFLINE, None)
+        assert card._blocked_reason, "START should be held briefly"
+        panel.deleteLater()
+        # LAUNCH mutes while the card (not a LAUNCH session) is starting it.
+        win._on_status("Elite", S.WAITING, None)
+        assert win._btns.launch_btn.muted, "LAUNCH should grey out"
+        win._on_status("Elite", S.OFFLINE, None)
+        assert not win._btns.launch_btn.muted
+    run("Elite card / LAUNCH grey each other out", elite_card_muting)
+
+    def error_card():
+        # R-11: a tool EDLS couldn't close shows ERROR, and clicking retries
+        # STOP. Standalone panel, so the click can't stop a real app.
+        from dataclasses import replace as _replace
+        panel = ui.StatusPanel([_replace(settings.apps[0], name="Tool",
+                                         enabled=True)])
+        card = panel.cards["Tool"]
+        card.update_state(config.AppState.ERROR, 4321)
+        assert card.ctrl_btn.text() == "ERROR", card.ctrl_btn.text()
+        hits = []
+        card.start_stop_clicked.connect(lambda n, running: hits.append(running))
+        card.ctrl_btn.click()
+        assert hits == [True], "ERROR click should ask to stop it again"
+        panel.deleteLater()
+    run("ERROR card button", error_card)
+
+    def locked_settings():
+        # R-15: during a session the app list can't change -- every edit path
+        # is refused and reported (once) for the activity log.
+        dlg = ui.SettingsDialog(settings, locked=True)
+        reports, popups = [], []
+        dlg.locked_attempt.connect(lambda: reports.append(1))
+        real = ui.hud_notice
+        ui.hud_notice = lambda *a, **k: popups.append(a)
+        try:
+            rows = dlg.table.rowCount()
+            dlg._add_row(); dlg._edit_row(0); dlg._reset_defaults()
+            dlg.table.selectRow(0); dlg._remove_row()
+        finally:
+            ui.hud_notice = real
+        assert dlg.table.rowCount() == rows, "locked list was changed"
+        assert len(popups) == 4 and reports == [1], (popups, reports)
+        dlg.deleteLater()
+    run("settings app list locked during a session", locked_settings)
+
+    def fits_small_screen():
+        # R-18: the window must fit 1024x768 with the taskbar (~1004x697 for
+        # the window), and many apps must scroll instead of growing the window.
+        from dataclasses import replace as _replace
+        assert win.minimumSize() == ui.WIN_MIN, win.minimumSize()
+        hint = win.minimumSizeHint()
+        assert hint.width() <= 1004 and hint.height() <= 697, hint
+        many = [_replace(settings.apps[0], name=f"App {i}", enabled=True)
+                for i in range(30)]
+        panel = ui.StatusPanel(many)
+        assert panel.minimumSizeHint().height() < 200, \
+            f"30 apps made the status panel {panel.minimumSizeHint().height()}px"
+        panel.deleteLater()
+    run("window fits 1024x768, cards scroll", fits_small_screen)
+
+    def boot_animation():
+        # R-21: the window is size-locked while panels animate, then unlocked.
+        win._play_boot_animation()
+        if ui.BOOT_ENABLED:
+            assert win.minimumSize() == win.maximumSize(), "not locked"
+            win._end_boot_lock()
+            assert win.minimumSize() == ui.WIN_MIN, "not unlocked"
+    run("boot animation (window locked meanwhile)", boot_animation)
+
+    def keyboard_focus():
+        # R-20: toggles work from the keyboard; the app list takes Space.
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+
+        def key(widget, k):
+            app.sendEvent(widget, QKeyEvent(QEvent.Type.KeyPress, k,
+                                            Qt.KeyboardModifier.NoModifier))
+        tog = ui.ToggleSwitch(False)
+        assert tog.focusPolicy() == Qt.FocusPolicy.StrongFocus
+        key(tog, Qt.Key.Key_Space)
+        assert tog.isChecked(), "Space should switch it on"
+        key(tog, Qt.Key.Key_Left)
+        assert not tog.isChecked(), "Left should switch it off"
+        assert win._btns.launch_btn.focusPolicy() == Qt.FocusPolicy.TabFocus
+        dlg = ui.SettingsDialog(settings)
+        dlg.table.setCurrentCell(0, 1)
+        chk = dlg.table.cellWidget(0, 0).findChild(ui.QCheckBox)
+        before = chk.isChecked()
+        key(dlg.table, Qt.Key.Key_Space)
+        assert chk.isChecked() != before, "Space should tick the row's ON box"
+        dlg.deleteLater()
+    run("keyboard: toggles, buttons, app list", keyboard_focus)
+
+    def toggles_paint():
+        # Settings is built but never shown here, so paint the HUD toggles
+        # directly: both kinds, off and on, in both themes (day mode has no glow).
+        for theme in (config.Theme.LIGHT, config.Theme.DARK):
+            ui.apply_theme(theme)
+            for cls in (ui.ToggleSwitch, ui.ThemeToggle):
+                for on in (False, True):
+                    assert not cls(on).grab().isNull()
+    run("HUD toggles paint (switch + theme toggle)", toggles_paint)
+
+    def single_instance():
+        # R-23: a second copy finds the first and backs off. A throwaway key,
+        # so a real EDLS running alongside the test isn't involved.
+        key = f"EDLS-selftest-{os.getpid()}"
+        try:
+            assert ui.acquire_single_instance(key), "first copy refused"
+            assert not ui.acquire_single_instance(key), \
+                "second copy didn't notice the first"
+        finally:
+            if ui._instance_server is not None:
+                ui._instance_server.close()
+            ui._instance_server = None
+    run("only one EDLS at a time", single_instance)
 
     run("button glyph icons",
         lambda: [ui._glyph_icon(c, ui.C_AMBER)
@@ -105,66 +495,95 @@ def main():
 
     def settings_dialog(first_run):
         dlg = ui.SettingsDialog(settings, first_run=first_run)
+        got = []
+        dlg.saved.connect(got.append)
+        # Flip the two close-EDLS toggles and check they come back out.
+        dlg.toggle_close_exit.setChecked(not settings.close_on_game_exit)
+        dlg.toggle_close_shutdown.setChecked(not settings.close_on_shutdown)
         dlg._save()   # exercises recompute_removed_defaults + replace path
+        assert got and got[0].close_on_game_exit != settings.close_on_game_exit
+        assert got[0].close_on_shutdown != settings.close_on_shutdown
 
     run("settings dialog (normal) build + save",
         lambda: settings_dialog(False))
     run("settings dialog (first-run) build + save",
         lambda: settings_dialog(True))
 
-    def app_entry_dialog():
-        # The add/edit dialog + its process-derivation, driven without .exec()
-        # (which would block headless). Also add a row through the non-modal
-        # insert path, then save the whole settings dialog with it in place.
-        assert ui._derive_process(r"C:\x\Foo.exe") == "Foo"
-        assert ui._derive_process("") == ""
-        dlg = ui.AppEntryDialog("MyApp", r"C:\x\Foo.exe")
-        assert dlg.values() == ("MyApp", r"C:\x\Foo.exe")
+    def ghost_cmdr_name():
+        # The default CMDR name is placeholder (ghost) text, never real text,
+        # and saving an empty field resets the name to the default.
+        from dataclasses import replace
+        default = config.default_settings().cmdr_name
 
+        def saved_name(start, typed):
+            dlg = ui.SettingsDialog(replace(settings, cmdr_name=start))
+            got = []
+            dlg.saved.connect(got.append)
+            shown = dlg.cmdr_edit.text()
+            assert dlg.cmdr_edit.placeholderText() == default
+            if typed is not None:
+                dlg.cmdr_edit.setText(typed)
+            dlg._save()
+            dlg.deleteLater()
+            return shown, got[0].cmdr_name
+
+        assert saved_name(default, None) == ("", default), "default isn't ghost"
+        assert saved_name("Jameson", None) == ("Jameson", "Jameson")
+        assert saved_name("Jameson", "   ")[1] == default, "blank didn't reset"
+    run("settings: ghost-text CMDR name", ghost_cmdr_name)
+
+    def settings_input_guards():
+        # R-08: Steam and Elite are the built-in cards' keys, so a custom app
+        # can't take either name. R-27: a path pasted in quotes (Explorer's
+        # "Copy as path") loses them.
         sd = ui.SettingsDialog(settings)
-        before = sd.table.rowCount()
-        sd._insert_app_row("MyApp", r"C:\x\Foo.exe", "Foo")
-        assert sd.table.rowCount() == before + 1
-        sd._save()
-
-    run("app entry dialog + row insert + save", app_entry_dialog)
-
-    def duplicate_name_guard():
-        # A name is the routing/launch key, so the dialog must reject duplicates
-        # (case-insensitive) while allowing an unused name. Uses _validation_error
-        # directly to avoid popping a modal warning headless.
-        sd = ui.SettingsDialog(config.default_settings())
         taken = sd._existing_names()
-        assert "SrvSurvey" in taken
-        dlg = ui.AppEntryDialog(taken_names=taken)
-        assert dlg._validation_error("SrvSurvey") is not None
-        assert dlg._validation_error("srvsurvey") is not None   # case-insensitive
-        assert dlg._validation_error("") is not None
-        assert dlg._validation_error("A Brand New App") is None
-        # Editing a row must allow keeping its own name (excluded from 'taken').
-        assert "SrvSurvey" not in sd._existing_names(exclude_row=1)
+        assert "Steam" in taken and "Elite" in taken, taken
+        entry = ui.AppEntryDialog(taken_names=taken)
+        assert entry._validation_error("elite") is not None
+        assert entry._validation_error("Elite Observatory 2") is None
+        quoted = ui.AppEntryDialog("X", '  "C:\\x\\Foo.exe"  ')
+        assert quoted.values() == ("X", r"C:\x\Foo.exe"), quoted.values()
+        for w in (sd, entry, quoted):
+            w.deleteLater()
+    run("settings: reserved names, quoted paths", settings_input_guards)
 
-    run("duplicate-name guard", duplicate_name_guard)
+    def emptied_app_list_stays_empty():
+        # R-06: an app list the CMDR emptied on purpose doesn't refill with the
+        # defaults on the next start. Runs in a temp dir, never on the real
+        # settings.json.
+        import tempfile
+        saved = config.DATA_DIR, config.SETTINGS_FILE
+        with tempfile.TemporaryDirectory() as tmp:
+            config.DATA_DIR = tmp
+            config.SETTINGS_FILE = os.path.join(tmp, "settings.json")
+            try:
+                s = config.default_settings()
+                s.apps, s.removed_defaults = [], sorted(config.REGISTRY_BY_NAME)
+                assert config.save_settings(s)
+                assert config.load_settings().apps == [], "defaults came back"
+                s.removed_defaults = []   # nothing removed: the defaults return
+                assert config.save_settings(s)
+                assert len(config.load_settings().apps) == len(config.REGISTRY)
+            finally:
+                config.DATA_DIR, config.SETTINGS_FILE = saved
+    run("emptied app list stays empty", emptied_app_list_stays_empty)
 
-    def renamed_default_keeps_resolver():
-        # Renaming a resolver-based default (SrvSurvey has no path) must not drop
-        # its resolver — the row's registry origin survives the rename.
-        sd = ui.SettingsDialog(config.default_settings())
-        def _name(r):
-            it = sd.table.item(r, 1)
-            return it.text() if it else ""
-        row = next(r for r in range(sd.table.rowCount())
-                   if _name(r) == "SrvSurvey")
-        sd._set_row(row, "My Survey", "SrvSurvey", "", True, origin="SrvSurvey")
-        captured = {}
-        sd.saved.connect(lambda s: captured.update(s=s))
-        sd._save()
-        app = next(a for a in captured["s"].apps if a.name == "My Survey")
-        assert app.resolver is not None
-
-    run("renamed default keeps resolver", renamed_default_keeps_resolver)
-
-    run("settings pre-warm (off-screen realize)", win._prewarm_settings)
+    def hud_popovers():
+        # The HUD stand-ins for native dialogs build and show without error; an
+        # invalid app entry is reported inline rather than in another popup.
+        from PySide6.QtCore import QTimer
+        entry = ui.AppEntryDialog(taken_names=["Steam"], parent=win)
+        entry.name_edit.setText("steam")
+        entry._on_accept()
+        assert entry.error_lbl.isVisibleTo(entry) and not entry.result(), \
+            "duplicate name should be refused inline"
+        entry.show(); entry.close(); entry.deleteLater()
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().reject())
+        assert ui.hud_confirm(win, "Restore defaults", "Sure?") is False
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().accept())
+        ui.hud_notice(win, "App list locked", "Locked.")
+    run("HUD popovers (app editor, confirm, notice)", hud_popovers)
 
     def theme_switch():
         from dataclasses import replace

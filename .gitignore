@@ -402,3 +402,8 @@ FodyWeavers.xsd
 
 # EDLS design system reference — kept locally, not tracked for now
 /.claude/EDLS Design System/
+
+# Python virtual environments, and build.ps1's output (PyInstaller + Inno Setup)
+.venv/
+build/
+dist/
