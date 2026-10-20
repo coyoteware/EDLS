@@ -28,6 +28,7 @@ import logging
 import logging.handlers
 import os
 import subprocess
+import sys
 import threading
 import time
 from enum import Enum
@@ -88,6 +89,7 @@ STEAM_WAIT = 20        # Steam's client to show up
 STEAM_EXIT_WAIT = 15   # steam://exit to actually take effect
 ELITE_WAIT = 60        # the game to appear after steam://run (LAUNCH and card)
 KILL_WAIT = 3          # a killed tool to actually be gone
+CLOSE_GRACE = 3        # a tool asked to close gets this long before it's killed
 CLOSE_DELAY = 5        # countdown before EDLS closes itself after a session
 
 # The status watcher's scan interval. One scan is a single process-table pass
@@ -144,6 +146,19 @@ def _popen_detached(args: list[str], **kwargs) -> subprocess.Popen:
     return subprocess.Popen(args, creationflags=flags, **kwargs)
 
 
+def _ask_to_close(pid: int) -> None:
+    """Ask a tool to close the way its own X button would: `taskkill` without
+    /F posts WM_CLOSE to its windows, so it can save and exit cleanly. One that
+    ignores it (hidden in the tray, a "save changes?" prompt, a console app) is
+    killed once its grace period runs out -- see ProcessManager.stop()."""
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True,
+                       timeout=5,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        pass   # stop() kills it anyway
+
+
 def setup_logging() -> None:
     """Persistent on-disk log with rotation. The UI gets its live feed from the
     Engine.on_log signal instead, so this is purely the durable record."""
@@ -157,6 +172,32 @@ def setup_logging() -> None:
     )
     log.setLevel(logging.INFO)
     log.addHandler(handler)
+
+
+def install_crash_logging() -> None:
+    """Send uncaught exceptions -- on the GUI thread (Qt hands a slot's error
+    to sys.excepthook) or on any worker -- to launcher.log. The installed build
+    has no console, so without this a crash leaves nothing to report. The
+    previous hooks still run, so a terminal shows tracebacks as before."""
+    prev_hook, prev_thread_hook = sys.excepthook, threading.excepthook
+
+    def on_error(exc_type, exc, tb) -> None:
+        if not issubclass(exc_type, KeyboardInterrupt):
+            log.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
+        if sys.stderr is not None:
+            prev_hook(exc_type, exc, tb)
+
+    def on_thread_error(args) -> None:
+        if not issubclass(args.exc_type, SystemExit):
+            name = args.thread.name if args.thread else "a worker thread"
+            log.critical("Uncaught exception in %s", name,
+                         exc_info=(args.exc_type, args.exc_value,
+                                   args.exc_traceback))
+        if sys.stderr is not None:
+            prev_thread_hook(args)
+
+    sys.excepthook = on_error
+    threading.excepthook = on_thread_error
 
 
 # =============================================================================
@@ -257,16 +298,15 @@ class ProcessManager:
             log.warning("Failed to launch %s: %s", descriptor.name, exc)
             return None
 
-    def stop(self, descriptor: AppDescriptor) -> StopResult:
-        """Kill a single app, by our tracked PID first, then by process name,
-        and wait until it's really gone. Never touches Steam or the game
-        (PROTECTED_PROCESSES)."""
-        if _stem(descriptor.process_name) in PROTECTED_PROCESSES:
-            log.warning("Refusing to kill protected process %s",
-                        descriptor.process_name)
-            return StopResult.PROTECTED
+    def _target(self, descriptor: AppDescriptor, forget: bool
+                ) -> tuple[Optional[psutil.Process], Optional[int]]:
+        """The running process to close for `descriptor` -- our tracked PID if
+        it still belongs to that program, else the first one by name -- plus
+        the PID we had tracked. `forget` drops it from `launched` (stop() puts
+        it back if the close fails)."""
         with self._lock:
-            pid = self.launched.pop(descriptor.name, None)
+            pid = (self.launched.pop(descriptor.name, None) if forget
+                   else self.launched.get(descriptor.name))
         proc: Optional[psutil.Process] = None
         if pid:
             try:
@@ -279,8 +319,46 @@ class ProcessManager:
                 pass
         if proc is None:
             proc = self.find(descriptor.process_name)
+        return proc, pid
+
+    def ask_to_close(self, descriptor: AppDescriptor) -> None:
+        """Ask one app to close (see _ask_to_close) without waiting for it.
+        _teardown asks every tool up front, so their grace periods overlap
+        instead of adding up."""
+        if _stem(descriptor.process_name) in PROTECTED_PROCESSES:
+            return
+        proc = self._target(descriptor, forget=False)[0]
+        if proc is not None:
+            _ask_to_close(proc.pid)
+
+    def stop(self, descriptor: AppDescriptor,
+             deadline: Optional[float] = None,
+             asked: bool = False) -> StopResult:
+        """Close a single app and wait until it's really gone: ask it to close
+        (unless the caller already `asked`), give it until `deadline` (default:
+        CLOSE_GRACE from now), then kill it. Our tracked PID first, then by
+        process name. Never touches Steam or the game (PROTECTED_PROCESSES)."""
+        if _stem(descriptor.process_name) in PROTECTED_PROCESSES:
+            log.warning("Refusing to kill protected process %s",
+                        descriptor.process_name)
+            return StopResult.PROTECTED
+        proc, pid = self._target(descriptor, forget=True)
         if proc is None:
             return StopResult.NOT_RUNNING
+        if not asked:
+            _ask_to_close(proc.pid)
+        if deadline is None:
+            deadline = time.monotonic() + CLOSE_GRACE
+        try:
+            proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+            return StopResult.STOPPED          # it closed itself
+        except psutil.NoSuchProcess:
+            return StopResult.STOPPED
+        except psutil.TimeoutExpired:
+            log.info("%s didn't close when asked - killing it.",
+                     descriptor.name)
+        except psutil.Error:
+            pass   # can't wait on it (e.g. access denied): straight to the kill
         try:
             proc.kill()
             proc.wait(timeout=KILL_WAIT)
@@ -608,9 +686,15 @@ class Engine:
     def _card_stop_steam(self) -> None:
         """Ask Steam to exit via steam://exit. Deliberately NOT a kill: killing
         steam.exe out from under a running game or download is worse than
-        leaving it up, so a refusal is reported, not escalated."""
+        leaving it up, so a refusal is reported, not escalated. Never asked
+        while the game runs, either: what Steam does to a running game on its
+        way out is Steam's call, and EDLS doesn't take that risk."""
         if not self.pm.find(STEAM_PROCESS):
             self._status(KEY_STEAM, AppState.OFFLINE)
+            return
+        if self.pm.find(ELITE_PROCESS):
+            self._log("EDLS won't ask Steam to exit while Elite: Dangerous is "
+                      "running - quit the game first.", "warning")
             return
         self._log("Asking Steam to exit...")
         self._open_uri(STEAM_URI_EXIT)
@@ -738,14 +822,21 @@ class Engine:
         self, timeout: Optional[float] = None
     ) -> Optional[psutil.Process]:
         """Open the game through Steam and wait for its process, up to `timeout`
-        seconds (None = forever). Returns None on timeout or close()."""
-        self._status(KEY_ELITE, AppState.WAITING)
-        self._log("Opening Elite: Dangerous via Steam...")
-        self._open_uri(f"steam://run/{self.settings.elite_app_id}")
-        self._log("Waiting for EliteDangerous64.exe...")
-        proc = self._await_process(ELITE_PROCESS, timeout)
-        if not proc:
-            return None
+        seconds (None = forever). Returns None on timeout or close(). A game
+        that's already running (LAUNCH re-attaching after EDLS was closed
+        mid-session) is adopted as-is: Steam never gets a second launch
+        request."""
+        proc = self.pm.find(ELITE_PROCESS)
+        if proc:
+            self._log("Elite: Dangerous is already running - attaching.", "dim")
+        else:
+            self._status(KEY_ELITE, AppState.WAITING)
+            self._log("Opening Elite: Dangerous via Steam...")
+            self._open_uri(f"steam://run/{self.settings.elite_app_id}")
+            self._log("Waiting for EliteDangerous64.exe...")
+            proc = self._await_process(ELITE_PROCESS, timeout)
+            if not proc:
+                return None
         self._status(KEY_ELITE, AppState.RUNNING, proc.pid)
         self._log(f"Elite: Dangerous online. (PID {proc.pid})", "success")
         # The game started through Steam, so Steam is definitely up now --
@@ -806,10 +897,15 @@ class Engine:
             self._log("No tools running.", "dim")
             return
         self._log("Closing third-party tools...")
+        # Ask them all first, so their grace periods run side by side: the
+        # teardown waits CLOSE_GRACE at most, however many ignore the ask.
+        for app in running:
+            self.pm.ask_to_close(app)
+        deadline = time.monotonic() + CLOSE_GRACE
         failed: list[str] = []
         for app in running:
             self._log(f"Stopping {app.name}...")
-            result = self.pm.stop(app)
+            result = self.pm.stop(app, deadline=deadline, asked=True)
             if result in (StopResult.STOPPED, StopResult.NOT_RUNNING):
                 self._status(app.name, AppState.OFFLINE)
             else:
@@ -876,6 +972,7 @@ class Engine:
 # =============================================================================
 def main() -> int:
     setup_logging()
+    install_crash_logging()
     import ui  # late import: driving the engine headless needs no GUI toolkit
     # Before anything touches settings.json: a second copy just brings the
     # running one to the front and leaves.

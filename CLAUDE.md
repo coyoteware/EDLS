@@ -9,11 +9,13 @@ and tears the tools down on exit. This is a Python/PySide6 rewrite of an origina
 PowerShell/WPF tool. See `README.md` for user-facing setup (it requires
 [min-ed-launcher] and [Legendary] configured first).
 
-## Architecture — three files, one hard rule
-Keep it at **three modules**. Andrew explicitly rejected an 11-file layout; do not
-re-proliferate. The rule that earns its keep:
+## Architecture — three modules (+ theme), one hard rule
+Keep it at **three modules**, plus `theme.py` (the view's design tokens). Andrew
+explicitly rejected an 11-file layout; do not re-proliferate. The rule that earns its
+keep:
 
-> **Core logic has zero GUI-toolkit imports.** Only `ui.py` may import Qt.
+> **Core logic has zero GUI-toolkit imports.** Only the view (`ui.py` and `theme.py`)
+> may import Qt.
 
 - **`config.py`** — pure data layer (stdlib only). The single-source app
   `REGISTRY`, `AppState`/`ShutdownScope` enums, `AppDescriptor` (with
@@ -22,10 +24,13 @@ re-proliferate. The rule that earns its keep:
 - **`main.py`** — engine + entry point, **no Qt**. `Signal` (tiny observer),
   `ProcessManager` (the ONE home for find/launch/kill; tracks what *we* launched
   vs. merely-running), `Engine` (launch→monitor→shutdown on a worker thread,
-  emits `on_log`/`on_status`/`on_busy`). `main()` wires config → engine → ui.
-- **`ui.py`** — the only Qt (PySide6) file. The engine↔view seam is
+  emits `on_log`/`on_status`/`on_busy`). `main()` sets up logging (uncaught errors
+  → launcher.log via `install_crash_logging()`), then wires config → engine → ui.
+- **`ui.py`** — the Qt (PySide6) view. The engine↔view seam is
   `engine.dispatch` (ui injects a GUI-thread invoker) + signals for engine→view,
   and plain method calls for view→engine.
+- **`theme.py`** — palette, type and shape tokens from the EDLS Design System, plus
+  `apply_theme()`, `font_*()` and `power_icon()`. Imports Qt; only `ui.py` uses it.
 
 **`ui.py` must never be imported by `main.py`** except the late `import ui` inside
 `main()` (this avoids an import cycle). Adding a companion app = one entry in
@@ -33,13 +38,18 @@ re-proliferate. The rule that earns its keep:
 
 ## Commands
 ```powershell
-pip install -r requirements.txt   # PySide6 + psutil
+pip install -r requirements.txt   # PySide6-Essentials + psutil (pinned)
 python main.py                     # run the app
 python selftest.py                 # headless (offscreen) smoke test — run after UI edits
+.\build.ps1                        # release: PyInstaller one-folder app + Inno Setup
+                                   # installer -> dist\ (own build\venv; needs Inno Setup 6)
 ```
 `selftest.py` builds the real window, drives every `AppState`/log level, the
 dialogs, the boot animation, and the glyph icons. It catches runtime errors
 (bad enum refs, throwing QSS, ctor-arg mismatches) but **does not verify pixels**.
+Its process checks run on fakes (monkeypatched `find`/`find_many`/`_open_uri`/
+`_ask_to_close`): a selftest must never hand a real PID to taskkill or kill, or open a
+`steam://` URI.
 
 ## Verification
 You can run the app but **cannot see the result** — Andrew is the eyes. After a
@@ -60,13 +70,20 @@ a visual outcome you haven't confirmed with him.
   SHUTDOWN button and the on-exit teardown honor it. Don't hardcode one behavior.
 - **EDLS never closes Steam or the game** (force-closing Elite breaks Frontier's
   ToS). `ProcessManager.stop()` refuses `PROTECTED_PROCESSES`; never add a kill
-  path around it, and the Elite card has no STOP.
+  path around it, and the Elite card has no STOP. The Steam card's STOP is refused
+  while the game runs, and LAUNCH attaches to an already-running game instead of
+  sending Steam a second `steam://run`.
+- **Closing a tool is polite first.** `ProcessManager.stop()` asks (WM_CLOSE via
+  `taskkill` without /F) and kills only what's still running after `CLOSE_GRACE`
+  (3 s); `_teardown` asks every target up front so the waits overlap. Keep all of it
+  inside `ProcessManager`.
 - **Every card status goes out through `Engine._status()`.** The status watcher
   (which replaced REFRESH) compares each scan with what `_status()` recorded and only
   emits differences — emitting any other way makes cards stale or flicker.
 - **Display names are a UI concern** (`_DISPLAY_NAMES` in `ui.py`); `descriptor.name`
   stays the key for status routing + settings.
-- **`config.APP_VERSION`** is the single source of truth for the version string.
+- **`config.APP_VERSION`** is the single source of truth for the version string
+  (`build.ps1` reads it for the exe's version resource and the installer).
 - **The panes are the dark HUD in both themes** (the "Full Daylight" look): day mode
   lightens the window, header, bottom bar and card keys, not the status/log panes or
   cards. Pane surfaces and everything on a card read the fixed `theme.PANE.*`, never

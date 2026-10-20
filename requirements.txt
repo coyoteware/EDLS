@@ -1,8 +1,9 @@
 # EDLS — Elite: Dangerous Launch Suite (Python rewrite)
 # Install with:  pip install -r requirements.txt
 #
-# PySide6 pulls in PySide6-Essentials + shiboken6, which is all this project
-# uses (QtCore / QtGui / QtWidgets, and QtNetwork for the one-copy-only check).
-# No Addons needed.
-PySide6>=6.6
-psutil>=5.9
+# PySide6-Essentials (+ shiboken6) is everything this project uses: QtCore /
+# QtGui / QtWidgets / QtSvg, and QtNetwork for the one-copy-only check. Not the
+# full "PySide6" package: that also pulls in PySide6-Addons, hundreds of MB the
+# app never imports. Pinned to the versions QA ran against.
+PySide6-Essentials==6.11.1
+psutil==6.0.0

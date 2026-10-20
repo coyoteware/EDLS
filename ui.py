@@ -115,7 +115,7 @@ ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
 ELITE_HOLD_MS = 3000
 
 # Where the "report issue" credit link points (the GitHub issues page).
-ISSUES_URL = "https://github.com/coyoteware/EDLS-py/issues"
+ISSUES_URL = "https://github.com/coyoteware/EDLS/issues"
 
 
 # ── Font helpers ──────────────────────────────────────────────────────────────
@@ -310,7 +310,8 @@ class StatusCard(ChamferedFrame):
         self._hold.timeout.connect(self._refresh_button)
         # An app the CMDR hasn't enabled still gets a card when they ask for one
         # (Settings → show cards for apps that aren't enabled). It's read-only:
-        # dimmed, tagged OFF, and no START button, since LAUNCH won't touch it.
+        # dimmed, tagged DISABLED, and no START button, since LAUNCH won't
+        # touch it.
         self._inactive = not descriptor.enabled
         self.setMinimumHeight(90)
         # Capped so a sparse grid (one row) doesn't stretch the tiles tall.
@@ -348,10 +349,10 @@ class StatusCard(ChamferedFrame):
         vbox.addStretch(1)
 
         # Bottom row: the control button, or — on a card the CMDR hasn't enabled
-        # — an OFF tag in its place, so every card keeps the same height.
+        # — a DISABLED tag in its place, so every card keeps the same height.
         self.ctrl_btn: Optional[QPushButton] = None
         if self._inactive:
-            vbox.addWidget(make_badge("OFF", PANE.C_TDIM), 0,
+            vbox.addWidget(make_badge("DISABLED", PANE.C_TDIM), 0,
                            Qt.AlignmentFlag.AlignLeft)
         else:
             self.ctrl_btn = QPushButton("START")
@@ -381,7 +382,9 @@ class StatusCard(ChamferedFrame):
                           AppState.LAUNCHING, AppState.WAITING)
 
         self.dot.set_color(dot_col, pulse=pulse)
-        self.state_lbl.setText(state.label)
+        # A disabled card's DISABLED tag already says it's off; OFFLINE is noise.
+        self.state_lbl.setText(
+            "" if self._inactive and state is AppState.OFFLINE else state.label)
         self.state_lbl.setStyleSheet(f"color: {label_col.name()};")
 
         if (self._name == KEY_ELITE and not state.is_running
@@ -404,7 +407,7 @@ class StatusCard(ChamferedFrame):
     def _refresh_button(self) -> None:
         """Set the control button's label, look, and (for a greyed-out button)
         the reason a click gets answered with."""
-        if self.ctrl_btn is None:          # not-enabled card: OFF tag, no button
+        if self.ctrl_btn is None:          # not-enabled card: DISABLED tag, no button
             return
         state = self._state
         reason: Optional[str] = None
@@ -1545,7 +1548,7 @@ class AppEntryDialog(HudPopover):
         self.body.addLayout(btns)
 
     def _browse(self) -> None:
-        start = os.path.dirname(self.path_edit.text().strip())
+        start = os.path.dirname(self.path_edit.text().strip().strip('"'))
         chosen, _ = QFileDialog.getOpenFileName(
             self, "Select application", start,
             "Executables (*.exe);;All files (*)")
@@ -1572,8 +1575,10 @@ class AppEntryDialog(HudPopover):
         self.accept()
 
     def values(self) -> tuple[str, str]:
-        """(name, path), both stripped."""
-        return self.name_edit.text().strip(), self.path_edit.text().strip()
+        """(name, path), both stripped -- the path of quotes too, which
+        Explorer's "Copy as path" wraps it in."""
+        return (self.name_edit.text().strip(),
+                self.path_edit.text().strip().strip('"').strip())
 
 
 # ── Settings dialog ───────────────────────────────────────────────────────────
@@ -1817,9 +1822,10 @@ class SettingsDialog(QDialog):
                           app.enabled, origin)
 
     def _existing_names(self, exclude_row: Optional[int] = None) -> list[str]:
-        """Current app names in the table (col 1), optionally skipping one row —
-        used to block duplicate names in the add/edit dialog."""
-        names = []
+        """Names the add/edit dialog won't accept: every app in the table (col
+        1) except `exclude_row`, plus Steam and Elite -- the built-in cards'
+        keys, which a custom app of the same name would collide with."""
+        names = [KEY_STEAM, KEY_ELITE]
         for r in range(self.table.rowCount()):
             if r == exclude_row:
                 continue
@@ -2074,6 +2080,8 @@ class MainWindow(QMainWindow):
         # Status + Log in a draggable splitter
         self._splitter = QSplitter(Qt.Orientation.Vertical)
         self._splitter.setHandleWidth(8)
+        # stop each pane at its minimum height instead of collapsing it to 0
+        self._splitter.setChildrenCollapsible(False)
         self._splitter.setStyleSheet(
             "QSplitter::handle:vertical { background: transparent; }"
         )

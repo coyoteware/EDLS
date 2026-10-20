@@ -43,7 +43,7 @@ SETTINGS_VERSION = 1
 
 # Display version, shown in the UI and used for the build's file metadata.
 # Single source of truth (replaces the original $script:AppVersion).
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.1"
 
 # All persistent state lives under %LOCALAPPDATA%\EDLS (with a ~ fallback so the
 # module is importable/testable on non-Windows dev machines).
@@ -394,11 +394,10 @@ def load_settings() -> Settings:
         return s
 
     s = _from_dict(raw)
-    # Migrate/repair: a fresh file with no apps, or a file predating new defaults.
-    if not s.apps:
-        s.apps = _clone_registry()
-        _save_or_warn(s)
-    elif _merge_new_defaults(s) or raw.get("version") != SETTINGS_VERSION:
+    # Migrate/repair: bring back any default the file lacks (no apps at all, or
+    # a file predating a new default) -- but never one the CMDR removed, so an
+    # app list they emptied on purpose stays empty.
+    if _merge_new_defaults(s) or raw.get("version") != SETTINGS_VERSION:
         _save_or_warn(s)
     return s
 

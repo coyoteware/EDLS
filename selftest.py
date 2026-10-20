@@ -166,8 +166,8 @@ def main():
     run("system card paint (every state)", system_card_paint)
 
     def inactive_cards():
-        # Cards for apps the user hasn't enabled are read-only: dimmed, OFF tag,
-        # no control button. Driving every state over BOTH kinds is what catches
+        # Cards for apps the user hasn't enabled are read-only: dimmed, DISABLED
+        # tag, no control button. Driving every state over BOTH kinds is what catches
         # a missing `if self.ctrl_btn is not None` guard in update_state.
         from dataclasses import replace as _replace
         from PySide6.QtGui import QPixmap
@@ -183,6 +183,12 @@ def main():
             for st in config.AppState:
                 card.update_state(st, 4321)
                 card.render(QPixmap(card.size()))
+        for card in panel.cards.values():
+            card.update_state(config.AppState.OFFLINE, None)
+        assert panel.cards["OffApp"].state_lbl.text() == "", \
+            "disabled card still says OFFLINE"
+        assert panel.cards["OnApp"].state_lbl.text() == \
+            config.AppState.OFFLINE.label, "enabled card lost its OFFLINE label"
         panel.deleteLater()
     run("inactive (not-enabled) cards", inactive_cards)
 
@@ -223,6 +229,132 @@ def main():
                     _main.StopResult.PROTECTED, \
                     f"ProcessManager.stop would kill {d.process_name}"
     run("Steam / Elite are never killed", protected_processes)
+
+    def crash_logging():
+        # Uncaught errors -- a worker's, or a slot's via sys.excepthook -- must
+        # reach launcher.log: the installed build has no console to print to.
+        # The previous hooks are swapped for no-ops so nothing prints here.
+        import logging
+        import threading
+        records = []
+
+        class Grab(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        grab = Grab()
+        eng.log.addHandler(grab)
+        saved = sys.excepthook, threading.excepthook
+        sys.excepthook = lambda *a: None
+        threading.excepthook = lambda a: None
+        try:
+            eng.install_crash_logging()
+            worker = threading.Thread(target=lambda: 1 / 0)
+            worker.start()
+            worker.join()
+            try:
+                raise RuntimeError("selftest slot error")
+            except RuntimeError:
+                sys.excepthook(*sys.exc_info())
+        finally:
+            sys.excepthook, threading.excepthook = saved
+            eng.log.removeHandler(grab)
+        crit = [r for r in records if r.levelname == "CRITICAL" and r.exc_info]
+        assert len(crit) == 2, records
+    run("uncaught errors reach launcher.log", crash_logging)
+
+    def game_safety_guards():
+        # R-01: never steam://exit while the game runs. R-02: LAUNCH attaches
+        # to a running game instead of asking Steam to start it again. Fakes
+        # only -- nothing here may reach a real Steam, game or process.
+        w = eng.Engine(settings)
+        running, opened, logs = set(), [], []
+
+        def fake_open(uri):
+            opened.append(uri)
+            if uri == eng.STEAM_URI_EXIT:
+                running.discard(config.STEAM_PROCESS)
+            else:                       # steam://run/<id>
+                running.add(config.ELITE_PROCESS)
+
+        class P:   # stands in for a psutil.Process
+            pid = 4242
+
+        w._open_uri = fake_open
+        w.pm.find = lambda name: P() if name in running else None
+        w.on_log.connect(lambda m, lvl: logs.append(lvl))
+
+        running.update({config.STEAM_PROCESS, config.ELITE_PROCESS})
+        w._card_stop_steam()
+        assert not opened and logs[-1] == "warning", (opened, logs)
+        assert w._launch_elite(timeout=0) is not None and not opened, opened
+        # ...while the normal paths still work.
+        running.discard(config.ELITE_PROCESS)
+        assert w._launch_elite(timeout=0) is not None
+        assert opened == [f"steam://run/{settings.elite_app_id}"], opened
+        running.discard(config.ELITE_PROCESS)
+        w._card_stop_steam()
+        assert opened[-1] == eng.STEAM_URI_EXIT, opened
+    run("game safety: no Steam exit or relaunch mid-game", game_safety_guards)
+
+    def polite_close():
+        # R-17: a tool is asked to close first and only killed if it ignores
+        # that. Fake processes and a fake taskkill: a real PID must never
+        # reach _ask_to_close from here.
+        import time
+        from dataclasses import replace as _replace
+        import psutil
+        asked, events = [], []
+        real_ask = eng._ask_to_close
+
+        def fake_ask(pid):
+            asked.append(pid)
+            events.append(("ask", pid))
+
+        class Fake:
+            def __init__(self, pid, obeys):
+                self.pid, self.obeys, self.killed = pid, obeys, False
+
+            def wait(self, timeout=None):
+                events.append(("wait", self.pid))
+                if (self.obeys and self.pid in asked) or self.killed:
+                    return 0
+                raise psutil.TimeoutExpired(timeout)
+
+            def kill(self):
+                self.killed = True
+
+        def tool(name):
+            return _replace(settings.apps[0], name=name, process_name=name,
+                            enabled=True)
+
+        eng._ask_to_close = fake_ask
+        try:
+            pm = eng.ProcessManager()
+            for obeys in (True, False):
+                asked.clear()
+                proc = Fake(990001, obeys)
+                pm.find = lambda name, proc=proc: proc
+                result = pm.stop(tool("FakeTool"), deadline=time.monotonic())
+                assert result is eng.StopResult.STOPPED, result
+                assert asked == [proc.pid], asked
+                assert proc.killed is not obeys, (obeys, proc.killed)
+            # Teardown asks every tool before it waits on any of them, so the
+            # grace periods overlap.
+            asked.clear()
+            events.clear()
+            procs = {"ToolA": Fake(990002, True), "ToolB": Fake(990003, True)}
+            w = eng.Engine(_replace(settings, apps=[tool("ToolA"), tool("ToolB")]))
+            w.pm.find = procs.get
+            w.pm.find_many = lambda names: {n: procs[n] for n in names
+                                            if n in procs}
+            w._teardown(config.ShutdownScope.ALL_ENABLED)
+            kinds = [kind for kind, _pid in events]
+            assert kinds[:2] == ["ask", "ask"] and "ask" not in kinds[2:], events
+            assert not any(p.killed for p in procs.values())
+        finally:
+            eng._ask_to_close = real_ask
+    run("tools are asked to close before they're killed", polite_close)
 
     def elite_card_muting():
         # R-09: while the game is starting (or running) the Elite card button
@@ -399,6 +531,43 @@ def main():
         assert saved_name("Jameson", None) == ("Jameson", "Jameson")
         assert saved_name("Jameson", "   ")[1] == default, "blank didn't reset"
     run("settings: ghost-text CMDR name", ghost_cmdr_name)
+
+    def settings_input_guards():
+        # R-08: Steam and Elite are the built-in cards' keys, so a custom app
+        # can't take either name. R-27: a path pasted in quotes (Explorer's
+        # "Copy as path") loses them.
+        sd = ui.SettingsDialog(settings)
+        taken = sd._existing_names()
+        assert "Steam" in taken and "Elite" in taken, taken
+        entry = ui.AppEntryDialog(taken_names=taken)
+        assert entry._validation_error("elite") is not None
+        assert entry._validation_error("Elite Observatory 2") is None
+        quoted = ui.AppEntryDialog("X", '  "C:\\x\\Foo.exe"  ')
+        assert quoted.values() == ("X", r"C:\x\Foo.exe"), quoted.values()
+        for w in (sd, entry, quoted):
+            w.deleteLater()
+    run("settings: reserved names, quoted paths", settings_input_guards)
+
+    def emptied_app_list_stays_empty():
+        # R-06: an app list the CMDR emptied on purpose doesn't refill with the
+        # defaults on the next start. Runs in a temp dir, never on the real
+        # settings.json.
+        import tempfile
+        saved = config.DATA_DIR, config.SETTINGS_FILE
+        with tempfile.TemporaryDirectory() as tmp:
+            config.DATA_DIR = tmp
+            config.SETTINGS_FILE = os.path.join(tmp, "settings.json")
+            try:
+                s = config.default_settings()
+                s.apps, s.removed_defaults = [], sorted(config.REGISTRY_BY_NAME)
+                assert config.save_settings(s)
+                assert config.load_settings().apps == [], "defaults came back"
+                s.removed_defaults = []   # nothing removed: the defaults return
+                assert config.save_settings(s)
+                assert len(config.load_settings().apps) == len(config.REGISTRY)
+            finally:
+                config.DATA_DIR, config.SETTINGS_FILE = saved
+    run("emptied app list stays empty", emptied_app_list_stays_empty)
 
     def hud_popovers():
         # The HUD stand-ins for native dialogs build and show without error; an
