@@ -1,6 +1,3 @@
-# **WIP README!! NEEDS SCREENSHOTS!!**
-
-
 # EDLS — Elite: Dangerous Launch Suite
 <p align="center">
   <img src="assets/screenshots/booting.png">
