@@ -7,7 +7,7 @@
 ; launcher.log) alone.
 
 #ifndef AppVersion
-  #error Pass the version: ISCC /DAppVersion=x.y.z /DFileVersion=x.y.z.0 installer.iss (build.ps1 does this)
+  #define AppVersion "1.2.1"
 #endif
 #ifndef FileVersion
   #define FileVersion AppVersion
