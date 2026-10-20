@@ -3,7 +3,7 @@
 
 # EDLS — Elite: Dangerous Launch Suite
 <p align="center">
-  <img src="assets/icon.ico">
+  <img src="assets/screenshots/booting.png">
 </p>
 
 EDLS is a Windows desktop launcher for [Elite: Dangerous](https://www.elitedangerous.com/).
