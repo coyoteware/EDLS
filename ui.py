@@ -1677,6 +1677,9 @@ class SettingsDialog(QDialog):
         self.toggle_scope = _toggle_row(
             "Shutdown closes all enabled apps (not just those EDLS launched)",
             settings.shutdown_scope is ShutdownScope.ALL_ENABLED)
+        self.toggle_admin = _toggle_row(
+            "Ask for admin rights when a tool needs them",
+            settings.allow_elevation)
         self.toggle_close_exit = _toggle_row(
             "Close EDLS when the game exits",
             settings.close_on_game_exit)
@@ -1937,6 +1940,7 @@ class SettingsDialog(QDialog):
         self.toggle_inactive.setChecked(defaults.show_inactive_cards)
         self.toggle_scope.setChecked(
             defaults.shutdown_scope is ShutdownScope.ALL_ENABLED)
+        self.toggle_admin.setChecked(defaults.allow_elevation)
         self.toggle_close_exit.setChecked(defaults.close_on_game_exit)
         self.toggle_close_shutdown.setChecked(defaults.close_on_shutdown)
         self.toggle_light.setChecked(defaults.theme is Theme.LIGHT)
@@ -1989,6 +1993,7 @@ class SettingsDialog(QDialog):
             shutdown_scope=(ShutdownScope.ALL_ENABLED
                             if self.toggle_scope.isChecked()
                             else ShutdownScope.LAUNCHED_ONLY),
+            allow_elevation=self.toggle_admin.isChecked(),
             close_on_game_exit=self.toggle_close_exit.isChecked(),
             close_on_shutdown=self.toggle_close_shutdown.isChecked(),
             theme=Theme.LIGHT if self.toggle_light.isChecked() else Theme.DARK,

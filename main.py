@@ -60,7 +60,8 @@ except ImportError:  # pragma: no cover - non-Windows dev machines
 #   AppDescriptor: .name .process_name .enabled  +  .resolve_path() -> str | None
 #   Settings: .cmdr_name .elite_app_id .setup_complete .auto_start
 #             .show_inactive_cards .shutdown_scope .close_on_game_exit
-#             .close_on_shutdown .theme .apps (list[AppDescriptor])
+#             .close_on_shutdown .allow_elevation .theme
+#             .apps (list[AppDescriptor])
 #             .removed_defaults (list[str])
 #   load_settings() -> Settings          (problems land in LOAD_WARNINGS)
 #   save_settings(settings) -> bool      (False if the file couldn't be written)
@@ -91,6 +92,15 @@ ELITE_WAIT = 60        # the game to appear after steam://run (LAUNCH and card)
 KILL_WAIT = 3          # a killed tool to actually be gone
 CLOSE_GRACE = 3        # a tool asked to close gets this long before it's killed
 CLOSE_DELAY = 5        # countdown before EDLS closes itself after a session
+
+# Tools that need admin rights (EDHM-UI's manifest asks for them). Popen can't
+# elevate -- CreateProcess just fails with 740 -- so those go through the
+# shell's "runas" instead, which shows the UAC prompt (Settings.allow_elevation).
+ERROR_ELEVATION_REQUIRED = 740
+ERROR_CANCELLED = 1223     # the CMDR answered the UAC prompt with No
+ELEVATED_FIND_WAIT = 3     # an elevated launch to show up (the shell gives no PID)
+ELEVATED_CLOSE_WAIT = CLOSE_GRACE + KILL_WAIT + 4   # the elevated close to finish
+CLOSE_ELEVATED_FLAG = "--close-elevated"   # see _close_elevated()
 
 # The status watcher's scan interval. One scan is a single process-table pass
 # (~6-9 ms of CPU), so even the fast rate costs well under 1% of one core.
@@ -126,6 +136,17 @@ class StopResult(Enum):
     FAILED = "failed"             # still running, e.g. it runs as administrator
     PROTECTED = "protected"       # Steam or the game -- never closed
 
+
+class NeedsAdmin(Exception):
+    """A tool asks Windows for administrator rights (its manifest, or a "Run as
+    administrator" compatibility tick) and wasn't started. `declined`: the CMDR
+    said No to the UAC prompt; otherwise EDLS wasn't allowed to ask."""
+
+    def __init__(self, declined: bool) -> None:
+        super().__init__("UAC prompt declined" if declined
+                         else "needs administrator rights")
+        self.declined = declined
+
 # If EDLS itself runs inside a kill-on-close Job Object (VS Code's debugpy
 # launcher does this), anything we start joins that job and Windows kills it
 # the moment EDLS exits -- that's how closing EDLS took Steam and the game down
@@ -157,6 +178,21 @@ def _ask_to_close(pid: int) -> None:
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError):
         pass   # stop() kills it anyway
+
+
+def _run_as_admin(path: str, args: str = "", cwd: Optional[str] = None,
+                  show: int = 1) -> None:
+    """Start `path` with administrator rights: Windows shows the UAC prompt,
+    and this returns once it's answered. Raises OSError -- winerror
+    ERROR_CANCELLED if the CMDR said No. Windows, not EDLS, creates the
+    elevated process, so it's outside our Job Object as well."""
+    if not hasattr(os, "startfile"):
+        raise OSError("starting a program as administrator needs Windows")
+    os.startfile(path, "runas", arguments=args, cwd=cwd, show_cmd=show)
+
+
+def _winerror(exc: OSError) -> Optional[int]:
+    return getattr(exc, "winerror", None)
 
 
 def setup_logging() -> None:
@@ -273,13 +309,19 @@ class ProcessManager:
         return found
 
     def launch(self, descriptor: AppDescriptor,
-               resolved_path: Optional[str] = None) -> Optional[psutil.Process]:
+               resolved_path: Optional[str] = None,
+               elevate: Optional[Callable[[], bool]] = None
+               ) -> Optional[psutil.Process]:
         """Launch the app if it isn't already up. Returns the process (existing
         or new) or None on failure. Records it as ours for scoped shutdown.
         `resolved_path`, if given, is used instead of re-resolving the
         descriptor's path -- callers that already resolved it (e.g. to check
         existence) skip a redundant lookup, which matters for resolvers like
-        SrvSurvey's that walk a directory tree."""
+        SrvSurvey's that walk a directory tree.
+
+        A tool that needs admin rights is only started if `elevate()` says
+        Windows may ask (the UAC prompt, which blocks until it's answered);
+        otherwise, or on a No, this raises NeedsAdmin."""
         existing = self.find(descriptor.process_name)
         if existing:
             with self._lock:
@@ -289,14 +331,48 @@ class ProcessManager:
         path = resolved_path if resolved_path is not None else descriptor.resolve_path()
         if not path or not os.path.exists(path):
             return None
+        cwd = os.path.dirname(path) or None
         try:
-            popen = _popen_detached([path], cwd=os.path.dirname(path) or None)
+            popen = _popen_detached([path], cwd=cwd)
             with self._lock:
                 self.launched[descriptor.name] = popen.pid
             return psutil.Process(popen.pid)
-        except (OSError, psutil.Error) as exc:
+        except OSError as exc:
+            if _winerror(exc) == ERROR_ELEVATION_REQUIRED:
+                if elevate is None or not elevate():
+                    raise NeedsAdmin(declined=False) from None
+                return self._launch_elevated(descriptor, path, cwd)
             log.warning("Failed to launch %s: %s", descriptor.name, exc)
             return None
+        except psutil.Error as exc:
+            log.warning("Failed to launch %s: %s", descriptor.name, exc)
+            return None
+
+    def _launch_elevated(self, descriptor: AppDescriptor, path: str,
+                         cwd: Optional[str]) -> Optional[psutil.Process]:
+        """launch()'s second try for a tool that needs admin rights."""
+        try:
+            _run_as_admin(path, cwd=cwd)
+        except OSError as exc:
+            if _winerror(exc) == ERROR_CANCELLED:
+                raise NeedsAdmin(declined=True) from None
+            log.warning("Failed to launch %s as administrator: %s",
+                        descriptor.name, exc)
+            return None
+        # The shell hands back no PID: it's ours by name until it shows up
+        # (PID 0 makes _target look it up by name).
+        with self._lock:
+            self.launched[descriptor.name] = 0
+        deadline = time.monotonic() + ELEVATED_FIND_WAIT
+        while (proc := self.find(descriptor.process_name)) is None:
+            if time.monotonic() >= deadline:
+                log.warning("%s was started as administrator but hasn't "
+                            "appeared yet.", descriptor.name)
+                return None
+            time.sleep(0.25)
+        with self._lock:
+            self.launched[descriptor.name] = proc.pid
+        return proc
 
     def _target(self, descriptor: AppDescriptor, forget: bool
                 ) -> tuple[Optional[psutil.Process], Optional[int]]:
@@ -367,10 +443,50 @@ class ProcessManager:
             return StopResult.STOPPED
         except psutil.Error as exc:   # AccessDenied (elevated app) or TimeoutExpired
             log.warning("Failed to stop %s: %s", descriptor.name, exc)
-            if pid:   # it's still ours -- keep it in scope for a later SHUTDOWN
+            if pid is not None:   # still ours -- keep it in scope for a later SHUTDOWN
                 with self._lock:
                     self.launched[descriptor.name] = proc.pid
             return StopResult.FAILED
+
+    def stop_elevated(self, descriptors: list[AppDescriptor]
+                      ) -> list[AppDescriptor]:
+        """Close tools that run as administrator, which this EDLS has no rights
+        to: an elevated copy of EDLS runs stop() on them (_close_elevated), so
+        one UAC prompt covers them all. Waits until they're gone or
+        ELEVATED_CLOSE_WAIT passes, and returns the ones still running. Raises
+        NeedsAdmin(declined=True) if the CMDR said No."""
+        targets, pairs = [], []
+        for desc in descriptors:
+            if _stem(desc.process_name) in PROTECTED_PROCESSES:
+                continue
+            proc = self._target(desc, forget=False)[0]
+            if proc is not None:
+                targets.append(desc)
+                pairs.append(f"{proc.pid}:{desc.process_name}")
+        if not targets:
+            return []
+        # Frozen, the exe is EDLS itself; from source it's Python + main.py.
+        script = [] if getattr(sys, "frozen", False) else [os.path.abspath(__file__)]
+        args = subprocess.list2cmdline(script + [CLOSE_ELEVATED_FLAG] + pairs)
+        try:
+            _run_as_admin(sys.executable, args, show=0)
+        except OSError as exc:
+            if _winerror(exc) == ERROR_CANCELLED:
+                raise NeedsAdmin(declined=True) from None
+            log.warning("Couldn't start EDLS as administrator: %s", exc)
+            return targets
+        deadline = time.monotonic() + ELEVATED_CLOSE_WAIT
+        while True:
+            found = self.find_many(d.process_name for d in targets)
+            left = [d for d in targets if d.process_name in found]
+            if not left or time.monotonic() >= deadline:
+                break
+            time.sleep(0.5)
+        with self._lock:
+            for desc in targets:
+                if desc not in left:
+                    self.launched.pop(desc.name, None)
+        return left
 
 
 # =============================================================================
@@ -397,9 +513,13 @@ class Engine:
         self._thread: Optional[threading.Thread] = None
         self._shutdown_thread: Optional[threading.Thread] = None
         # Card-driven Steam/Elite start/stop: those wait on processes, so they
-        # can't run on the GUI thread like a companion app's quick Popen can.
+        # run here, one at a time, never on the GUI thread.
         self._system_thread: Optional[threading.Thread] = None
         self._watch_thread: Optional[threading.Thread] = None
+        # Companion apps being started from their cards, so a double-click
+        # (or one sitting on the UAC prompt) doesn't start a second copy.
+        self._starting: set[str] = set()
+        self._start_lock = threading.Lock()
         self._stop = threading.Event()     # interrupts the current waits
         self._closed = threading.Event()   # window closed: start nothing new
         self._wake = threading.Event()     # asks the watcher to scan right away
@@ -571,8 +691,9 @@ class Engine:
 
     def start_app(self, name: str) -> None:
         # Steam and the game are URI-launched and have to be waited on, so they
-        # take the threaded path; a companion app's Popen returns immediately
-        # and stays inline on the calling (GUI) thread.
+        # take the system thread. A companion app gets a short-lived worker of
+        # its own: its Popen is quick, but one that needs admin rights waits
+        # on the UAC prompt, which mustn't freeze the window.
         if name == KEY_STEAM:
             self._run_system(self._card_start_steam)
             return
@@ -583,27 +704,61 @@ class Engine:
         desc = self._find_descriptor(name)
         if not desc:
             return
+        with self._start_lock:
+            if name in self._starting:
+                return
+            self._starting.add(name)
         self._kick()
-        if self.pm.find(desc.process_name):
-            proc = self.pm.launch(desc)   # adopts the running copy
-            self._status(name, AppState.ONLINE, proc.pid if proc else None)
-            self._log(f"{name} is already running.", "dim")
-            return
-        path = desc.resolve_path()
-        if not path or not os.path.exists(path):
-            self._status(name, AppState.NOT_FOUND)
-            self._log(f"{name} not found - check its path in Settings.",
-                      "warning")
-            return
-        self._status(name, AppState.LAUNCHING)
-        self._log(f"Starting {name}...")
-        proc = self.pm.launch(desc, resolved_path=path)
-        if proc:
-            self._status(name, AppState.ONLINE, proc.pid)
-            self._log(f"{name} online. (PID {proc.pid})", "success")
+        threading.Thread(target=self._start_one, args=(desc,), daemon=True).start()
+
+    def _start_one(self, desc: AppDescriptor) -> None:
+        name = desc.name
+        try:
+            if self.pm.find(desc.process_name):
+                proc = self.pm.launch(desc)   # adopts the running copy
+                self._status(name, AppState.ONLINE, proc.pid if proc else None)
+                self._log(f"{name} is already running.", "dim")
+                return
+            path = desc.resolve_path()
+            if not path or not os.path.exists(path):
+                self._status(name, AppState.NOT_FOUND)
+                self._log(f"{name} not found - check its path in Settings.",
+                          "warning")
+                return
+            self._status(name, AppState.LAUNCHING)
+            self._log(f"Starting {name}...")
+            try:
+                proc = self.pm.launch(desc, resolved_path=path,
+                                      elevate=lambda: self._may_elevate(name))
+            except NeedsAdmin as exc:
+                self._report_needs_admin(name, exc)
+                return
+            if proc:
+                self._status(name, AppState.ONLINE, proc.pid)
+                self._log(f"{name} online. (PID {proc.pid})", "success")
+            else:
+                self._status(name, AppState.FAILED)
+                self._log(f"Couldn't start {name} (see launcher.log).", "error")
+        finally:
+            with self._start_lock:
+                self._starting.discard(name)
+
+    def _may_elevate(self, name: str) -> bool:
+        """launch() found that `name` needs admin rights: may Windows ask?"""
+        if not self.settings.allow_elevation:
+            return False
+        self._log(f"{name} needs administrator rights - Windows will ask.")
+        return True
+
+    def _report_needs_admin(self, name: str, exc: NeedsAdmin) -> None:
+        self._status(name, AppState.FAILED)
+        if exc.declined:
+            self._log(f"{name} not started - the administrator prompt was "
+                      "declined.", "warning")
         else:
-            self._status(name, AppState.FAILED)
-            self._log(f"Couldn't start {name} (see launcher.log).", "error")
+            self._log(f"{name} needs administrator rights - not started. Turn "
+                      "on 'Ask for admin rights' in Settings, or start it "
+                      "yourself.", "warning")
 
     def stop_app(self, name: str) -> None:
         # Steam gets asked to quit politely rather than killed (see
@@ -629,6 +784,9 @@ class Engine:
     def _stop_one(self, desc: AppDescriptor) -> None:
         self._log(f"Stopping {desc.name}...")
         result = self.pm.stop(desc)
+        if (result is StopResult.FAILED and self.settings.allow_elevation
+                and not self._close_as_admin([desc])):
+            result = StopResult.STOPPED
         if result is StopResult.STOPPED:
             self._status(desc.name, AppState.STOPPED)
             self._log(f"{desc.name} stopped.", "success")
@@ -648,8 +806,21 @@ class Engine:
             return
         proc = self.pm.find(desc.process_name)
         self._status(desc.name, AppState.ERROR, proc.pid if proc else None)
+        hint = ("" if self.settings.allow_elevation else
+                " Turn on 'Ask for admin rights' in Settings to let EDLS close it.")
         self._log(f"Couldn't close {desc.name} - it may be running as "
-                  "administrator.", "error")
+                  f"administrator.{hint}", "error")
+
+    def _close_as_admin(self, descs: list[AppDescriptor]) -> list[AppDescriptor]:
+        """Close tools EDLS has no rights to (see ProcessManager.stop_elevated),
+        one UAC prompt for all of them. Returns the ones still running."""
+        names = ", ".join(d.name for d in descs)
+        self._log(f"Windows will ask for admin rights to close {names}.")
+        try:
+            return self.pm.stop_elevated(descs)
+        except NeedsAdmin:
+            self._log("The administrator prompt was declined.", "warning")
+            return descs
 
     # ---- card-driven Steam / Elite control ----
     def _run_system(self, fn: Callable[[], None]) -> None:
@@ -860,7 +1031,13 @@ class Engine:
                 continue
             self._log(f"Launching {app.name}...")
             self._status(app.name, AppState.LAUNCHING)
-            proc = self.pm.launch(app, resolved_path=path)
+            try:
+                proc = self.pm.launch(
+                    app, resolved_path=path,
+                    elevate=lambda name=app.name: self._may_elevate(name))
+            except NeedsAdmin as exc:
+                self._report_needs_admin(app.name, exc)
+                continue
             if proc:
                 self._status(app.name, AppState.ONLINE, proc.pid)
                 self._log(f"{app.name} online. (PID {proc.pid})", "success")
@@ -902,19 +1079,29 @@ class Engine:
         for app in running:
             self.pm.ask_to_close(app)
         deadline = time.monotonic() + CLOSE_GRACE
-        failed: list[str] = []
+        failed: list[AppDescriptor] = []
         for app in running:
             self._log(f"Stopping {app.name}...")
             result = self.pm.stop(app, deadline=deadline, asked=True)
             if result in (StopResult.STOPPED, StopResult.NOT_RUNNING):
                 self._status(app.name, AppState.OFFLINE)
+            elif result is StopResult.FAILED:
+                failed.append(app)
             else:
                 self._report_unstoppable(app, result)
-                if result is StopResult.FAILED:
-                    failed.append(app.name)
+        # What wouldn't close probably runs as administrator: one UAC prompt
+        # covers the lot, after everything else is already closed.
+        if failed and self.settings.allow_elevation:
+            left = self._close_as_admin(failed)
+            for app in failed:
+                if app not in left:
+                    self._status(app.name, AppState.OFFLINE)
+            failed = left
+        for app in failed:
+            self._report_unstoppable(app, StopResult.FAILED)
         if failed:
-            self._log(f"Some tools could not be closed: {', '.join(failed)}.",
-                      "warning")
+            names = ", ".join(a.name for a in failed)
+            self._log(f"Some tools could not be closed: {names}.", "warning")
         else:
             self._log("Third-party tools shut down.", "success")
 
@@ -970,7 +1157,33 @@ class Engine:
 # =============================================================================
 # Composition root
 # =============================================================================
+def _close_elevated(pairs: list[str]) -> int:
+    """The --close-elevated mode: EDLS started as administrator by
+    ProcessManager.stop_elevated(), to close tools that run as administrator.
+    Each `pairs` entry is "pid:process_name". It's the usual polite-then-kill
+    stop() -- protected processes and the PID-reuse check included -- just
+    with the rights to do it. No window and no log file (the parent rescans
+    to see what closed). Exit code 0 if everything closed."""
+    pm = ProcessManager()
+    targets: list[AppDescriptor] = []
+    for pair in pairs:
+        pid, _, process_name = pair.partition(":")
+        if pid.isdigit() and process_name:
+            desc = AppDescriptor(process_name, process_name)
+            pm.launched[desc.name] = int(pid)
+            targets.append(desc)
+    for desc in targets:
+        pm.ask_to_close(desc)
+    deadline = time.monotonic() + CLOSE_GRACE
+    results = [pm.stop(d, deadline=deadline, asked=True) for d in targets]
+    closed = (StopResult.STOPPED, StopResult.NOT_RUNNING)
+    return 0 if all(r in closed for r in results) else 1
+
+
 def main() -> int:
+    # Before logging, Qt and the one-copy check: this copy only closes tools.
+    if sys.argv[1:2] == [CLOSE_ELEVATED_FLAG]:
+        return _close_elevated(sys.argv[2:])
     setup_logging()
     install_crash_logging()
     import ui  # late import: driving the engine headless needs no GUI toolkit

@@ -77,6 +77,14 @@ a visual outcome you haven't confirmed with him.
   `taskkill` without /F) and kills only what's still running after `CLOSE_GRACE`
   (3 s); `_teardown` asks every target up front so the waits overlap. Keep all of it
   inside `ProcessManager`.
+- **Admin rights only on request.** EDLS never runs elevated (nor do Steam or the game).
+  A tool whose manifest asks for admin rights (EDHM-UI-V3: `highestAvailable`) makes
+  Popen fail with WinError 740. Only then, and only if `Settings.allow_elevation` is
+  on, does `ProcessManager` retry via `_run_as_admin` (the UAC prompt). A tool EDLS
+  can't close is closed by an elevated copy of EDLS (`--close-elevated` →
+  `_close_elevated`) that runs the same `ProcessManager.stop()`. Never add an
+  elevated `taskkill`/kill around it. UAC prompts block their thread, so companion
+  START runs on a worker.
 - **Every card status goes out through `Engine._status()`.** The status watcher
   (which replaced REFRESH) compares each scan with what `_status()` recorded and only
   emits differences — emitting any other way makes cards stale or flicker.

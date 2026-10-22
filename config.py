@@ -212,6 +212,9 @@ class Settings:
     # Tools are torn down either way; these only decide if the window goes too.
     close_on_game_exit: bool = True
     close_on_shutdown: bool = False
+    # A tool that needs admin rights (EDHM-UI asks for them) gets the UAC prompt
+    # to start, and again if EDLS has to close it. Off: EDLS never prompts.
+    allow_elevation: bool = True
     theme: Theme = Theme.DARK
     apps: list[AppDescriptor] = field(default_factory=list)
     removed_defaults: list[str] = field(default_factory=list)
@@ -332,6 +335,8 @@ def _from_dict(raw: dict) -> Settings:
                                     d.close_on_game_exit, "close_on_game_exit"),
         close_on_shutdown=_as_bool(raw.get("close_on_shutdown"),
                                    d.close_on_shutdown, "close_on_shutdown"),
+        allow_elevation=_as_bool(raw.get("allow_elevation"),
+                                 d.allow_elevation, "allow_elevation"),
         theme=_as_enum(Theme, raw.get("theme"), d.theme, "theme"),
         apps=[a for a in apps if a is not None],
         removed_defaults=[n for n in _as_list(raw.get("removed_defaults"),
@@ -415,6 +420,7 @@ def save_settings(s: Settings) -> bool:
         "shutdown_scope": s.shutdown_scope.value,
         "close_on_game_exit": s.close_on_game_exit,
         "close_on_shutdown": s.close_on_shutdown,
+        "allow_elevation": s.allow_elevation,
         "theme": s.theme.value,
         "removed_defaults": s.removed_defaults,
         "apps": [

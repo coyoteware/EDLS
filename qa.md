@@ -326,6 +326,18 @@ either way:
 | Close EDLS when the game exits | on | After the teardown: "EDLS will close in 5 seconds." → "Farewell, CMDR. o7" → the window closes. | "Session ended." EDLS stays open, LAUNCH comes back and the app list unlocks. |
 | Close EDLS after SHUTDOWN | off | After SHUTDOWN's teardown: the same 5 s countdown, then EDLS closes. The game keeps running. | EDLS stays open. During a session it logs "Waiting for Elite: Dangerous to close..." and handles the game exit as usual. |
 
+**Tools that need admin rights.** EDLS never runs as administrator. Some tools ask Windows
+for admin rights themselves; EDHM-UI-V3 does on any admin account with UAC on. The toggle
+"Ask for admin rights when a tool needs them" (default **on**) decides what happens:
+
+| | On (default) | Off |
+| --- | --- | --- |
+| Starting such a tool (LAUNCH or its card) | Windows shows its UAC prompt. Yes: the tool starts as administrator. No: the card shows Failed. | No prompt. The card shows Failed and the log says the tool needs administrator rights. |
+| Closing one EDLS can't close (teardown, SHUTDOWN, card STOP) | After the normal 3 s attempt, Windows asks once for all of them. Yes: an elevated copy of EDLS closes them the usual way (asked first, forced after 3 s). No: the cards show ERROR. | No prompt. The cards show ERROR (SC-16). |
+
+The prompt for closing names **EDLS.exe** (unknown publisher, because the build isn't
+signed). Steam and the game are never started or closed as administrator.
+
 ### 5.5 What a normal session logs
 
 Colours are for the dark theme. In the light theme the log sits on a mid-grey pane, so
@@ -345,12 +357,17 @@ warnings, pink for errors.
 | Launching &lt;App&gt;... / &lt;App&gt; online. (PID …) | amber / gold | each enabled tool |
 | &lt;App&gt; already running - skipping. | dim | tool was already open |
 | Failed to launch &lt;App&gt;. | orange | tool couldn't start |
+| &lt;App&gt; needs administrator rights - Windows will ask. | amber | the tool asks for admin rights (EDHM-UI): the UAC prompt follows |
+| &lt;App&gt; not started - the administrator prompt was declined. | orange | you answered No to that prompt |
+| &lt;App&gt; needs administrator rights - not started. Turn on … | orange | same tool, with "Ask for admin rights when a tool needs them" off |
 | All systems nominal. | gold | |
 | Monitoring Elite: Dangerous... | dim | while you play |
 | Elite: Dangerous offline. | amber | game exited |
 | Closing third-party tools... / Stopping &lt;App&gt;... | amber | |
 | Third-party tools shut down. *or* No tools running. | gold / dim | everything closed / nothing to close |
-| Couldn't close &lt;App&gt; - it may be running as administrator. | red | a tool that wouldn't close (its card turns ERROR) |
+| Windows will ask for admin rights to close &lt;App&gt;. | amber | a tool that wouldn't close, with the admin toggle on: one UAC prompt for all of them |
+| The administrator prompt was declined. | orange | you answered No to that prompt |
+| Couldn't close &lt;App&gt; - it may be running as administrator. | red | a tool that still wouldn't close (its card turns ERROR); with the admin toggle off it adds a pointer to the setting |
 | Some tools could not be closed: &lt;App&gt;, &lt;App&gt;. | orange | replaces "Third-party tools shut down." when one failed |
 | EDLS will close in 5 seconds. | amber | "Close EDLS when the game exits" on |
 | Farewell, CMDR. o7 | gold | 4 s later; the window closes 1 s after that |
@@ -549,7 +566,10 @@ Do this section in **both** themes.
 | LS-08 | P1 | A | Open a tool yourself → LAUNCH | "… already running - skipping." The card shows Online. No second copy opens. |
 | LS-09 | P2 | A | Mid-session, close one tool yourself | Its card turns Offline within about 2 s. Nothing else happens and the session continues. |
 | LS-10 | P2 | H | Point a dummy app at a `.txt` file → LAUNCH | "Failed to launch …" (orange). The card shows Failed (red). The rest of the sequence continues. |
-| LS-11 | P2 | H | Right-click `DummyC.exe` → Properties → Compatibility → tick "Run this program as an administrator" → tick Dummy C in Settings → LAUNCH (EDLS not elevated) | No crash. The card shows Failed with a warning in the log. Record whether a UAC prompt appears. Untick the compatibility box afterwards. |
+| LS-11 | P1 | H | Right-click `DummyC.exe` → Properties → Compatibility → tick "Run this program as an administrator" → tick Dummy C in Settings → LAUNCH (EDLS not elevated, admin toggle on) → answer **Yes** to the UAC prompt | "Dummy C needs administrator rights - Windows will ask." → UAC prompt → "Dummy C online. (PID …)". The card shows Online, and Task Manager → Details shows Dummy C Elevated: Yes and EDLS Elevated: No. The tools after Dummy C in the list wait until you answer. Keep the compatibility box ticked for LS-32, LS-33, SC-21 and CC-20, and untick it afterwards. |
+| LS-32 | P1 | H | LS-11, but answer **No** to the UAC prompt | Orange "Dummy C not started - the administrator prompt was declined." The card shows Failed, and the rest of the sequence carries on. |
+| LS-33 | P1 | H | LS-11 with "Ask for admin rights when a tool needs them" **off** | No UAC prompt. Orange "Dummy C needs administrator rights - not started. Turn on 'Ask for admin rights' in Settings, or start it yourself." The card shows Failed. |
+| LS-34 | P1 | R | Real EDHM-UI-V3 on an admin account, game in fullscreen → LAUNCH | The UAC prompt appears just after the game process starts. Record whether it takes the game out of fullscreen or focus, and whether EDHM-UI works normally as administrator. |
 | LS-12 | P1 | A | Double-click LAUNCH fast | Only one sequence runs: one set of log lines and one game launch request. |
 | LS-13 | P1 | R | Make the game launch fail (e.g. cancel the min-ed-launcher or Steam login, or go offline so authentication fails) → LAUNCH | After 60 s: red "Elite: Dangerous didn't start within 60s - launch cancelled. Press LAUNCH to try again.". The Elite card shows Failed, no tools start, and LAUNCH comes back (R-10 fix). Fix the cause → LAUNCH works. |
 | LS-31 | P1 | R | **Cold start:** reboot, Steam closed → LAUNCH | The game appears within the 60 s. Record how long it took. If it was cancelled on a normal cold start, report it: the limit is too short for your PC (R-35). |
@@ -603,7 +623,8 @@ More scope tests:
 | SC-13 | P2 | H | Double-click SHUTDOWN | One round of "Stopping …" lines. |
 | SC-14 | P2 | A | Idle with nothing running → SHUTDOWN | "No tools running." |
 | SC-15 | P2 | H | LAUNCH → while it's waiting for the game, press SHUTDOWN → then open the fake game | SHUTDOWN closes per scope ("launched only" usually has nothing to close yet). LAUNCH keeps waiting. Once the fake game opens, tools start normally. |
-| SC-16 | P1 | H | EDLS not elevated. Right-click `DummyA.exe` → Run as administrator → wait for its card to show Online → press its card STOP. Then switch scope to "all enabled" → SHUTDOWN. | EDLS can't close it. After STOP (about 3 s: EDLS first waits for it to close by itself): red "Couldn't close Dummy A - it may be running as administrator.", and the card shows **Error** with a red **ERROR** button. After SHUTDOWN, the summary says "Some tools could not be closed: Dummy A." instead of "Third-party tools shut down." (R-11 fix). Close the dummy yourself: the card goes to Offline within about 5 s. |
+| SC-21 | P1 | H | Admin toggle **on**. Start Dummy C as administrator (LS-11) and run Dummy A as administrator too → press Dummy C's STOP → answer Yes. Then start Dummy C again → switch scope to "all enabled" → SHUTDOWN → answer Yes. Repeat SHUTDOWN, answering No. | STOP: "Stopping Dummy C..." → about 3 s → "Windows will ask for admin rights to close Dummy C." → prompt (EDLS.exe) → "Dummy C stopped." SHUTDOWN: the other tools close first, then **one** prompt naming both dummies; both cards go Offline and "Third-party tools shut down." Answering No: "The administrator prompt was declined.", both cards show ERROR, and "Some tools could not be closed: …". No console window flashes. |
+| SC-16 | P1 | H | Admin toggle **off**. EDLS not elevated. Right-click `DummyA.exe` → Run as administrator → wait for its card to show Online → press its card STOP. Then switch scope to "all enabled" → SHUTDOWN. | EDLS can't close it. After STOP (about 3 s: EDLS first waits for it to close by itself): red "Couldn't close Dummy A - it may be running as administrator. Turn on 'Ask for admin rights' in Settings to let EDLS close it.", and the card shows **Error** with a red **ERROR** button. After SHUTDOWN, the summary says "Some tools could not be closed: Dummy A." instead of "Third-party tools shut down." (R-11 fix). Close the dummy yourself: the card goes to Offline within about 5 s. |
 | SC-17 | P2 | R | Tools that run several processes (see §8.15) → teardown | Task Manager shows no leftover processes from those tools. |
 
 ### 8.6 Steam and the game are never closed (PR)
@@ -645,7 +666,8 @@ Every test here is P1. **Any failure is a Blocker.**
 | CC-15 | P1 | H | Elite card START → while it's waiting, look at LAUNCH and click it | LAUNCH is greyed. Clicking it logs "The game is already being started from its card - wait for it to finish." and nothing launches. One launch request only (R-09 fix). LAUNCH returns once the card is done. |
 | CC-16 | P2 | H | Mid-session: STOP a dummy → START it again → later close it yourself → end the session | Stop and start work. After you close it yourself, its card goes to Offline within about 2 s (R-16 fix). At the end of the session nothing complains. |
 | CC-17 | P3 | A | Look at an unticked app's card | It has no button, so it can't be started from the card. |
-| CC-18 | P1 | H | Produce an ERROR card (SC-16) → click **ERROR** while the dummy still runs as admin → then close EDLS, start it again as administrator and press STOP on that card | ERROR click: "Stopping …" and the same "Couldn't close …" line; the card stays Error. As administrator, STOP closes it and the card shows Stopped. |
+| CC-20 | P1 | H | Admin toggle on, Dummy C set to run as administrator (LS-11) → click its card START twice quickly → answer Yes | One UAC prompt, one copy. The window stays responsive while the prompt is up, and the card shows Launching... then Online. |
+| CC-18 | P1 | H | Admin toggle off. Produce an ERROR card (SC-16) → click **ERROR** while the dummy still runs as admin → then close EDLS, start it again as administrator and press STOP on that card | ERROR click: "Stopping …" and the same "Couldn't close …" line; the card stays Error. As administrator, STOP closes it and the card shows Stopped. |
 | CC-19 | P1 | H | LAUNCH (fake game not open yet) → click the Elite card's greyed STARTING. Open the fake game → click its greyed QUIT IN-GAME. Close the fake game → click START straight away, and again after 3 s. | STARTING: "The game is already starting.". QUIT IN-GAME: "EDLS doesn't close Elite: Dangerous - quit from the in-game menu.". Straight after closing: "Give the game a moment before starting it again." and nothing starts. After 3 s, START works (R-09 fix). |
 
 ### 8.8 Live status (RF)
@@ -696,7 +718,7 @@ about every 5 s otherwise.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| SE-12 | P1 | A | Click each of the five toggles | The four on/off settings are chamfered switches: the knob slides across, the OFF/ON label swaps, and the knob turns gold (orange in light mode). Light mode is a wider moon/sun switch: the orange knob slides over and its icon turns from moon to sun. Save keeps it. Cancel undoes it. A mouse click doesn't leave a focus ring behind. |
+| SE-12 | P1 | A | Click each of the six toggles | The five on/off settings are chamfered switches: the knob slides across, the OFF/ON label swaps, and the knob turns gold (orange in light mode). Light mode is a wider moon/sun switch: the orange knob slides over and its icon turns from moon to sun. Save keeps it. Cancel undoes it. A mouse click doesn't leave a focus ring behind. |
 | SE-13 | P2 | A | Keyboard only: Tab through the window and change each toggle | Tab reaches every toggle and a dashed orange outline shows which one has focus. Space or Enter flips it; ← turns it off, → on (R-20 fix). |
 | SE-14 | P1 | A | "Show cards for apps that aren't enabled" on and off → Save | Cards for unticked apps appear and disappear (UI-15, UI-16). |
 | SE-52 | P1 | A | Look at the toggles "Close EDLS when the game exits" and "Close EDLS after SHUTDOWN" | Defaults: on and off. They survive Save, restart and RESTORE DEFAULTS (back to on/off). What they do: LS-04, LS-28, SC-12, SC-18. |
@@ -763,6 +785,7 @@ Close EDLS before each edit. Keep a backup.
 | PS-11 | P3 | A | Add an unknown key, e.g. `"foo": 1` → start | Ignored. It disappears the next time EDLS saves. |
 | PS-12 | P1 | A | Make `settings.json` read-only (Properties → Read-only) → start → change settings → Save → toggle AUTO START → restart | Each save shows a red "Couldn't save settings.json - changes will be lost when EDLS closes (see launcher.log)." After the restart the changes are gone, as warned (R-24 fix). No crash. |
 | PS-18 | P2 | A | `"close_on_game_exit": false`, `"close_on_shutdown": "yes"` → start → open Settings | The two toggles show off and on. |
+| PS-19 | P2 | A | `"allow_elevation": "no"` → start → open Settings. Then delete the line → start. | The first time, "Ask for admin rights when a tool needs them" shows off. Without the line it's on (the default), with no warning. |
 | PS-13 | P2 | A | While EDLS runs, try to delete the EDLS folder | Windows may refuse because `launcher.log` is in use, which is fine. If it does get deleted, changing a setting recreates it with no crash. |
 | PS-14 | P2 | A | Remove the `"version"` line → start | Loads fine. The file is rewritten with `"version": 1`. |
 | PS-15 | P3 | A | Copy `settings.json` to another PC or Windows user → start there | Loads. `%…%` paths adapt to that machine. |
@@ -852,11 +875,11 @@ rest.
 | CA-02 | SrvSurvey | Searched for under `%LOCALAPPDATA%\Apps\2.0` (ClickOnce install) | SrvSurvey.exe | Is it found? How long does LAUNCH take to get past it? Does starting it this way skip its auto-updates? |
 | CA-03 | OdysseyMaterials ("ODYSSEY MATS HELPER") | `%LOCALAPPDATA%\Elite Dangerous Odyssey Materials Helper Launcher\program\Elite Dangerous Odyssey Materials Helper.exe` | Elite Dangerous Odyssey Materials Helper.exe | EDLS starts the program directly, not its launcher. Check it still updates when started its normal way. |
 | CA-04 | EDCoPilot | `C:\EDCoPilot\EDCoPilot.exe` | EDCoPilot.exe | Uses more than one process? Check they all close. Check its own "close with the game" option doesn't conflict. |
-| CA-05 | EDHM_UI | `%LOCALAPPDATA%\EDHM-UI-V3\EDHM-UI-V3.exe` | EDHM-UI-V3.exe | Closing it mid-game doesn't mess up the in-game HUD colours. |
+| CA-05 | EDHM_UI | `%LOCALAPPDATA%\EDHM-UI-V3\EDHM-UI-V3.exe` | EDHM-UI-V3.exe | Its manifest asks for admin rights (`highestAvailable`), so on an admin account it gets a UAC prompt to start and another to close (§5.4, LS-34). On a standard account it should start with no prompt. It's Electron, so it runs several `EDHM-UI-V3.exe` processes: check that check d closes all of them. Closing it mid-game doesn't mess up the in-game HUD colours. |
 | CA-06 | opentrack | `%ProgramFiles(x86)%\opentrack\opentrack.exe` | opentrack.exe | After a forced close, the camera/tracker works again on the next start. |
 | CA-07 | ICARUS Terminal | `%ProgramFiles(x86)%\ICARUS Terminal\ICARUS Terminal.exe` | ICARUS Terminal.exe | Probably runs several processes. Check they all close. |
 | CA-08 | EDDiscovery | `%ProgramFiles%\EDDiscovery\EDDiscovery.exe` | EDDiscovery.exe | It has a local database. After a forced close it must open normally, with no repair or "database locked" messages and with recent data present. |
-| CA-09 | VoiceAttack | `%ProgramFiles%\VoiceAttack\VoiceAttack.exe` | VoiceAttack.exe | Often run as administrator: see SC-16. Profiles and settings intact. |
+| CA-09 | VoiceAttack | `%ProgramFiles%\VoiceAttack\VoiceAttack.exe` | VoiceAttack.exe | Often run as administrator: see SC-16 and SC-21. Profiles and settings intact. |
 | CA-10 | EDCoPTER | `%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe` | EDCoPTER.exe | General checks a–f. |
 | CA-11 | Elite Observatory | `%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe` | ObservatoryCore.exe | General checks a–f. |
 
@@ -1065,6 +1088,9 @@ These come from reading the code. Each row has a **Status**:
 | R-35 | The 60 s limit on the game appearing may be too short on a slow PC's cold start (Steam starting, updates, min-ed-launcher login). | Open (new) | LS-31, LS-02, AS-03 | Minor (press LAUNCH again) |
 | R-36 | The 5 s close countdown can't be cancelled, except by closing EDLS yourself. If you change your mind, you have to reopen EDLS. | Open (new, design question) | LS-04, SQ-37 to SQ-40 | Design question |
 | R-37 | The "X is now running." / "X stopped running." lines may get noisy for tools that restart themselves (updaters, launcher stubs). | Open (new) | RF-01, CA-13, CA-15 | Cosmetic |
+| R-38 | A tool that needs admin rights (EDHM-UI) couldn't be started from EDLS: the card showed Failed with no UAC prompt. | Fixed — verify | LS-11, LS-32, LS-33, CC-20, CA-05 | Major |
+| R-39 | The UAC prompt for an admin tool appears just as the game starts, and may take a fullscreen game out of focus. | Open (new) | LS-34 | Minor |
+| R-40 | After you answer Yes, an admin tool may take longer than 3 s to appear. If it does, its card shows Failed until the status check finds it (within about 5 s). | Open (new) | LS-11, CC-20 | Cosmetic |
 
 ---
 

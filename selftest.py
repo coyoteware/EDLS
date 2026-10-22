@@ -356,6 +356,116 @@ def main():
             eng._ask_to_close = real_ask
     run("tools are asked to close before they're killed", polite_close)
 
+    def admin_tools():
+        # A tool that needs admin rights (EDHM-UI) makes Popen fail with
+        # WinError 740. Windows may then ask (the UAC prompt) only while
+        # allow_elevation is on, and closing one goes through an elevated copy
+        # of EDLS. Fakes only: no real UAC prompt, launch, PID, taskkill or kill.
+        import tempfile
+        from dataclasses import replace as _replace
+        # find_many via __dict__: the staticmethod itself, so it restores as one.
+        real = (eng._popen_detached, eng._run_as_admin, eng._ask_to_close,
+                eng.ProcessManager.__dict__["find_many"])
+        S = config.AppState
+        running, prompts, statuses, logs, decline = {}, [], [], [], [False]
+
+        class P:   # stands in for a psutil.Process
+            def __init__(self, pid):
+                self.pid = pid
+
+        def winerror(code):
+            exc = OSError(f"fake WinError {code}")
+            exc.winerror = code
+            return exc
+
+        def needs_admin(args, **kwargs):
+            raise winerror(eng.ERROR_ELEVATION_REQUIRED)
+
+        def fake_runas(path, args="", cwd=None, show=1):
+            prompts.append((path, args))
+            if decline[0]:
+                raise winerror(eng.ERROR_CANCELLED)
+            if eng.CLOSE_ELEVATED_FLAG in args:
+                running.clear()          # the elevated copy closed them
+            else:
+                running["FakeAdmin"] = P(990101)
+
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as fh:
+            exe = fh.name
+        tools = [_replace(settings.apps[0], name=n, process_name=n, path=exe,
+                          enabled=True, resolver=None)
+                 for n in ("FakeAdmin", "FakeAdmin2")]
+
+        def engine(allow):
+            w = eng.Engine(_replace(settings, apps=tools, allow_elevation=allow))
+            w.pm.find = running.get
+            w.pm.find_many = lambda names: {n: running[n] for n in names
+                                            if n in running}
+            w.pm.stop = lambda *a, **k: eng.StopResult.FAILED
+            w.on_status.connect(lambda key, state, pid: statuses.append(state))
+            w.on_log.connect(lambda msg, lvl: logs.append((lvl, msg)))
+            return w
+
+        eng._popen_detached = needs_admin
+        eng._run_as_admin = fake_runas
+        eng._ask_to_close = lambda pid: None
+        try:
+            # Launch: allowed -> one prompt, Online, tracked as ours.
+            w = engine(True)
+            w._start_one(tools[0])
+            assert prompts == [(exe, "")], prompts
+            assert statuses[-1] is S.ONLINE, statuses
+            assert "FakeAdmin" in w.pm.launched_names()
+            # Declined -> Failed, and the log says so.
+            running.clear()
+            decline[0] = True
+            w._start_one(tools[0])
+            assert statuses[-1] is S.FAILED and logs[-1][0] == "warning", logs
+            assert "declined" in logs[-1][1], logs[-1]
+            # Not allowed -> no prompt at all, Failed, pointed at Settings.
+            decline[0] = False
+            prompts.clear()
+            w = engine(False)
+            w._launch_tools()
+            assert not prompts and statuses[-1] is S.FAILED, (prompts, statuses)
+            assert "Settings" in logs[-1][1], logs[-1]
+
+            # Teardown: what won't close gets ONE prompt for all of it...
+            running.update(FakeAdmin=P(990101), FakeAdmin2=P(990102))
+            statuses.clear()
+            w = engine(True)
+            w._teardown(config.ShutdownScope.ALL_ENABLED)
+            assert len(prompts) == 1, prompts
+            path, args = prompts[0]
+            assert path == sys.executable and eng.CLOSE_ELEVATED_FLAG in args
+            assert "990101:FakeAdmin" in args and "990102:FakeAdmin2" in args
+            assert statuses == [S.OFFLINE, S.OFFLINE], statuses
+            assert logs[-1][0] == "success", logs[-1]
+            # ...a No leaves both on Error, and so does the setting being off.
+            for allow, prompted in ((True, True), (False, False)):
+                running.update(FakeAdmin=P(990101), FakeAdmin2=P(990102))
+                prompts.clear()
+                statuses.clear()
+                decline[0] = allow
+                engine(allow)._teardown(config.ShutdownScope.ALL_ENABLED)
+                assert bool(prompts) is prompted, (allow, prompts)
+                assert statuses == [S.ERROR, S.ERROR], (allow, statuses)
+                assert "could not be closed" in logs[-1][1], logs[-1]
+
+            # The elevated copy: never touches Steam or the game, skips junk,
+            # and reports a tool that's already gone as closed.
+            asked = []
+            eng._ask_to_close = asked.append
+            eng.ProcessManager.find_many = staticmethod(lambda names: {})
+            assert eng._close_elevated(["4:steam.exe", "junk"]) == 1
+            assert eng._close_elevated(["0:FakeTool"]) == 0   # 0: by name only
+            assert not asked, asked
+        finally:
+            (eng._popen_detached, eng._run_as_admin, eng._ask_to_close,
+             eng.ProcessManager.find_many) = real
+            os.remove(exe)
+    run("admin tools: Windows asks only when allowed", admin_tools)
+
     def elite_card_muting():
         # R-09: while the game is starting (or running) the Elite card button
         # greys out but still answers clicks -- with a log line, never an action.
@@ -497,12 +607,14 @@ def main():
         dlg = ui.SettingsDialog(settings, first_run=first_run)
         got = []
         dlg.saved.connect(got.append)
-        # Flip the two close-EDLS toggles and check they come back out.
+        # Flip the close-EDLS and admin toggles and check they come back out.
         dlg.toggle_close_exit.setChecked(not settings.close_on_game_exit)
         dlg.toggle_close_shutdown.setChecked(not settings.close_on_shutdown)
+        dlg.toggle_admin.setChecked(not settings.allow_elevation)
         dlg._save()   # exercises recompute_removed_defaults + replace path
         assert got and got[0].close_on_game_exit != settings.close_on_game_exit
         assert got[0].close_on_shutdown != settings.close_on_shutdown
+        assert got[0].allow_elevation != settings.allow_elevation
 
     run("settings dialog (normal) build + save",
         lambda: settings_dialog(False))
