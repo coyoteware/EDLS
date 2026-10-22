@@ -495,6 +495,10 @@ def main():
 
     def settings_dialog(first_run):
         dlg = ui.SettingsDialog(settings, first_run=first_run)
+        # Every tip names a real toggle, and only the switched-on ones show.
+        for key, (shown, tip) in ui._TOGGLE_TIPS.items():
+            tog = getattr(dlg, key)
+            assert tog.toolTip() == (tip if shown else ""), key
         got = []
         dlg.saved.connect(got.append)
         # Flip the two close-EDLS toggles and check they come back out.

@@ -1330,6 +1330,9 @@ def _dialog_qss(c: dict) -> str:
         QTableWidget::item:selected {{ background: {c['sel']};
                                        color: {c['accent']}; }}
         QTableCornerButton::section {{ background: {c['field']}; border: none; }}
+        QToolTip {{ background: {c['field']}; color: {c['text']};
+                    border: 1px solid {c['check']}; padding: 6px 8px;
+                    font-family: 'Share Tech Mono'; font-size: 10pt; }}
     """ + _thin_scrollbar_qss()
 
 
@@ -1582,6 +1585,29 @@ class AppEntryDialog(HudPopover):
 
 
 # ── Settings dialog ───────────────────────────────────────────────────────────
+# Hover help for the Settings toggles, keyed by the toggle's attribute name:
+# (shown, text). `shown` is a development switch, not a user setting -- flip it
+# to hide a tip without losing its text.
+_TOGGLE_TIPS: dict[str, tuple[bool, str]] = {
+    "toggle_inactive": (True,
+        "Disabled apps still get a card on the main window, so you can see "
+        "whether they're running. Off: only enabled apps get a card."),
+    "toggle_scope": (True,
+        "On: SHUTDOWN and the end-of-session teardown close every enabled app, "
+        "even ones you started yourself.\nOff: only apps EDLS launched are "
+        "closed.\nSteam and Elite: Dangerous are never closed."),
+    "toggle_close_exit": (True,
+        "When Elite: Dangerous exits, EDLS closes your tools and then closes "
+        "itself after a short countdown. Off: the window stays open."),
+    "toggle_close_shutdown": (True,
+        "After SHUTDOWN closes your tools, EDLS closes itself after a short "
+        "countdown. Off: the window stays open."),
+    "toggle_light": (False,
+        "Lightens the window, header and bottom bar. The status and log "
+        "panes stay dark."),
+}
+
+
 class SettingsDialog(QDialog):
     """Data-driven settings editor (collapses the two dialogs into one).
     In first-run mode it shows a welcome header and all apps checked by default."""
@@ -1656,7 +1682,7 @@ class SettingsDialog(QDialog):
         toggles.setSpacing(0)
         vbox.addLayout(toggles)
 
-        def _toggle_row(text: str, checked: bool,
+        def _toggle_row(key: str, text: str, checked: bool,
                         kind: type = ToggleSwitch) -> ToggleSwitch:
             if toggles.count():
                 toggles.addWidget(_hairline(C_BORDER.name()))
@@ -1669,21 +1695,30 @@ class SettingsDialog(QDialog):
             tog = kind(checked)
             row.addWidget(tog)
             toggles.addLayout(row)
+            shown, tip = _TOGGLE_TIPS.get(key, (False, ""))
+            if shown and tip:
+                lbl.setToolTip(tip)
+                tog.setToolTip(tip)
             return tog
 
         self.toggle_inactive = _toggle_row(
+            "toggle_inactive",
             "Show cards for apps that aren't enabled",
             settings.show_inactive_cards)
         self.toggle_scope = _toggle_row(
+            "toggle_scope",
             "Shutdown closes all enabled apps (not just those EDLS launched)",
             settings.shutdown_scope is ShutdownScope.ALL_ENABLED)
         self.toggle_close_exit = _toggle_row(
+            "toggle_close_exit",
             "Close EDLS when the game exits",
             settings.close_on_game_exit)
         self.toggle_close_shutdown = _toggle_row(
+            "toggle_close_shutdown",
             "Close EDLS after SHUTDOWN",
             settings.close_on_shutdown)
         self.toggle_light = _toggle_row(
+            "toggle_light",
             "Light mode",
             settings.theme is Theme.LIGHT, ThemeToggle)
 
