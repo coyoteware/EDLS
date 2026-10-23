@@ -61,6 +61,16 @@ Download EDLS-Setup-1.2.1.exe from the [Releases page](https://github.com/coyote
 
 VirusTotal analysis: [https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection](https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection)
 
+### Updates
+
+Versions after 1.2.1 check GitHub for a new release at startup. If there is one,
+an **update** link appears next to the version number: it shows what's new, and
+**INSTALL NOW** downloads the installer, checks it against the release's SHA256, and
+restarts EDLS on the new version with your settings kept. It won't update while the
+game is running or a session is in progress. Turn the check off in Settings.
+
+1.2.1 can't update itself - install the next release over it from the Releases page.
+
 ---
 
 ## Configuration

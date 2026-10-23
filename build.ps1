@@ -12,7 +12,8 @@ bundle holds only what EDLS actually uses.
 
 Output (build\ and dist\ are git-ignored):
     dist\EDLS\EDLS.exe              the app
-    dist\EDLS-Setup-<version>.exe   the installer; its SHA256 is printed last
+    dist\EDLS-Setup-<version>.exe   the installer
+    dist\EDLS-Setup-<version>.exe.sha256   its checksum, for the in-app updater
 
 The version comes from config.APP_VERSION, the single source of truth.
 #>
@@ -100,8 +101,13 @@ if (-not $iscc) { Fail "Inno Setup 6 not found - get it from https://jrsoftware.
 & $iscc /Q "/DAppVersion=$version" "/DFileVersion=$fileVersion" (Join-Path $root "installer.iss")
 if ($LASTEXITCODE -ne 0) { Fail "Inno Setup failed" }
 
+# 6. The checksum EDLS's updater verifies the download against. Upload it to
+#    the release next to the installer, keeping its name.
 $setup = Join-Path $dist "EDLS-Setup-$version.exe"
+$hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
+[System.IO.File]::WriteAllText("$setup.sha256", "$hash  EDLS-Setup-$version.exe`n",
+                               (New-Object System.Text.UTF8Encoding $false))
 Write-Host ""
 Write-Host "App:        $(Join-Path $dist 'EDLS\EDLS.exe')"
 Write-Host "Installer:  $setup"
-Write-Host "SHA256:     $((Get-FileHash -Algorithm SHA256 $setup).Hash)"
+Write-Host "SHA256:     $hash  (written to $setup.sha256)"

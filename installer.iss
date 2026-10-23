@@ -59,3 +59,12 @@ Name: "{autodesktop}\EDLS"; Filename: "{app}\EDLS.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\EDLS.exe"; Description: "{cm:LaunchProgram,EDLS}"; Flags: nowait postinstall skipifsilent
+; EDLS's own updater runs this silently with /RELAUNCH=1: start the new EDLS
+; once it's installed (--updated tells it not to auto-start a session).
+Filename: "{app}\EDLS.exe"; Parameters: "--updated"; Flags: nowait; Check: RelaunchAfterUpdate
+
+[Code]
+function RelaunchAfterUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;
