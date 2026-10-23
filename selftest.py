@@ -315,6 +315,12 @@ def main():
             def __init__(self, pid, obeys):
                 self.pid, self.obeys, self.killed = pid, obeys, False
 
+            def name(self):
+                return "FakeTool.exe"
+
+            def children(self, recursive=False):
+                return []
+
             def wait(self, timeout=None):
                 events.append(("wait", self.pid))
                 if (self.obeys and self.pid in asked) or self.killed:
@@ -355,6 +361,69 @@ def main():
         finally:
             eng._ask_to_close = real_ask
     run("tools are asked to close before they're killed", polite_close)
+
+    def multi_process_tools():
+        # CA-05: an Electron app (EDHM-UI) is a main process that owns the
+        # window plus same-name helpers. EDLS must find the main one wherever
+        # Windows lists it, ask only it, and see the helpers off after it --
+        # never touching anything else the tool started. Fakes only: no real
+        # process is listed, asked or killed.
+        import time
+        import psutil
+        real = (eng.psutil.process_iter, eng._ask_to_close)
+        asked = []
+
+        class Fake:   # stands in for a psutil.Process
+            def __init__(self, pid, ppid, exe="EDHM-UI-V3.exe",
+                         alone=False, obeys=True):
+                self.pid, self._ppid, self._exe = pid, ppid, exe
+                self.info = {"name": exe}
+                self.alone, self.obeys = alone, obeys   # exits by itself / when asked
+                self.kids, self.killed, self.touched = [], False, False
+
+            def name(self):
+                return self._exe
+
+            def ppid(self):
+                return self._ppid
+
+            def children(self, recursive=False):
+                out = []
+                for kid in self.kids:
+                    out += [kid] + (kid.children(True) if recursive else [])
+                return out
+
+            def wait(self, timeout=None):
+                self.touched = True
+                if self.killed or self.alone or (self.obeys and self.pid in asked):
+                    return 0
+                raise psutil.TimeoutExpired(timeout)
+
+            def kill(self):
+                self.touched = self.killed = True
+
+        main = Fake(990010, ppid=990009)             # its launcher stub is gone
+        quick = Fake(990011, ppid=main.pid, alone=True)
+        stuck = Fake(990012, ppid=main.pid, obeys=False)   # no window to close
+        other = Fake(990013, ppid=main.pid, exe="browser.exe")
+        main.kids = [quick, stuck, other]
+
+        eng.psutil.process_iter = lambda attrs=None: iter([quick, other, main,
+                                                          stuck])
+        eng._ask_to_close = asked.append
+        try:
+            pm = eng.ProcessManager()
+            assert pm.find("EDHM-UI-V3") is main, "picked a helper, not the main"
+            desc = config.AppDescriptor("EDHM_UI", "EDHM-UI-V3")
+            result = pm.stop(desc, deadline=time.monotonic())
+            assert result is eng.StopResult.STOPPED, result
+            assert asked == [main.pid, stuck.pid], asked
+            assert stuck.killed and not main.killed and not quick.killed
+            assert not other.touched, "touched a different program it started"
+        finally:
+            eng.psutil.process_iter, eng._ask_to_close = real
+    run("multi-process tools: main process first, helpers after",
+        multi_process_tools)
 
     def admin_tools():
         # A tool that needs admin rights (EDHM-UI) makes Popen fail with

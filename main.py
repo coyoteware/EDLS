@@ -116,6 +116,45 @@ def _stem(process_name: str) -> str:
     return process_name.lower().removesuffix(".exe")
 
 
+# Some tools run as several processes with one name: an Electron app (EDHM-UI)
+# is a main process that owns the window plus helpers it starts itself. Asking
+# a helper to close does nothing -- it has no window -- so EDLS always talks to
+# the main one, and makes sure the helpers go with it.
+def _root(procs: list[psutil.Process]) -> psutil.Process:
+    """Of the same-name processes found, the main one: whose parent isn't one
+    of the others. (The parent PID comes from a system snapshot, so this works
+    for a tool running as administrator too.)"""
+    if len(procs) == 1:
+        return procs[0]
+    pids = {p.pid for p in procs}
+    for proc in procs:
+        try:
+            if proc.ppid() not in pids:
+                return proc
+        except psutil.Error:
+            continue
+    return procs[0]
+
+
+def _same_name_descendants(proc: psutil.Process) -> list[psutil.Process]:
+    """The processes `proc` started, at any depth, that carry its name -- an
+    Electron app's helpers. Anything else it started (a browser it opened,
+    say) is left alone."""
+    try:
+        stem = _stem(proc.name())
+        children = proc.children(recursive=True)
+    except psutil.Error:
+        return []
+    same = []
+    for child in children:
+        try:
+            if _stem(child.name()) == stem:
+                same.append(child)
+        except psutil.Error:
+            pass   # already gone
+    return same
+
+
 # EDLS must never kill Steam or the game -- force-closing Elite violates
 # Frontier's ToS. ProcessManager.stop() refuses these outright, so no setting,
 # custom app entry, or future code path can get there by accident.
@@ -280,7 +319,8 @@ class ProcessManager:
 
     @classmethod
     def find(cls, process_name: str) -> Optional[psutil.Process]:
-        """First running process matching `process_name` (with or without .exe)."""
+        """The running process matching `process_name` (with or without .exe)
+        -- for a program that runs as several, its main one (see _root)."""
         return cls.find_many([process_name]).get(process_name)
 
     @staticmethod
@@ -295,18 +335,18 @@ class ProcessManager:
             if not key.endswith(".exe"):
                 wanted.setdefault(key + ".exe", name)
 
-        found: dict[str, psutil.Process] = {}
+        matches: dict[str, list[psutil.Process]] = {}
         if not wanted:
-            return found
+            return {}
         for proc in psutil.process_iter(["name"]):
             try:
                 name = (proc.info["name"] or "").lower()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
             original = wanted.get(name)
-            if original and original not in found:
-                found[original] = proc
-        return found
+            if original:
+                matches.setdefault(original, []).append(proc)
+        return {original: _root(procs) for original, procs in matches.items()}
 
     def launch(self, descriptor: AppDescriptor,
                resolved_path: Optional[str] = None,
@@ -421,32 +461,60 @@ class ProcessManager:
         proc, pid = self._target(descriptor, forget=True)
         if proc is None:
             return StopResult.NOT_RUNNING
-        if not asked:
-            _ask_to_close(proc.pid)
+        helpers = _same_name_descendants(proc)
         if deadline is None:
             deadline = time.monotonic() + CLOSE_GRACE
+        if (self._close(proc, descriptor.name, deadline, asked)
+                and self._close_helpers(helpers, descriptor.name)):
+            return StopResult.STOPPED
+        if pid is not None:   # still ours -- keep it in scope for a later SHUTDOWN
+            with self._lock:
+                self.launched[descriptor.name] = proc.pid
+        return StopResult.FAILED
+
+    @staticmethod
+    def _close(proc: psutil.Process, name: str, deadline: float,
+               asked: bool) -> bool:
+        """Ask one process to close (unless already `asked`), give it until
+        `deadline`, then kill it. True once it's gone."""
+        if not asked:
+            _ask_to_close(proc.pid)
         try:
             proc.wait(timeout=max(0.0, deadline - time.monotonic()))
-            return StopResult.STOPPED          # it closed itself
+            return True                        # it closed itself
         except psutil.NoSuchProcess:
-            return StopResult.STOPPED
+            return True
         except psutil.TimeoutExpired:
-            log.info("%s didn't close when asked - killing it.",
-                     descriptor.name)
+            log.info("%s didn't close when asked - killing it.", name)
         except psutil.Error:
             pass   # can't wait on it (e.g. access denied): straight to the kill
         try:
             proc.kill()
             proc.wait(timeout=KILL_WAIT)
-            return StopResult.STOPPED
+            return True
         except psutil.NoSuchProcess:
-            return StopResult.STOPPED
+            return True
         except psutil.Error as exc:   # AccessDenied (elevated app) or TimeoutExpired
-            log.warning("Failed to stop %s: %s", descriptor.name, exc)
-            if pid is not None:   # still ours -- keep it in scope for a later SHUTDOWN
-                with self._lock:
-                    self.launched[descriptor.name] = proc.pid
-            return StopResult.FAILED
+            log.warning("Failed to stop %s: %s", name, exc)
+            return False
+
+    def _close_helpers(self, helpers: list[psutil.Process], name: str) -> bool:
+        """The main process is gone; its same-name helpers (an Electron app's)
+        normally follow within a moment. Any still running after KILL_WAIT get
+        the same ask-then-kill. True once they're all gone."""
+        deadline = time.monotonic() + KILL_WAIT
+        left = []
+        for helper in helpers:
+            try:
+                helper.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except psutil.NoSuchProcess:
+                pass
+            except psutil.Error:   # still running, or can't tell
+                left.append(helper)
+        for helper in left:
+            _ask_to_close(helper.pid)
+        deadline = time.monotonic() + CLOSE_GRACE
+        return all([self._close(h, name, deadline, asked=True) for h in left])
 
     def stop_elevated(self, descriptors: list[AppDescriptor]
                       ) -> list[AppDescriptor]:

@@ -76,7 +76,9 @@ a visual outcome you haven't confirmed with him.
 - **Closing a tool is polite first.** `ProcessManager.stop()` asks (WM_CLOSE via
   `taskkill` without /F) and kills only what's still running after `CLOSE_GRACE`
   (3 s); `_teardown` asks every target up front so the waits overlap. Keep all of it
-  inside `ProcessManager`.
+  inside `ProcessManager`. A tool can run as several same-name processes (Electron:
+  EDHM-UI): `find_many` returns the main one (`_root`, whose parent isn't one of
+  them), and `stop()` then sees off its same-name helpers, nothing else it started.
 - **Admin rights only on request.** EDLS never runs elevated (nor do Steam or the game).
   A tool whose manifest asks for admin rights (EDHM-UI-V3: `highestAvailable`) makes
   Popen fail with WinError 740. Only then, and only if `Settings.allow_elevation` is
