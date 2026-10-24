@@ -1348,13 +1348,6 @@ def _eyebrow(text: str, color: str) -> QLabel:
     return lbl
 
 
-def _hairline(color: str) -> QFrame:
-    line = QFrame()
-    line.setFixedHeight(1)
-    line.setStyleSheet(f"background: {color};")
-    return line
-
-
 def _stacked_field(label: str, field, c: dict) -> QVBoxLayout:
     """The design's TextField: a tracked caps label stacked above the field (a
     widget, or a layout such as field + Browse)."""
@@ -1422,6 +1415,44 @@ class HudCheckBox(QCheckBox):
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawPath(tick)
+        p.end()
+
+
+class InfoMark(QWidget):
+    """The "there's a tooltip here" marker on a Settings row: an "i" in a small
+    chamfered box, painted rather than a font glyph. It brightens to the accent
+    on hover; the tip itself is set on the row, so the whole row answers."""
+
+    _BOX = 14
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._c = _dialog_colors()
+        self._hover = False
+        self.setFixedSize(self._BOX + 1, self._BOX + 1)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        ink = QColor(self._c["check" if self._hover else "meta"])
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        s = self._BOX
+        p.setPen(QPen(ink, 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(_chamfer_path(QRectF(0.5, 0.5, s - 1, s - 1), 3))
+        # The "i": a square dot over a stem, on whole pixels so it stays crisp.
+        x = s / 2 - 1
+        p.fillRect(QRectF(x, 3, 2, 2), ink)
+        p.fillRect(QRectF(x, 6, 2, 5), ink)
         p.end()
 
 
@@ -1634,7 +1665,7 @@ class SettingsDialog(QDialog):
         # Open tall enough to show a good run of the app list (first run has
         # the intro text too), but never taller than the screen.
         avail = self.screen().availableGeometry().height() - 60
-        self.resize(660, min(760 if first_run else 680, avail))
+        self.resize(660, min(780 if first_run else 700, avail))
         self.setObjectName("settingsDialog")
         # Styled after the design's Settings panel. It follows the active theme
         # (see _dialog_colors); the window keeps its native title bar.
@@ -1674,31 +1705,33 @@ class SettingsDialog(QDialog):
         self.cmdr_edit.setFont(font_mono(11))
         vbox.addLayout(_stacked_field("CMDR NAME", self.cmdr_edit, c))
 
-        # Boolean options as HUD toggles (label left, switch right), one per
-        # row with a hairline between rows -- the design's settings rows.
-        vbox.addSpacing(2)
-        vbox.addWidget(_hairline(c["edge"]))
+        # Boolean options as HUD toggles (label left, switch right), each in
+        # its own chamfered box with a gap between, so the rows read apart.
         toggles = QVBoxLayout()
-        toggles.setSpacing(0)
+        toggles.setSpacing(8)
         vbox.addLayout(toggles)
 
         def _toggle_row(key: str, text: str, checked: bool,
                         kind: type = ToggleSwitch) -> ToggleSwitch:
-            if toggles.count():
-                toggles.addWidget(_hairline(C_BORDER.name()))
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 6, 0, 6)
+            frame = ChamferedFrame(chamfer=CHAMFER_CARD, bg=QColor(c["field"]),
+                                   border=QColor(c["edge"]))
+            frame.setContentsMargins(0, 0, 0, 0)
+            row = QHBoxLayout(frame)
+            row.setContentsMargins(12, 6, 10, 6)
+            row.setSpacing(10)
             lbl = QLabel(text)
             lbl.setFont(font_mono(10))
             row.addWidget(lbl)
             row.addStretch()
-            tog = kind(checked)
-            row.addWidget(tog)
-            toggles.addLayout(row)
             shown, tip = _TOGGLE_TIPS.get(key, (False, ""))
             if shown and tip:
-                lbl.setToolTip(tip)
-                tog.setToolTip(tip)
+                # On the row, so hovering anywhere on it shows the tip (children
+                # without a tip of their own pass the hover up).
+                frame.setToolTip(tip)
+                row.addWidget(InfoMark())
+            tog = kind(checked)
+            row.addWidget(tog)
+            toggles.addWidget(frame)
             return tog
 
         self.toggle_inactive = _toggle_row(

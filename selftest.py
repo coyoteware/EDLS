@@ -473,7 +473,11 @@ def main():
             for cls in (ui.ToggleSwitch, ui.ThemeToggle):
                 for on in (False, True):
                     assert not cls(on).grab().isNull()
-    run("HUD toggles paint (switch + theme toggle)", toggles_paint)
+            mark = ui.InfoMark()
+            assert not mark.grab().isNull()
+            mark._hover = True
+            assert not mark.grab().isNull()
+    run("HUD toggles + info mark paint", toggles_paint)
 
     def single_instance():
         # R-23: a second copy finds the first and backs off. A throwaway key,
@@ -495,10 +499,12 @@ def main():
 
     def settings_dialog(first_run):
         dlg = ui.SettingsDialog(settings, first_run=first_run)
-        # Every tip names a real toggle, and only the switched-on ones show.
+        # Every tip names a real toggle, and only the switched-on ones show --
+        # on the toggle's row, marked with an InfoMark.
         for key, (shown, tip) in ui._TOGGLE_TIPS.items():
-            tog = getattr(dlg, key)
-            assert tog.toolTip() == (tip if shown else ""), key
+            row = getattr(dlg, key).parentWidget()
+            assert row.toolTip() == (tip if shown else ""), key
+            assert (row.findChild(ui.InfoMark) is not None) == shown, key
         got = []
         dlg.saved.connect(got.append)
         # Flip the two close-EDLS toggles and check they come back out.
