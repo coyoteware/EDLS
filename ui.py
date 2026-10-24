@@ -1627,6 +1627,11 @@ _TOGGLE_TIPS: dict[str, tuple[bool, str]] = {
         "On: SHUTDOWN and the end-of-session teardown close every enabled app, "
         "even ones you started yourself.\nOff: only apps EDLS launched are "
         "closed.\nSteam and Elite: Dangerous are never closed."),
+    "toggle_admin": (True,
+        "Some tools, like EDHM-UI, need administrator rights.\nOn: Windows "
+        "asks you (the UAC prompt) when EDLS starts one, and again if EDLS has "
+        "to close it.\nOff: EDLS never asks, so those tools aren't started, "
+        "and EDLS can't close one that's running as administrator."),
     "toggle_close_exit": (True,
         "When Elite: Dangerous exits, EDLS closes your tools and then closes "
         "itself after a short countdown. Off: the window stays open."),
@@ -1743,6 +1748,7 @@ class SettingsDialog(QDialog):
             "Shutdown closes all enabled apps (not just those EDLS launched)",
             settings.shutdown_scope is ShutdownScope.ALL_ENABLED)
         self.toggle_admin = _toggle_row(
+            "toggle_admin",
             "Ask for admin rights when a tool needs them",
             settings.allow_elevation)
         self.toggle_close_exit = _toggle_row(
