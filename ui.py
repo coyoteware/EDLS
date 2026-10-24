@@ -1330,6 +1330,9 @@ def _dialog_qss(c: dict) -> str:
         QTableWidget::item:selected {{ background: {c['sel']};
                                        color: {c['accent']}; }}
         QTableCornerButton::section {{ background: {c['field']}; border: none; }}
+        QToolTip {{ background: {c['field']}; color: {c['text']};
+                    border: 1px solid {c['check']}; padding: 6px 8px;
+                    font-family: 'Share Tech Mono'; font-size: 10pt; }}
     """ + _thin_scrollbar_qss()
 
 
@@ -1343,13 +1346,6 @@ def _eyebrow(text: str, color: str) -> QLabel:
     lbl.setFont(font_display(8))
     lbl.setStyleSheet(f"color: {color}; letter-spacing: 2px;")
     return lbl
-
-
-def _hairline(color: str) -> QFrame:
-    line = QFrame()
-    line.setFixedHeight(1)
-    line.setStyleSheet(f"background: {color};")
-    return line
 
 
 def _stacked_field(label: str, field, c: dict) -> QVBoxLayout:
@@ -1419,6 +1415,44 @@ class HudCheckBox(QCheckBox):
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawPath(tick)
+        p.end()
+
+
+class InfoMark(QWidget):
+    """The "there's a tooltip here" marker on a Settings row: an "i" in a small
+    chamfered box, painted rather than a font glyph. It brightens to the accent
+    on hover; the tip itself is set on the row, so the whole row answers."""
+
+    _BOX = 14
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._c = _dialog_colors()
+        self._hover = False
+        self.setFixedSize(self._BOX + 1, self._BOX + 1)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        ink = QColor(self._c["check" if self._hover else "meta"])
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        s = self._BOX
+        p.setPen(QPen(ink, 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(_chamfer_path(QRectF(0.5, 0.5, s - 1, s - 1), 3))
+        # The "i": a square dot over a stem, on whole pixels so it stays crisp.
+        x = s / 2 - 1
+        p.fillRect(QRectF(x, 3, 2, 2), ink)
+        p.fillRect(QRectF(x, 6, 2, 5), ink)
         p.end()
 
 
@@ -1582,6 +1616,29 @@ class AppEntryDialog(HudPopover):
 
 
 # ── Settings dialog ───────────────────────────────────────────────────────────
+# Hover help for the Settings toggles, keyed by the toggle's attribute name:
+# (shown, text). `shown` is a development switch, not a user setting -- flip it
+# to hide a tip without losing its text.
+_TOGGLE_TIPS: dict[str, tuple[bool, str]] = {
+    "toggle_inactive": (True,
+        "Disabled apps still get a card on the main window, so you can see "
+        "whether they're running. Off: only enabled apps get a card."),
+    "toggle_scope": (True,
+        "On: SHUTDOWN and the end-of-session teardown close every enabled app, "
+        "even ones you started yourself.\nOff: only apps EDLS launched are "
+        "closed.\nSteam and Elite: Dangerous are never closed."),
+    "toggle_close_exit": (True,
+        "When Elite: Dangerous exits, EDLS closes your tools and then closes "
+        "itself after a short countdown. Off: the window stays open."),
+    "toggle_close_shutdown": (True,
+        "After SHUTDOWN closes your tools, EDLS closes itself after a short "
+        "countdown. Off: the window stays open."),
+    "toggle_light": (False,
+        "Lightens the window, header and bottom bar. The status and log "
+        "panes stay dark."),
+}
+
+
 class SettingsDialog(QDialog):
     """Data-driven settings editor (collapses the two dialogs into one).
     In first-run mode it shows a welcome header and all apps checked by default."""
@@ -1608,7 +1665,7 @@ class SettingsDialog(QDialog):
         # Open tall enough to show a good run of the app list (first run has
         # the intro text too), but never taller than the screen.
         avail = self.screen().availableGeometry().height() - 60
-        self.resize(660, min(760 if first_run else 680, avail))
+        self.resize(660, min(780 if first_run else 700, avail))
         self.setObjectName("settingsDialog")
         # Styled after the design's Settings panel. It follows the active theme
         # (see _dialog_colors); the window keeps its native title bar.
@@ -1648,45 +1705,56 @@ class SettingsDialog(QDialog):
         self.cmdr_edit.setFont(font_mono(11))
         vbox.addLayout(_stacked_field("CMDR NAME", self.cmdr_edit, c))
 
-        # Boolean options as HUD toggles (label left, switch right), one per
-        # row with a hairline between rows -- the design's settings rows.
-        vbox.addSpacing(2)
-        vbox.addWidget(_hairline(c["edge"]))
+        # Boolean options as HUD toggles (label left, switch right), each in
+        # its own chamfered box with a gap between, so the rows read apart.
         toggles = QVBoxLayout()
-        toggles.setSpacing(0)
+        toggles.setSpacing(8)
         vbox.addLayout(toggles)
 
-        def _toggle_row(text: str, checked: bool,
+        def _toggle_row(key: str, text: str, checked: bool,
                         kind: type = ToggleSwitch) -> ToggleSwitch:
-            if toggles.count():
-                toggles.addWidget(_hairline(C_BORDER.name()))
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 6, 0, 6)
+            frame = ChamferedFrame(chamfer=CHAMFER_CARD, bg=QColor(c["field"]),
+                                   border=QColor(c["edge"]))
+            frame.setContentsMargins(0, 0, 0, 0)
+            row = QHBoxLayout(frame)
+            row.setContentsMargins(12, 6, 10, 6)
+            row.setSpacing(10)
             lbl = QLabel(text)
             lbl.setFont(font_mono(10))
             row.addWidget(lbl)
             row.addStretch()
+            shown, tip = _TOGGLE_TIPS.get(key, (False, ""))
+            if shown and tip:
+                # On the row, so hovering anywhere on it shows the tip (children
+                # without a tip of their own pass the hover up).
+                frame.setToolTip(tip)
+                row.addWidget(InfoMark())
             tog = kind(checked)
             row.addWidget(tog)
-            toggles.addLayout(row)
+            toggles.addWidget(frame)
             return tog
 
         self.toggle_inactive = _toggle_row(
+            "toggle_inactive",
             "Show cards for apps that aren't enabled",
             settings.show_inactive_cards)
         self.toggle_scope = _toggle_row(
+            "toggle_scope",
             "Shutdown closes all enabled apps (not just those EDLS launched)",
             settings.shutdown_scope is ShutdownScope.ALL_ENABLED)
         self.toggle_admin = _toggle_row(
             "Ask for admin rights when a tool needs them",
             settings.allow_elevation)
         self.toggle_close_exit = _toggle_row(
+            "toggle_close_exit",
             "Close EDLS when the game exits",
             settings.close_on_game_exit)
         self.toggle_close_shutdown = _toggle_row(
+            "toggle_close_shutdown",
             "Close EDLS after SHUTDOWN",
             settings.close_on_shutdown)
         self.toggle_light = _toggle_row(
+            "toggle_light",
             "Light mode",
             settings.theme is Theme.LIGHT, ThemeToggle)
 
