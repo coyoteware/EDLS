@@ -784,6 +784,39 @@ def main():
         win._on_settings_saved(replace(settings, theme=config.Theme.DARK))
     run("light/dark theme switch + content rebuild", theme_switch)
 
+    def theme_preview():
+        from dataclasses import replace
+        # The Light mode toggle switches the theme live, as a preview: Settings
+        # rebuilds in the new colours keeping what's been typed and ticked, and
+        # anything but Save puts the opening theme back. Never saves to disk.
+        dark, light = config.Theme.DARK, config.Theme.LIGHT
+        ui.apply_theme(dark)
+
+        def flip_to_light():
+            dlg = ui.SettingsDialog(replace(settings, theme=dark), parent=win)
+            dlg.theme_preview.connect(win._set_theme)
+            dlg.cmdr_edit.setText("CMDR Preview")
+            rows = dlg._rows()
+            dlg.toggle_light.setChecked(True)
+            dlg._preview_theme()   # what the toggle's timer runs once it lands
+            assert ui.IS_LIGHT, "the toggle should switch the theme live"
+            assert dlg.cmdr_edit.text() == "CMDR Preview", "lost the typed name"
+            assert dlg._rows() == rows, "the rebuild changed the app list"
+            return dlg
+
+        dlg = flip_to_light()
+        dlg.reject()
+        assert not ui.IS_LIGHT, "Cancel should put the opening theme back"
+
+        dlg = flip_to_light()
+        got = []
+        dlg.saved.connect(got.append)
+        dlg._save()
+        assert got and got[0].theme is light and ui.IS_LIGHT, \
+            "Save should keep the previewed theme"
+        win._set_theme(dark)
+    run("settings: theme toggle previews live, Cancel reverts", theme_preview)
+
     def pump_events():
         QTimer.singleShot(60, app.quit)
         app.exec()

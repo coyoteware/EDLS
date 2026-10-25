@@ -102,6 +102,11 @@ def apply_theme(theme: Theme) -> None:
         _theme._LIGHT_PALETTE if is_light else _theme._DARK_PALETTE)
     globals()["IS_LIGHT"] = is_light
 
+
+def _live_theme() -> Theme:
+    """The theme the UI is drawn in right now."""
+    return Theme.LIGHT if IS_LIGHT else Theme.DARK
+
 # Friendly card labels that differ from the registry/identifier name. Presentation
 # only — the descriptor.name is still the key for status routing and settings.
 _DISPLAY_NAMES = {
@@ -1100,6 +1105,7 @@ class ToggleSwitch(QWidget):
 
     _TRACK = (58, 24)   # the design's track size; the knob travels within it
     _PAD = 3            # room around the track for the keyboard focus ring
+    SLIDE_MS = 180      # the knob's slide
 
     def __init__(self, checked: bool = False,
                  parent: Optional[QWidget] = None) -> None:
@@ -1112,7 +1118,7 @@ class ToggleSwitch(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._kb_focus = False
         self._anim = QPropertyAnimation(self, b"knobPos", self)
-        self._anim.setDuration(180)
+        self._anim.setDuration(self.SLIDE_MS)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def isChecked(self) -> bool:  # noqa: N802
@@ -1650,6 +1656,7 @@ class SettingsDialog(QDialog):
 
     saved = Signal(object)   # emits updated Settings
     locked_attempt = Signal()   # tried to edit the app list during a session
+    theme_preview = Signal(object)   # switched the live Theme (or put it back)
 
     # Shown when the app list is touched while a LAUNCH session runs. The list
     # decides what the session launches and later closes, so it can't change
@@ -1664,6 +1671,7 @@ class SettingsDialog(QDialog):
         self._settings = settings
         self._locked = locked
         self._lock_reported = False
+        self._first_run = first_run
         self.setWindowTitle("EDLS — First-Time Setup" if first_run else "EDLS — Settings")
         self.setModal(True)
         self.setMinimumSize(640, 560)
@@ -1672,6 +1680,21 @@ class SettingsDialog(QDialog):
         avail = self.screen().availableGeometry().height() - 60
         self.resize(660, min(780 if first_run else 700, avail))
         self.setObjectName("settingsDialog")
+        self._default_cmdr = config.default_settings().cmdr_name
+        # The Light mode toggle previews its theme live (see _preview_theme);
+        # closing any way but Save puts this one back (see done).
+        self._open_theme = _live_theme()
+        self._finished = False
+        self._outer = QVBoxLayout(self)
+        self._outer.setContentsMargins(0, 0, 0, 0)
+        self._body: Optional[QWidget] = None
+        self._build(settings)
+
+    def _build(self, state: Settings,
+               rows: Optional[list[tuple]] = None) -> None:
+        """Build the dialog's contents from `state` -- the app list from `rows`
+        (see _rows) when given -- in the active theme. The colours are baked in
+        here, so a theme preview calls this again and swaps the contents."""
         # Styled after the design's Settings panel. It follows the active theme
         # (see _dialog_colors); the window keeps its native title bar.
         self._c = c = _dialog_colors()
@@ -1680,11 +1703,12 @@ class SettingsDialog(QDialog):
         self._row_dim = QColor(c["meta"])
         self.setStyleSheet(_dialog_qss(c))
 
-        vbox = QVBoxLayout(self)
+        body = QWidget()
+        vbox = QVBoxLayout(body)
         vbox.setSpacing(12)
         vbox.setContentsMargins(22, 18, 22, 16)
 
-        if first_run:
+        if self._first_run:
             welcome = QLabel("WELCOME TO EDLS, CMDR")
             welcome.setFont(font_display(16))
             welcome.setStyleSheet(f"color: {c['accent']}; letter-spacing: 1px;")
@@ -1703,9 +1727,8 @@ class SettingsDialog(QDialog):
 
         # CMDR name. The default name is ghost (placeholder) text, never real
         # text, so clearing the field and saving puts the default back.
-        self._default_cmdr = config.default_settings().cmdr_name
-        custom = settings.cmdr_name != self._default_cmdr
-        self.cmdr_edit = QLineEdit(settings.cmdr_name if custom else "")
+        custom = state.cmdr_name != self._default_cmdr
+        self.cmdr_edit = QLineEdit(state.cmdr_name if custom else "")
         self.cmdr_edit.setPlaceholderText(self._default_cmdr)
         self.cmdr_edit.setFont(font_mono(11))
         vbox.addLayout(_stacked_field("CMDR NAME", self.cmdr_edit, c))
@@ -1742,33 +1765,34 @@ class SettingsDialog(QDialog):
         self.toggle_inactive = _toggle_row(
             "toggle_inactive",
             "Show cards for apps that aren't enabled",
-            settings.show_inactive_cards)
+            state.show_inactive_cards)
         self.toggle_scope = _toggle_row(
             "toggle_scope",
             "Shutdown closes all enabled apps (not just those EDLS launched)",
-            settings.shutdown_scope is ShutdownScope.ALL_ENABLED)
+            state.shutdown_scope is ShutdownScope.ALL_ENABLED)
         self.toggle_admin = _toggle_row(
             "toggle_admin",
             "Ask for admin rights when a tool needs them",
-            settings.allow_elevation)
+            state.allow_elevation)
         self.toggle_close_exit = _toggle_row(
             "toggle_close_exit",
             "Close EDLS when the game exits",
-            settings.close_on_game_exit)
+            state.close_on_game_exit)
         self.toggle_close_shutdown = _toggle_row(
             "toggle_close_shutdown",
             "Close EDLS after SHUTDOWN",
-            settings.close_on_shutdown)
+            state.close_on_shutdown)
         self.toggle_light = _toggle_row(
             "toggle_light",
             "Light mode",
-            settings.theme is Theme.LIGHT, ThemeToggle)
+            state.theme is Theme.LIGHT, ThemeToggle)
+        self.toggle_light.toggled.connect(self._on_theme_toggled)
 
         # Companion-app list. Styled as a flat HUD row-list rather than a grid:
         # no column headers, no gridlines, zebra rows, hairline container.
         vbox.addSpacing(4)
         apps_lbl = _eyebrow("Companion apps", c["meta"])
-        if locked:
+        if self._locked:
             apps_hdr = QHBoxLayout()
             apps_hdr.addWidget(apps_lbl)
             apps_hdr.addStretch()
@@ -1809,7 +1833,10 @@ class SettingsDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(30)
         self.table.setFont(font_mono(10))
-        self._populate_table(settings.apps)
+        if rows is None:
+            self._populate_table(state.apps)
+        else:
+            self._fill(rows)
         vbox.addWidget(self.table, 1)
 
         # add / edit / remove keys
@@ -1841,7 +1868,7 @@ class SettingsDialog(QDialog):
         reset_btn.clicked.connect(self._reset_defaults)
         folder_btn.clicked.connect(self._open_data_dir)
         cancel_btn = _key("CANCEL")
-        save_btn = _key("BEGIN" if first_run else "SAVE", "launch")
+        save_btn = _key("BEGIN" if self._first_run else "SAVE", "launch")
         cancel_btn.clicked.connect(self.reject)
         save_btn.clicked.connect(self._save)
         save_btn.setDefault(True)
@@ -1855,6 +1882,53 @@ class SettingsDialog(QDialog):
         bottom.addWidget(cancel_btn)
         bottom.addWidget(save_btn)
         vbox.addLayout(bottom)
+
+        if self._body is None:
+            self._outer.addWidget(body)
+        else:   # a rebuild: swap the old contents out
+            self._outer.replaceWidget(self._body, body)
+            self._body.hide()
+            self._body.deleteLater()
+        self._body = body
+
+    def _on_theme_toggled(self, _on: bool) -> None:
+        # Let the knob finish its slide before everything changes colour.
+        QTimer.singleShot(ToggleSwitch.SLIDE_MS, self, self._preview_theme)
+
+    def _preview_theme(self) -> None:
+        """Switch the whole app to the Light mode toggle's theme now, as a
+        preview: Save keeps it, anything else puts the opening theme back. The
+        dialog is rebuilt in the new colours, keeping everything typed, ticked
+        and edited so far."""
+        want = Theme.LIGHT if self.toggle_light.isChecked() else Theme.DARK
+        # Closed during the slide, or flipped back again before it landed.
+        if self._finished or want is _live_theme():
+            return
+        self._set_live_theme(want)
+        rows, row = self._rows(), self.table.currentRow()
+        scroll = self.table.verticalScrollBar().value()
+        focus = self.toggle_light.hasFocus()
+        ring = self.toggle_light._kb_focus
+        self._build(self._form(), rows)
+        self.table.setCurrentCell(row, 1)
+        self.table.verticalScrollBar().setValue(scroll)
+        if focus:
+            self.toggle_light.setFocus(Qt.FocusReason.TabFocusReason if ring
+                                       else Qt.FocusReason.OtherFocusReason)
+
+    def _set_live_theme(self, theme: Theme) -> None:
+        apply_theme(theme)
+        _apply_app_palette()
+        self.theme_preview.emit(theme)
+
+    def done(self, r: int) -> None:
+        """Every close (Save, Cancel, Esc, the X) ends here. Anything but Save
+        puts back the theme the dialog opened in."""
+        self._finished = True
+        if (r != QDialog.DialogCode.Accepted
+                and _live_theme() is not self._open_theme):
+            self._set_live_theme(self._open_theme)
+        super().done(r)
 
     def _set_row(self, r: int, name: str, process: str,
                  path: str, enabled: bool, origin: str = "") -> None:
@@ -1890,13 +1964,33 @@ class SettingsDialog(QDialog):
 
     def _populate_table(self, apps: list[AppDescriptor]) -> None:
         """Replace all table rows with the given app list."""
+        self._fill([(a.name, a.process_name, a.path or "", a.enabled,
+                     a.name if a.name in config.REGISTRY_BY_NAME else "")
+                    for a in apps])
+
+    def _fill(self, rows: list[tuple]) -> None:
+        """Replace all table rows with `rows`, each one _set_row's arguments."""
         self.table.setRowCount(0)
-        for app in apps:
-            r = self.table.rowCount()
+        for r, row in enumerate(rows):
             self.table.insertRow(r)
-            origin = app.name if app.name in config.REGISTRY_BY_NAME else ""
-            self._set_row(r, app.name, app.process_name, app.path or "",
-                          app.enabled, origin)
+            self._set_row(r, *row)
+
+    def _rows(self) -> list[tuple]:
+        """The table as it stands: (name, process, path, enabled, origin) per
+        row -- origin being the registry name stashed on the name cell."""
+        def _text(row: int, col: int) -> str:
+            item = self.table.item(row, col)
+            return item.text().strip() if item else ""
+
+        rows = []
+        for r in range(self.table.rowCount()):
+            cell = self.table.cellWidget(r, 0)
+            chk = cell.findChild(QCheckBox) if cell else None
+            name_item = self.table.item(r, 1)
+            origin = (name_item.data(Qt.ItemDataRole.UserRole) or "") if name_item else ""
+            rows.append((_text(r, 1), _text(r, 2), _text(r, 3),
+                         chk.isChecked() if chk else True, origin))
+        return rows
 
     def _existing_names(self, exclude_row: Optional[int] = None) -> list[str]:
         """Names the add/edit dialog won't accept: every app in the table (col
@@ -2029,37 +2123,9 @@ class SettingsDialog(QDialog):
         os.makedirs(config.DATA_DIR, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(config.DATA_DIR))
 
-    def _save(self) -> None:
-        def _text(row: int, col: int) -> str:
-            item = self.table.item(row, col)
-            return item.text().strip() if item else ""
-
-        new_apps: list[AppDescriptor] = []
-        for r in range(self.table.rowCount()):
-            cell = self.table.cellWidget(r, 0)
-            chk = cell.findChild(QCheckBox) if cell else None
-            enabled = chk.isChecked() if chk else True
-
-            name = _text(r, 1)
-            if not name:
-                continue
-            # Prefer the row's registry origin so a renamed default still re-links
-            # to its resolver/default path; fall back to the (unchanged) name.
-            name_item = self.table.item(r, 1)
-            origin = (name_item.data(Qt.ItemDataRole.UserRole) or "") if name_item else ""
-            reg = config.REGISTRY_BY_NAME.get(origin) or config.REGISTRY_BY_NAME.get(name)
-            new_apps.append(AppDescriptor(
-                name=name,
-                process_name=_text(r, 2) or name,
-                path=_text(r, 3) or (reg.path if reg else None),
-                enabled=enabled,
-                resolver=reg.resolver if reg else None,
-            ))
-
-        removed = config.recompute_removed_defaults(
-            new_apps, self._settings.removed_defaults)
-
-        updated = replace(
+    def _form(self) -> Settings:
+        """The settings as the form stands, the app list aside (see _rows)."""
+        return replace(
             self._settings,
             # An empty field (ghost text showing) means the default name.
             cmdr_name=self.cmdr_edit.text().strip() or self._default_cmdr,
@@ -2071,10 +2137,29 @@ class SettingsDialog(QDialog):
             close_on_game_exit=self.toggle_close_exit.isChecked(),
             close_on_shutdown=self.toggle_close_shutdown.isChecked(),
             theme=Theme.LIGHT if self.toggle_light.isChecked() else Theme.DARK,
-            apps=new_apps,
-            removed_defaults=removed,
-            setup_complete=True,
         )
+
+    def _save(self) -> None:
+        new_apps: list[AppDescriptor] = []
+        for name, process, path, enabled, origin in self._rows():
+            if not name:
+                continue
+            # Prefer the row's registry origin so a renamed default still re-links
+            # to its resolver/default path; fall back to the (unchanged) name.
+            reg = config.REGISTRY_BY_NAME.get(origin) or config.REGISTRY_BY_NAME.get(name)
+            new_apps.append(AppDescriptor(
+                name=name,
+                process_name=process or name,
+                path=path or (reg.path if reg else None),
+                enabled=enabled,
+                resolver=reg.resolver if reg else None,
+            ))
+
+        removed = config.recompute_removed_defaults(
+            new_apps, self._settings.removed_defaults)
+
+        updated = replace(self._form(), apps=new_apps,
+                          removed_defaults=removed, setup_complete=True)
         self.saved.emit(updated)
         self.accept()
 
@@ -2335,6 +2420,7 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dlg.saved.connect(self._on_settings_saved)
+        dlg.theme_preview.connect(self._set_theme)
         dlg.locked_attempt.connect(lambda: self._log.append(
             "The companion app list is locked during a session - it unlocks "
             "when the game closes, or when EDLS restarts.", "warning"))
@@ -2351,25 +2437,31 @@ class MainWindow(QMainWindow):
         dlg.deleteLater()
 
     @Slot(object)
+    def _set_theme(self, theme: Theme) -> None:
+        """Switch the window to `theme` live (Settings' preview, or a save).
+        A theme switch must rebuild all content so every baked-in stylesheet
+        picks up the new palette. Carry the activity log across the swap (its
+        per-line accent colours are theme-independent). Card states carry over
+        via _card_states."""
+        log_html = self._log.log.toHtml()
+        apply_theme(theme)
+        _apply_app_palette()
+        self._build_content()
+        self._log.log.setHtml(log_html)
+        sb = self._log.log.verticalScrollBar()
+        sb.setValue(sb.maximum())
+        self._bg.update()
+
+    @Slot(object)
     def _on_settings_saved(self, updated: Settings) -> None:
-        theme_changed = updated.theme != self._settings.theme
+        # Settings' live preview has usually switched the theme already.
+        theme_changed = updated.theme is not _live_theme()
         self._settings = updated
         self._save_settings(updated)
         self._engine.settings = updated
 
         if theme_changed:
-            # A theme switch must rebuild all content so every baked-in
-            # stylesheet picks up the new palette. Carry the activity log across
-            # the swap (its per-line accent colours are theme-independent).
-            # Card states carry over via _card_states.
-            log_html = self._log.log.toHtml()
-            apply_theme(updated.theme)
-            _apply_app_palette()
-            self._build_content()
-            self._log.log.setHtml(log_html)
-            sb = self._log.log.verticalScrollBar()
-            sb.setValue(sb.maximum())
-            self._bg.update()
+            self._set_theme(updated.theme)
         else:
             self._header.set_cmdr(updated.cmdr_name)
             # Rebuild the status panel with the new app list
