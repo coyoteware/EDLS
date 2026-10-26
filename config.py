@@ -155,6 +155,19 @@ def _find_srvsurvey() -> Optional[str]:
     return None
 
 
+_ODYSSEY_LAUNCHER = (r"%LOCALAPPDATA%\Elite Dangerous Odyssey Materials Helper Launcher"
+                     r"\Elite Dangerous Odyssey Materials Helper Launcher.exe")
+_ODYSSEY_HELPER = (r"%LOCALAPPDATA%\Elite Dangerous Odyssey Materials Helper Launcher"
+                   r"\program\Elite Dangerous Odyssey Materials Helper.exe")
+
+
+def _find_odyssey_materials() -> Optional[str]:
+    """Odyssey Materials Helper's launcher checks for an update, starts the
+    helper and exits -- start that if it's there, else the helper itself."""
+    launcher = _expand_env(_ODYSSEY_LAUNCHER)
+    return launcher if os.path.exists(launcher) else _expand_env(_ODYSSEY_HELPER)
+
+
 # =============================================================================
 # THE registry -- add or remove default apps here, nowhere else
 # =============================================================================
@@ -164,8 +177,7 @@ REGISTRY: list[AppDescriptor] = [
     AppDescriptor("SrvSurvey", "SrvSurvey",
                   resolver=_find_srvsurvey),
     AppDescriptor("OdysseyMaterials", "Elite Dangerous Odyssey Materials Helper",
-                  r"%LOCALAPPDATA%\Elite Dangerous Odyssey Materials Helper Launcher"
-                  r"\program\Elite Dangerous Odyssey Materials Helper.exe"),
+                  resolver=_find_odyssey_materials),
     AppDescriptor("EDCoPilot", "EDCoPilot",
                   r"C:\EDCoPilot\EDCoPilot.exe"),
     AppDescriptor("EDHM_UI", "EDHM-UI-V3",
@@ -182,9 +194,18 @@ REGISTRY: list[AppDescriptor] = [
                   r"%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe"),
     AppDescriptor("Elite Observatory", "ObservatoryCore",
                   r"%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe"),
+    AppDescriptor("Elite Studio", "EliteStudio",
+                  r"%ProgramFiles%\Elite Studio\EliteStudio.exe"),
 ]
 
 REGISTRY_BY_NAME = {a.name: a for a in REGISTRY}
+
+# Default paths a later version replaced. A saved path still equal to its old
+# default is dropped on load so the app moves to the new one; a path the CMDR
+# set themselves is kept.
+_RETIRED_PATHS = {
+    "OdysseyMaterials": _ODYSSEY_HELPER,
+}
 
 # The two non-companion rows: Steam and the game itself. They aren't in REGISTRY
 # (they're not user-configurable, and they launch via steam:// URIs rather than a
@@ -305,10 +326,13 @@ def _app_from_dict(d) -> Optional[AppDescriptor]:
         return None
     name = name.strip()
     reg = REGISTRY_BY_NAME.get(name)
+    path = _as_str(d.get("path"), "", f"{name}.path")
+    if reg and path == _RETIRED_PATHS.get(name):
+        path = reg.path
     return AppDescriptor(
         name=name,
         process_name=_as_str(d.get("process"), name, f"{name}.process") or name,
-        path=_as_str(d.get("path"), "", f"{name}.path"),
+        path=path,
         enabled=_as_bool(d.get("enabled"), True, f"{name}.enabled"),
         # Re-attach the resolver for known defaults; custom apps have none.
         resolver=reg.resolver if reg else None,

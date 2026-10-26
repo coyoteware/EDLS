@@ -194,11 +194,17 @@ def main():
 
     def visible_apps_toggle():
         # The setting that was doing nothing: on -> every app gets a card,
-        # off -> only enabled ones.
+        # enabled ones first, off -> only enabled ones.
         from dataclasses import replace as _replace
         total, enabled = len(settings.apps), sum(a.enabled for a in settings.apps)
         win._settings = _replace(settings, show_inactive_cards=True)
         assert len(win._visible_apps()) == total, "setting ON should show all apps"
+        mixed = [_replace(a, name=f"{a.name}{i}", enabled=i % 2 == 0)
+                 for i, a in enumerate(settings.apps[:1] * 4)]
+        win._settings = _replace(settings, apps=mixed, show_inactive_cards=True)
+        assert [a.name for a in win._visible_apps()] == \
+            [a.name for a in mixed[0::2] + mixed[1::2]], \
+            "enabled cards should come first, each group in Settings order"
         win._settings = _replace(settings, show_inactive_cards=False)
         assert len(win._visible_apps()) == enabled, \
             "setting OFF should show only enabled apps"
@@ -534,6 +540,62 @@ def main():
              eng.ProcessManager.find_many) = real
             os.remove(exe)
     run("admin tools: Windows asks only when allowed", admin_tools)
+
+    def launcher_tools():
+        # Odyssey Materials Helper: its launcher is preferred over the helper
+        # exe, an install still on the old default path moves over, and a
+        # launch through a launcher waits for (and tracks) the tool itself.
+        # Fakes only: no real launch or PID.
+        import tempfile
+        from dataclasses import replace as _replace
+        real_env = os.environ.get("LOCALAPPDATA")
+        real = (eng._popen_detached, eng.LAUNCHER_WAIT)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["LOCALAPPDATA"] = tmp
+                launcher = config._expand_env(config._ODYSSEY_LAUNCHER)
+                helper = config._expand_env(config._ODYSSEY_HELPER)
+                os.makedirs(os.path.dirname(helper))
+                open(helper, "w").close()
+                odyssey = config.REGISTRY_BY_NAME["OdysseyMaterials"]
+                assert odyssey.resolve_path() == helper, odyssey.resolve_path()
+                open(launcher, "w").close()
+                assert odyssey.resolve_path() == launcher, odyssey.resolve_path()
+
+                old = config._app_from_dict({
+                    "name": "OdysseyMaterials", "process": odyssey.process_name,
+                    "path": config._ODYSSEY_HELPER})
+                assert old.path == "" and old.resolve_path() == launcher, old
+                mine = config._app_from_dict({
+                    "name": "OdysseyMaterials", "path": r"D:\Mats\Helper.exe"})
+                assert mine.path == r"D:\Mats\Helper.exe", mine
+
+                class P:   # stands in for a psutil.Process
+                    pid = 990201
+                scans = []
+
+                def find(name):
+                    scans.append(name)   # existing-copy check, then the waits
+                    return P() if len(scans) >= 3 else None
+
+                eng._popen_detached = lambda args, **kw: P()
+                pm = eng.ProcessManager()
+                pm.find = find
+                tool = _replace(odyssey, path=launcher, resolver=None)
+                assert pm.launch(tool).pid == P.pid
+                assert pm.launched == {"OdysseyMaterials": P.pid}, pm.launched
+                # The tool never shows: no process, still ours by name.
+                eng.LAUNCHER_WAIT = 0
+                pm.find = lambda name: None
+                assert pm.launch(tool) is None
+                assert pm.launched == {"OdysseyMaterials": 0}, pm.launched
+        finally:
+            eng._popen_detached, eng.LAUNCHER_WAIT = real
+            if real_env is None:
+                os.environ.pop("LOCALAPPDATA", None)
+            else:
+                os.environ["LOCALAPPDATA"] = real_env
+    run("launcher tools: prefer the launcher, track the tool", launcher_tools)
 
     def elite_card_muting():
         # R-09: while the game is starting (or running) the Elite card button

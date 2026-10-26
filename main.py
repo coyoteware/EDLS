@@ -99,6 +99,7 @@ CLOSE_DELAY = 5        # countdown before EDLS closes itself after a session
 ERROR_ELEVATION_REQUIRED = 740
 ERROR_CANCELLED = 1223     # the CMDR answered the UAC prompt with No
 ELEVATED_FIND_WAIT = 3     # an elevated launch to show up (the shell gives no PID)
+LAUNCHER_WAIT = 30         # a tool's launcher (it may update the tool first) to start it
 ELEVATED_CLOSE_WAIT = CLOSE_GRACE + KILL_WAIT + 4   # the elevated close to finish
 CLOSE_ELEVATED_FLAG = "--close-elevated"   # see _close_elevated()
 
@@ -374,6 +375,11 @@ class ProcessManager:
         cwd = os.path.dirname(path) or None
         try:
             popen = _popen_detached([path], cwd=cwd)
+            if _stem(os.path.basename(path)) != _stem(descriptor.process_name):
+                # A launcher (Odyssey Materials Helper's updates it, starts it
+                # and exits): the tool is the process to wait for and track.
+                return self._adopt_by_name(descriptor, LAUNCHER_WAIT,
+                                           "through its launcher")
             with self._lock:
                 self.launched[descriptor.name] = popen.pid
             return psutil.Process(popen.pid)
@@ -399,15 +405,22 @@ class ProcessManager:
             log.warning("Failed to launch %s as administrator: %s",
                         descriptor.name, exc)
             return None
-        # The shell hands back no PID: it's ours by name until it shows up
-        # (PID 0 makes _target look it up by name).
+        # The shell hands back no PID.
+        return self._adopt_by_name(descriptor, ELEVATED_FIND_WAIT,
+                                   "as administrator")
+
+    def _adopt_by_name(self, descriptor: AppDescriptor, wait: float,
+                       how: str) -> Optional[psutil.Process]:
+        """Wait up to `wait` s for a tool we started without its PID to show
+        up, then record it as ours. Until then it's ours by name (PID 0 makes
+        _target look it up by name), which a timeout leaves in place."""
         with self._lock:
             self.launched[descriptor.name] = 0
-        deadline = time.monotonic() + ELEVATED_FIND_WAIT
+        deadline = time.monotonic() + wait
         while (proc := self.find(descriptor.process_name)) is None:
             if time.monotonic() >= deadline:
-                log.warning("%s was started as administrator but hasn't "
-                            "appeared yet.", descriptor.name)
+                log.warning("%s was started %s but hasn't appeared yet.",
+                            descriptor.name, how)
                 return None
             time.sleep(0.25)
         with self._lock:

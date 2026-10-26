@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repo.
 
 ## What this is
 EDLS — Elite: Dangerous Launch Suite. A Windows (10/11) desktop launcher that
-starts Steam → Elite: Dangerous → up to ~11 companion apps, monitors the game,
+starts Steam → Elite: Dangerous → up to ~12 companion apps, monitors the game,
 and tears the tools down on exit. This is a Python/PySide6 rewrite of an original
 PowerShell/WPF tool. See `README.md` for user-facing setup (it requires
 [min-ed-launcher] and [Legendary] configured first).
@@ -87,6 +87,10 @@ a visual outcome you haven't confirmed with him.
   `_close_elevated`) that runs the same `ProcessManager.stop()`. Never add an
   elevated `taskkill`/kill around it. UAC prompts block their thread, so companion
   START runs on a worker.
+- **A path whose exe isn't the watched process is a launcher.** `launch()` then waits
+  (`LAUNCHER_WAIT`) for the tool itself and tracks that by name. Odyssey Materials
+  Helper's resolver prefers its updating launcher over the helper exe; `_RETIRED_PATHS`
+  moves a saved old default path over on load.
 - **Every card status goes out through `Engine._status()`.** The status watcher
   (which replaced REFRESH) compares each scan with what `_status()` recorded and only
   emits differences — emitting any other way makes cards stale or flicker.

@@ -2218,10 +2218,11 @@ class MainWindow(QMainWindow):
 
     def _visible_apps(self) -> list[AppDescriptor]:
         """Apps that get a status card: the enabled ones, plus — when the CMDR
-        asks for them — the ones they haven't enabled (shown read-only). Both
-        panel-build paths go through here so the rule can't drift between them."""
+        asks for them — the ones they haven't enabled (shown read-only), after
+        all the enabled ones. Both groups keep Settings order. Both panel-build
+        paths go through here so the rule can't drift between them."""
         if self._settings.show_inactive_cards:
-            return list(self._settings.apps)
+            return sorted(self._settings.apps, key=lambda a: not a.enabled)
         return [a for a in self._settings.apps if a.enabled]
 
     def _build_content(self) -> None:
