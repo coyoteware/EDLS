@@ -842,200 +842,93 @@ def main():
     run("HUD popovers (app editor, confirm, notice)", hud_popovers)
 
     # ---- updates: offline fakes only. Nothing here may reach GitHub, write
-    # the CMDR's settings.json, or start a real installer.
-    import hashlib
-    import io
-    import json
+    # the CMDR's settings.json, or open a browser.
     import tempfile
-
-    class FakeResp(io.BytesIO):
-        def __init__(self, data: bytes, url: str = "https://github.com/x"):
-            super().__init__(data)
-            self.headers = {"Content-Length": str(len(data))}
-            self._url = url
-
-        def geturl(self):
-            return self._url
-
-    def fake_urls(table):
-        """Point main._open_url at `table` (url -> bytes); returns a restorer."""
-        real = eng._open_url
-
-        def fake(url, accept=""):
-            if not eng._trusted_url(url):
-                raise eng.UpdateError(f"refusing to download from {url}")
-            return FakeResp(table[url], url)
-        eng._open_url = fake
-        return lambda: setattr(eng, "_open_url", real)
-
-    installer = b"MZ fake installer " * 1000
-    sha = hashlib.sha256(installer).hexdigest()
-    base = "https://github.com/coyoteware/EDLS/releases/download/9.0.0/"
-    release = {
-        "tag_name": "9.0.0", "body": "## New\n- things", "html_url": base,
-        "assets": [
-            {"name": "EDLS-Setup-9.0.0.exe",
-             "browser_download_url": base + "EDLS-Setup-9.0.0.exe"},
-            {"name": "EDLS-Setup-9.0.0.exe.sha256",
-             "browser_download_url": base + "EDLS-Setup-9.0.0.exe.sha256"},
-        ],
-    }
-    update_info = config.UpdateInfo(
-        version="9.0.0", notes="## New\n- things", page_url=base,
-        installer_name="EDLS-Setup-9.0.0.exe",
-        installer_url=base + "EDLS-Setup-9.0.0.exe",
-        checksum_url=base + "EDLS-Setup-9.0.0.exe.sha256")
 
     def update_versions():
         pv, newer = config.parse_version, config.is_newer
         assert pv("1.2") == (1, 2, 0) and pv("v1.3.4-beta") == (1, 3, 4)
         assert pv("latest") is None and pv("") is None
-        assert not newer("1.2", "1.2.1"), "the 1.2 tag must not nag 1.2.1"
+        assert not newer("1.2", "1.2.1"), "a 1.2 tag must not nag 1.2.1"
         assert newer("1.2.2", "1.2.1") and newer("2", "1.9.9")
         assert not newer("1.2.1", "1.2.1") and not newer("junk", "1.0")
-        # The two settings round-trip (in a scratch dir, not the real one).
+        # The setting round-trips (in a scratch dir, not the real one).
         saved = config.DATA_DIR, config.SETTINGS_FILE
         with tempfile.TemporaryDirectory() as tmp:
             config.DATA_DIR = tmp
             config.SETTINGS_FILE = os.path.join(tmp, "settings.json")
             try:
                 s = config.default_settings()
-                assert s.check_for_updates and s.skipped_version == ""
-                s.check_for_updates, s.skipped_version = False, "9.0.0"
+                assert s.check_for_updates
+                s.check_for_updates = False
                 assert config.save_settings(s)
-                back = config.load_settings()
-                assert (back.check_for_updates, back.skipped_version) == \
-                    (False, "9.0.0"), back
+                assert not config.load_settings().check_for_updates
             finally:
                 config.DATA_DIR, config.SETTINGS_FILE = saved
-    run("updates: version order + settings", update_versions)
+    run("updates: version order + setting", update_versions)
 
     def update_check():
-        assert eng._trusted_url(base) and eng._trusted_url(
-            "https://objects.githubusercontent.com/a")
-        assert not eng._trusted_url("http://github.com/a")
-        assert not eng._trusted_url("https://github.com.evil.example/a")
-        restore = fake_urls({config.LATEST_RELEASE_API:
-                             json.dumps(release).encode()})
+        real = eng._latest_release
         try:
-            info = eng.check_for_update("1.2.1")
-            assert info and info.version == "9.0.0" and info.installable, info
-            assert info.installer_url == update_info.installer_url
-            assert eng.check_for_update("9.0.0") is None, "same version"
-            bare = dict(release, assets=[])
-            restore()
-            restore = fake_urls({config.LATEST_RELEASE_API:
-                                 json.dumps(bare).encode()})
-            info = eng.check_for_update("1.2.1")
-            assert info and not info.installable, "no assets -> page only"
+            for tag, current, want in (("9.0.0", "1.2.1", "9.0.0"),
+                                       ("v9.0.0", "1.2.1", "9.0.0"),
+                                       ("9.0.0", "9.0.0", None),
+                                       ("1.2", "1.2.1", None),
+                                       ("junk", "1.2.1", None),
+                                       (None, "1.2.1", None)):
+                eng._latest_release = lambda: {"tag_name": tag}
+                got = eng.check_for_update(current)
+                assert got == want, (tag, current, got)
         finally:
-            restore()
+            eng._latest_release = real
     run("updates: release check (faked GitHub)", update_check)
-
-    def update_download():
-        saved_dir = eng.UPDATE_DIR
-        with tempfile.TemporaryDirectory() as tmp:
-            eng.UPDATE_DIR = os.path.join(tmp, "upd")
-            table = {update_info.installer_url: installer,
-                     update_info.checksum_url:
-                         f"{sha}  EDLS-Setup-9.0.0.exe\n".encode()}
-            restore = fake_urls(table)
-            try:
-                seen = []
-                path = eng.download_update(update_info, seen.append)
-                assert open(path, "rb").read() == installer and seen[-1] == 100
-                table[update_info.checksum_url] = b"0" * 64
-                try:
-                    eng.download_update(update_info)
-                    raise AssertionError("a bad checksum was accepted")
-                except eng.UpdateError:
-                    pass
-                assert not os.listdir(eng.UPDATE_DIR), "bad download left behind"
-                bad = config.UpdateInfo("9.0.0", installer_name="x.exe",
-                                        installer_url="https://evil.example/x",
-                                        checksum_url=update_info.checksum_url)
-                table[update_info.checksum_url] = sha.encode()
-                try:
-                    eng.download_update(bad)
-                    raise AssertionError("a non-GitHub URL was fetched")
-                except eng.UpdateError:
-                    pass
-            finally:
-                restore()
-                eng.UPDATE_DIR = saved_dir
-    run("updates: download + checksum (faked GitHub)", update_download)
 
     def update_engine():
         w = eng.Engine(settings)
-        running, ran, quits, offered = set(), [], [], []
-
-        class P:
-            pid = 4242
-        w.pm.find = lambda name: P() if name in running else None
-        w.pm.run_installer = ran.append
-        w.on_quit.connect(lambda: quits.append(1))
+        offered = []
         w.on_update.connect(offered.append)
-        real_dl, real_check, saved_dir = (eng.download_update,
-                                          eng.check_for_update, eng.UPDATE_DIR)
-        eng.download_update = lambda info, progress, cancelled: "C:/fake/setup.exe"
-        eng.check_for_update = lambda: update_info
+        real = eng.check_for_update
         try:
-            with tempfile.TemporaryDirectory() as tmp:
-                eng.UPDATE_DIR = os.path.join(tmp, "upd")
-                # The game is running: refused, nothing downloaded or run.
-                running.add(config.ELITE_PROCESS)
-                assert w.install_update(update_info), "allowed mid-game"
-                assert w._update_thread is None and not ran
-                # A card START in flight (maybe on a UAC prompt): refused too.
-                running.clear()
-                w._starting.add("FakeTool")
-                assert w.install_update(update_info), "allowed mid-START"
-                assert w._update_thread is None and not ran
-                w._starting.clear()
-                # Idle: downloads, runs the installer, closes EDLS.
-                assert w.install_update(update_info) is None
-                w._update_thread.join(5)
-                assert ran == ["C:/fake/setup.exe"] and quits == [1], (ran, quits)
-                # The check offers a new version, but not a skipped one.
-                w.settings = config.default_settings()
-                w._check_for_updates()
-                assert offered == [update_info], offered
-                w.settings.skipped_version = "9.0.0"
-                w._check_for_updates()
-                assert len(offered) == 1, "a skipped version was offered"
+            eng.check_for_update = lambda: "9.0.0"
+            w._check_for_updates()
+            assert offered == ["9.0.0"], offered
+
+            def offline():
+                raise OSError("no network")
+            eng.check_for_update = offline
+            w._check_for_updates()   # quiet: nothing offered, nothing raised
+            assert offered == ["9.0.0"], offered
         finally:
-            eng.download_update, eng.check_for_update = real_dl, real_check
-            eng.UPDATE_DIR = saved_dir
-    run("updates: engine gate + install path (fakes)", update_engine)
+            eng.check_for_update = real
+    run("updates: engine offers a newer version (fakes)", update_engine)
 
     def update_ui():
+        from types import SimpleNamespace
         from PySide6.QtCore import QTimer
-        bare = config.UpdateInfo("9.0.0", notes="")
-        for info in (update_info, bare):
-            dlg = ui.UpdateDialog(info, win)
-            dlg.show(); dlg.close(); dlg.deleteLater()
-        win._on_update(update_info)
+        win._on_update("9.0.0")
         assert win._btns.update_lbl.isVisibleTo(win), "no update link"
-        win._on_update_progress(42)
-        assert "42%" in win._btns.update_lbl.text()
-        win._open_update()   # ignored mid-download: no dialog to dismiss
-        win._on_update_progress(None)
+        assert "9.0.0" in win._btns.update_lbl.text()
         win._build_content()   # a theme rebuild keeps the link
         assert win._btns.update_lbl.isVisibleTo(win), "link lost on rebuild"
-        # SKIP THIS VERSION through the real dialog, without touching the
-        # CMDR's settings.json.
-        saved_skip = win._settings.skipped_version
-        win._save_settings = lambda s: None
+        # Both answers through the real popover; the browser is a stub.
+        opened = []
+        real = ui.QDesktopServices
+        ui.QDesktopServices = SimpleNamespace(
+            openUrl=lambda url: opened.append(url.toString()))
         try:
             QTimer.singleShot(0, lambda: QApplication.activeModalWidget()
-                              ._choose("skip"))
+                              .accept())
             win._open_update()
-            assert win._settings.skipped_version == "9.0.0"
-            assert not win._btns.update_lbl.isVisibleTo(win)
+            assert opened == [config.LATEST_RELEASE_URL], opened
+            QTimer.singleShot(0, lambda: QApplication.activeModalWidget()
+                              .reject())
+            win._open_update()
+            assert len(opened) == 1, "LATER opened the release page"
         finally:
-            win._settings.skipped_version = saved_skip
-            del win._save_settings
-    run("updates: link, dialog, skip", update_ui)
+            ui.QDesktopServices = real
+            win._update = None
+            win._show_update_link()
+    run("updates: link + release-page popover", update_ui)
 
     def theme_switch():
         from dataclasses import replace

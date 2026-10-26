@@ -64,12 +64,9 @@ VirusTotal analysis: [https://www.virustotal.com/gui/file/a8224787b93396338ca297
 ### Updates
 
 Versions after 1.2.1 check GitHub for a new release at startup. If there is one,
-an **update** link appears next to the version number: it shows what's new, and
-**INSTALL NOW** downloads the installer, checks it against the release's SHA256, and
-restarts EDLS on the new version with your settings kept. It won't update while the
-game is running or a session is in progress. Turn the check off in Settings.
-
-1.2.1 can't update itself - install the next release over it from the Releases page.
+an **update** link appears next to the version number. Click it for the steps and a
+button to the release page: download the new installer there and run it. It installs
+over your current version and keeps your settings. Turn the check off in Settings.
 
 ---
 

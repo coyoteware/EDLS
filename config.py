@@ -10,7 +10,7 @@ owns five things:
   2. AppDescriptor              -- one app's definition, with path resolution
   3. REGISTRY                   -- THE list of default apps (single source of truth)
   4. Settings + load/save       -- persistence, with merge-on-load and migration
-  5. UpdateInfo + parse_version -- what an update check found, and version order
+  5. parse_version / is_newer   -- version order for the update check
 
 Adding a companion app is a one-line entry in REGISTRY below. Both config dialogs
 and the launch engine read from it, so there's no longer a four-places-to-edit
@@ -47,9 +47,9 @@ SETTINGS_VERSION = 1
 APP_VERSION = "1.2.1"
 
 # Where updates come from: the repo's GitHub Releases. A release's tag must be
-# its version (e.g. "1.3.0", matching APP_VERSION when it was built), and it
-# carries the installer plus a "<installer>.sha256" file -- build.ps1 makes both.
-RELEASES_URL = "https://github.com/coyoteware/EDLS/releases"
+# its version (e.g. "1.3.0", matching APP_VERSION when it was built). EDLS only
+# looks: the update popover sends the CMDR to the release page.
+LATEST_RELEASE_URL = "https://github.com/coyoteware/EDLS/releases/latest"
 LATEST_RELEASE_API = ("https://api.github.com/repos/coyoteware/EDLS/"
                       "releases/latest")
 
@@ -248,33 +248,15 @@ class Settings:
     apps: list[AppDescriptor] = field(default_factory=list)
     removed_defaults: list[str] = field(default_factory=list)
     check_for_updates: bool = True
-    skipped_version: str = ""   # "SKIP THIS VERSION" -- not offered again
 
 
 # =============================================================================
 # Updates
 # =============================================================================
-@dataclass
-class UpdateInfo:
-    """A newer release found on GitHub. The installer + checksum URLs are empty
-    when the release lacks those assets -- then it can only be opened in the
-    browser, not installed from EDLS."""
-    version: str
-    notes: str = ""
-    page_url: str = RELEASES_URL
-    installer_name: str = ""
-    installer_url: str = ""
-    checksum_url: str = ""
-
-    @property
-    def installable(self) -> bool:
-        return bool(self.installer_url and self.checksum_url)
-
-
 def parse_version(text: str) -> Optional[tuple[int, int, int]]:
     """'1.2.1', 'v1.3' or '1.2.1-beta' -> (major, minor, patch), missing parts
-    as 0 (so the 1.2.1 release's "1.2" tag reads older than 1.2.1). None if it
-    isn't a version at all."""
+    as 0 (so a "1.2" tag reads older than 1.2.1). None if it isn't a version
+    at all."""
     m = re.match(r"\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", text or "")
     if not m:
         return None
@@ -413,8 +395,6 @@ def _from_dict(raw: dict) -> Settings:
                           if isinstance(n, str)],
         check_for_updates=_as_bool(raw.get("check_for_updates"),
                                    d.check_for_updates, "check_for_updates"),
-        skipped_version=_as_str(raw.get("skipped_version"), "",
-                                "skipped_version").strip(),
     )
 
 
@@ -497,7 +477,6 @@ def save_settings(s: Settings) -> bool:
         "theme": s.theme.value,
         "removed_defaults": s.removed_defaults,
         "check_for_updates": s.check_for_updates,
-        "skipped_version": s.skipped_version,
         "apps": [
             {"name": a.name, "process": a.process_name,
              "path": a.path, "enabled": a.enabled}

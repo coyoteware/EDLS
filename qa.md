@@ -152,7 +152,7 @@ What changes when you test the installed build:
 | IN-01 | P1 | A | Run the installer, with "Launch EDLS" ticked at the end | No UAC (admin) prompt. EDLS opens when setup finishes, not elevated (Task Manager → Details → add the "Elevated" column: it says No). The Start menu has "EDLS - Elite Dangerous Launch Suite". |
 | IN-02 | P1 | A | With EDLS open, run the same or a newer installer | Setup offers to close EDLS and does. Steam, the game and the tools stay open. Afterwards your settings and log are unchanged. |
 | IN-03 | P1 | A | Windows Settings → Apps → uninstall "Elite: Dangerous Launch Suite" | EDLS, its Start menu entry and its install folder are gone. `%LOCALAPPDATA%\EDLS` (settings and log) is kept. |
-| IN-04 | P2 | A | Download the installer from the release page and run it | Record what SmartScreen and your antivirus say (the installer isn't code-signed). Its SHA256 (`Get-FileHash EDLS-Setup-<version>.exe`) matches the release's `EDLS-Setup-<version>.exe.sha256` file. |
+| IN-04 | P2 | A | Download the installer from the release page and run it | Record what SmartScreen and your antivirus say (the installer isn't code-signed). Its SHA256 (`Get-FileHash EDLS-Setup-<version>.exe`) matches the one in the release notes. |
 | IN-05 | P3 | A | Install with "Create a desktop shortcut" ticked → start EDLS from it → right-click `EDLS.exe` in the install folder → Properties → Details | The shortcut works. Details shows the EDLS version, description and copyright. |
 
 ---
@@ -942,33 +942,26 @@ Use Task Manager → Details → the `python.exe` whose command line ends in `ma
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
 | DC-01 | P2 | A | Follow the README install and run steps exactly, on a clean PC | They work as written. |
-| DC-02 | P2 | A | Compare the README's feature list with the app | Report every mismatch (it was updated for live status, the close-EDLS toggles, the app-list lock, one-copy-only and in-app updates). |
+| DC-02 | P2 | A | Compare the README's feature list with the app | Report every mismatch (it was updated for live status, the close-EDLS toggles, the app-list lock, one-copy-only and the update check). |
 | DC-03 | P3 | A | Proofread the welcome text, Settings labels and log messages | Report typos and anything unclear. |
 
-### 8.20 In-app updates (UP)
+### 8.20 Update check (UP)
 
-EDLS asks GitHub for the latest release about a second after it starts. These tests need
-a published release that's newer than the EDLS you're running. To play an old EDLS, run
-from source (§3.2) with `APP_VERSION` near the top of `config.py` set lower, e.g.
-`"1.0.0"`, and put it back afterwards. The 1.2.1 release has no checksum file, so against
-it EDLS can only offer RELEASE PAGE. INSTALL NOW needs a release made by the new release
-build (1.3.0 onwards). Installing puts the installed build in place (§3.5), even when the
-old EDLS ran from source.
+EDLS asks GitHub for the latest release about a second after it starts. It never downloads
+or installs anything: if a newer version is out, the update link explains the steps and
+opens the release page. To see the link, run an older EDLS: from source (§3.2) with
+`APP_VERSION` near the top of `config.py` set lower, e.g. `"1.0.0"`. Put it back
+afterwards.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
 | UP-01 | P1 | A | Run the latest version → start EDLS | No update link and nothing about updates in the activity log. `launcher.log` has "Update check: EDLS &lt;version&gt; is the latest." |
 | UP-02 | P1 | A | Run an older version → start EDLS. Repeat in light mode. | About a second after the panels appear, "update x.y.z available" shows after "report issue": gold, orange in light mode. The log says "EDLS x.y.z is available - click 'update' next to the version below." |
-| UP-03 | P1 | A | Click the update link. Repeat in light mode, and reach the link with Tab → Enter. | A popover: "U P D A T E   A V A I L A B L E", "EDLS x.y.z is out - you have …", the release notes, then SKIP THIS VERSION, LATER, RELEASE PAGE and (only if the release has a checksum file) INSTALL NOW. Without INSTALL NOW, a line says to get it from the release page. Enter and Esc both mean LATER: nothing happens and the link stays. |
-| UP-04 | P2 | A | Update popover → RELEASE PAGE | Your browser opens that release's GitHub page. The link stays. |
-| UP-05 | P2 | A | Update popover → SKIP THIS VERSION → restart EDLS | The link goes and a dim log line says it was skipped. After the restart there's still no link. `settings.json` has `"skipped_version"` set to it. A later release than that is offered again. |
+| UP-03 | P1 | A | Click the update link. Repeat in light mode, and reach the link with Tab → Enter. | A popover: "U P D A T E   A V A I L A B L E", "EDLS x.y.z is out - you have …", then how to update (download `EDLS-Setup-x.y.z.exe` from the release page and run it). Two buttons: LATER and RELEASE PAGE. Enter and Esc both mean LATER: nothing happens and the link stays. Record anything in the text that's unclear. |
+| UP-04 | P1 | A | Update popover → RELEASE PAGE | Your browser opens the latest release's GitHub page, showing that version with its installer under Assets. The link stays. |
+| UP-05 | P1 | A | With EDLS open, follow the popover's steps: download the installer and run it. Needs a published release newer than the installed EDLS. | Same as IN-02: setup closes EDLS, and Steam, the game and the tools stay open. Let setup start EDLS at the end: the badge shows the new version, there's no update link, and your settings and app list are unchanged. |
 | UP-06 | P1 | A | Settings → "Check for EDLS updates at startup" off → Save → restart an older version | No link. `launcher.log` has no "Update check" line at all. Turn it back on → restart: the link is back. |
 | UP-07 | P2 | A | Disconnect from the internet → start EDLS | No popup and nothing in the activity log. `launcher.log` has "Update check failed: …". Everything else works. |
-| UP-08 | P1 | H | During a LAUNCH session, and again with only the fake game open: update popover → INSTALL NOW | A notice explains why not ("EDLS is busy…" or "Elite: Dangerous is running…"). Nothing downloads and EDLS stays open. |
-| UP-09 | P1 | A | Steam and some tools open, the game closed → update popover → INSTALL NOW | The link turns into "downloading NN%" and counts up. The log says "Downloading EDLS x.y.z...", then "Installing EDLS x.y.z - EDLS will restart.", and EDLS closes. No installer window and no UAC prompt. A few seconds later the new EDLS opens by itself and logs "Updated to EDLS x.y.z. o7". The badge shows the new version. Settings and the app list are unchanged. Steam and the tools stayed open. |
-| UP-10 | P1 | A | AUTO START on → repeat UP-09 → then close EDLS and start it normally | The EDLS that opens after the update doesn't launch anything. The normal start after it does. |
-| UP-11 | P2 | H | INSTALL NOW → open the fake game before the download finishes (a slow connection helps) | The log warns "Update downloaded but not installed: Elite: Dangerous is running…". EDLS stays open. |
-| UP-12 | P2 | A | During UP-09, watch SmartScreen and your antivirus | Record what they do to the silent install (the installer isn't code-signed). If anything blocks it, record whether you're left with no EDLS running and no message (R-43). |
 
 ---
 
@@ -1119,8 +1112,6 @@ These come from reading the code. Each row has a **Status**:
 | R-39 | The UAC prompt for an admin tool appears just as the game starts, and may take a fullscreen game out of focus. | Open (new) | LS-34 | Minor |
 | R-40 | After you answer Yes, an admin tool may take longer than 3 s to appear. If it does, its card shows Failed until the status check finds it (within about 5 s). | Open (new) | LS-11, CC-20 | Cosmetic |
 | R-41 | For a tool that runs as several same-name processes (EDHM-UI, Electron), EDLS could pick a helper instead of the main process: the close request did nothing, the helper was force-closed after 3 s, and the tool stayed open while its card flipped back to Online. | Fixed — verify | CA-05, SC-17 | Major |
-| R-42 | Updates aren't code-signed. The SHA256 check only proves the download matches what's on the release page, not who put it there: someone with access to the GitHub account could ship anything to every user. | Open (new, design question) | UP-09, IN-04 | Design question |
-| R-43 | EDLS closes itself as soon as it starts the installer. If SmartScreen or antivirus then blocks the silent install, you're left with no EDLS running and nothing saying why. | Open (new) | UP-09, UP-12 | Minor to Major |
 
 ---
 

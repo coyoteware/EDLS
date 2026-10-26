@@ -24,19 +24,14 @@ Targets Windows 10/11 + Steam, matching the original.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import logging.handlers
 import os
 import subprocess
-import shutil
 import sys
-import tempfile
 import threading
 import time
-import urllib.error
-import urllib.parse
 import urllib.request
 from enum import Enum
 from typing import Callable, Optional
@@ -45,7 +40,7 @@ import psutil
 
 import config
 from config import (
-    AppDescriptor, AppState, Settings, ShutdownScope, UpdateInfo,
+    AppDescriptor, AppState, Settings, ShutdownScope,
     KEY_STEAM, KEY_ELITE, STEAM_PROCESS, ELITE_PROCESS,
 )
 
@@ -70,18 +65,15 @@ except ImportError:  # pragma: no cover - non-Windows dev machines
 #             .close_on_shutdown .allow_elevation .theme
 #             .apps (list[AppDescriptor])
 #             .removed_defaults (list[str]) .check_for_updates
-#             .skipped_version
-#   UpdateInfo, is_newer(), LATEST_RELEASE_API      the update check
+#   is_newer(), LATEST_RELEASE_API                   the update check
 #   load_settings() -> Settings          (problems land in LOAD_WARNINGS)
 #   save_settings(settings) -> bool      (False if the file couldn't be written)
 #
 # ui.py provides:
-#   run(engine, settings, just_updated=False) -> int
-#                                     builds the window, shows the first-run
+#   run(engine, settings) -> int     builds the window, shows the first-run
 #                                     dialog if not settings.setup_complete,
-#                                     triggers engine.launch() if auto_start
-#                                     (not right after an update), starts the
-#                                     update check,
+#                                     triggers engine.launch() if auto_start,
+#                                     starts the update check,
 #                                     enters the event loop, returns an exit code.
 #                                     It also injects engine.dispatch (a function
 #                                     that runs a callable on the GUI thread) and
@@ -181,15 +173,9 @@ _PENDING_STATES = (AppState.LAUNCHING, AppState.WAITING)
 # Watcher bookkeeping: an app it has never reported on (startup, or just added).
 _UNSEEN = object()
 
-# Updates. The installer is fetched only from GitHub (the API's download URL
-# redirects to its asset CDN) and run only if its SHA256 matches the release's
-# .sha256 file. Inno Setup's switches: no wizard, no prompts, close a running
-# EDLS, and /RELAUNCH=1 has installer.iss start the new EDLS when it's done.
-UPDATE_TIMEOUT = 10    # seconds, per network request
-UPDATE_HOSTS = ("github.com", "githubusercontent.com")
-UPDATE_DIR = os.path.join(tempfile.gettempdir(), "EDLS-update")
-INSTALLER_ARGS = ["/SILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS",
-                  "/NORESTART", "/RELAUNCH=1"]
+# The update check only asks GitHub which release is latest. EDLS never
+# downloads or runs an installer: the CMDR gets the release page.
+UPDATE_TIMEOUT = 10    # seconds
 
 
 class StopResult(Enum):
@@ -592,111 +578,25 @@ class ProcessManager:
         return left
 
 
-    @staticmethod
-    def run_installer(path: str) -> None:
-        """Start a downloaded EDLS installer, detached so it outlives us (it
-        closes this EDLS itself, then starts the new one). Raises OSError."""
-        _popen_detached([path, *INSTALLER_ARGS],
-                        cwd=os.path.dirname(path) or None)
-
-
 # =============================================================================
-# Updates - ask GitHub for the latest release, fetch + verify its installer
+# Updates - ask GitHub which release is latest
 # =============================================================================
-class UpdateError(Exception):
-    """An update couldn't be fetched or didn't verify. The message is for the
-    CMDR (it goes to the activity log)."""
+def _latest_release() -> dict:
+    """GitHub's latest published release, as its API describes it. Raises
+    OSError (offline, HTTP errors) or ValueError (not JSON)."""
+    req = urllib.request.Request(config.LATEST_RELEASE_API, headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": f"EDLS/{config.APP_VERSION}"})
+    with urllib.request.urlopen(req, timeout=UPDATE_TIMEOUT) as resp:
+        return json.load(resp)
 
 
-def _trusted_url(url: str) -> bool:
-    parts = urllib.parse.urlsplit(url)
-    host = (parts.hostname or "").lower()
-    return parts.scheme == "https" and any(
-        host == h or host.endswith("." + h) for h in UPDATE_HOSTS)
-
-
-def _open_url(url: str, accept: str = "application/octet-stream"):
-    """urlopen for the update code: GitHub only, before and after redirects."""
-    if not _trusted_url(url):
-        raise UpdateError(f"refusing to download from {url}")
-    req = urllib.request.Request(url, headers={
-        "Accept": accept, "User-Agent": f"EDLS/{config.APP_VERSION}"})
-    resp = urllib.request.urlopen(req, timeout=UPDATE_TIMEOUT)
-    if not _trusted_url(resp.geturl()):
-        resp.close()
-        raise UpdateError(f"refusing to download from {resp.geturl()}")
-    return resp
-
-
-def check_for_update(current: str = config.APP_VERSION) -> Optional[UpdateInfo]:
-    """The latest published GitHub release, if it's newer than `current`.
-    Drafts and pre-releases never count (GitHub leaves them out of "latest").
-    Raises UpdateError / OSError / ValueError when GitHub can't be asked."""
-    with _open_url(config.LATEST_RELEASE_API,
-                   accept="application/vnd.github+json") as resp:
-        release = json.load(resp)
-    version = str(release.get("tag_name") or "").strip()
-    if not config.is_newer(version, current):
-        return None
-    assets = {a.get("name", ""): a.get("browser_download_url", "")
-              for a in release.get("assets") or [] if isinstance(a, dict)}
-    installer = next((n for n in assets
-                      if n.lower().startswith("edls-setup")
-                      and n.lower().endswith(".exe")), "")
-    return UpdateInfo(
-        version=version.lstrip("v"),
-        notes=str(release.get("body") or "").strip(),
-        page_url=release.get("html_url") or config.RELEASES_URL,
-        installer_name=installer,
-        installer_url=assets.get(installer, "") if installer else "",
-        checksum_url=assets.get(installer + ".sha256", "") if installer else "",
-    )
-
-
-def download_update(info: UpdateInfo,
-                    progress: Callable[[int], None] = lambda pct: None,
-                    cancelled: Callable[[], bool] = lambda: False) -> str:
-    """Download the release's installer into UPDATE_DIR and check it against
-    the release's .sha256. Returns the installer's path; raises UpdateError
-    (or OSError) and leaves nothing behind otherwise. `progress` gets 0-100."""
-    if not info.installable:
-        raise UpdateError("this release has no installer to download")
-    with _open_url(info.checksum_url) as resp:
-        words = resp.read(4096).decode("ascii", "replace").split()
-    expected = words[0].lower() if words else ""
-    if len(expected) != 64:
-        raise UpdateError("the release's checksum file is unreadable")
-
-    shutil.rmtree(UPDATE_DIR, ignore_errors=True)   # an earlier update's leftovers
-    os.makedirs(UPDATE_DIR, exist_ok=True)
-    path = os.path.join(UPDATE_DIR, os.path.basename(info.installer_name))
-    part = path + ".part"
-    digest = hashlib.sha256()
-    try:
-        with _open_url(info.installer_url) as resp, open(part, "wb") as fh:
-            total = int(resp.headers.get("Content-Length") or 0)
-            done, last_pct = 0, -1
-            while chunk := resp.read(256 * 1024):
-                if cancelled():
-                    raise UpdateError("download cancelled")
-                fh.write(chunk)
-                digest.update(chunk)
-                done += len(chunk)
-                pct = done * 100 // total if total else 0
-                if pct != last_pct:
-                    progress(pct)
-                    last_pct = pct
-        if digest.hexdigest() != expected:
-            raise UpdateError("the download didn't match the release's "
-                              "checksum - it was not installed")
-        os.replace(part, path)
-        return path
-    except BaseException:
-        try:
-            os.remove(part)
-        except OSError:
-            pass
-        raise
+def check_for_update(current: str = config.APP_VERSION) -> Optional[str]:
+    """The latest release's version, if it's newer than `current`. Drafts and
+    pre-releases never count (GitHub leaves them out of "latest"). Raises
+    OSError / ValueError when GitHub can't be asked."""
+    version = str(_latest_release().get("tag_name") or "").strip().lstrip("v")
+    return version if config.is_newer(version, current) else None
 
 
 # =============================================================================
@@ -715,8 +615,7 @@ class Engine:
         self.on_status = Signal()   # (key: str, state: AppState, pid: int | None)
         self.on_busy = Signal()     # (busy: bool)  -> toggle the LAUNCH button
         self.on_quit = Signal()     # ()  -> close the app: a full session ended
-        self.on_update = Signal()            # (info: UpdateInfo) -> offer it
-        self.on_update_progress = Signal()   # (percent: int | None) -> None: over
+        self.on_update = Signal()   # (version: str)  -> a newer release is out
 
         # The view injects a function that runs a callable on the GUI thread.
         # Default runs inline, which is correct for headless use and tests.
@@ -732,7 +631,6 @@ class Engine:
         # (or one sitting on the UAC prompt) doesn't start a second copy.
         self._starting: set[str] = set()
         self._start_lock = threading.Lock()
-        self._update_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()     # interrupts the current waits
         self._closed = threading.Event()   # window closed: start nothing new
         self._wake = threading.Event()     # asks the watcher to scan right away
@@ -1114,75 +1012,16 @@ class Engine:
         threading.Thread(target=self._check_for_updates, daemon=True).start()
 
     def _check_for_updates(self) -> None:
-        shutil.rmtree(UPDATE_DIR, ignore_errors=True)   # last update's installer
         try:
-            info = check_for_update()
-        except (UpdateError, OSError, ValueError) as exc:
+            version = check_for_update()
+        except (OSError, ValueError) as exc:
             log.info("Update check failed: %s", exc)
             return
-        if info is None:
+        if version is None:
             log.info("Update check: EDLS %s is the latest.", config.APP_VERSION)
             return
-        log.info("Update check: EDLS %s is available.", info.version)
-        if info.version != self.settings.skipped_version:
-            self.dispatch(lambda: self.on_update.emit(info))
-
-    def update_blocker(self) -> Optional[str]:
-        """Why EDLS can't update right now, or None. Updating closes EDLS, so
-        it waits until nothing is in flight and the game isn't running -- a
-        session left without EDLS would never have its tools torn down."""
-        if self._update_thread and self._update_thread.is_alive():
-            return "The update is already downloading."
-        return self._idle_blocker()
-
-    def _idle_blocker(self) -> Optional[str]:
-        # _starting: a card START on its worker, maybe waiting on a UAC prompt.
-        if self.session_active or self._starting or any(
-                t is not None and t.is_alive()
-                for t in (self._system_thread, self._shutdown_thread)):
-            return ("EDLS is busy. Update once the session has ended "
-                    "and the game is closed.")
-        if self.pm.find(ELITE_PROCESS):
-            return ("Elite: Dangerous is running. Update once the game "
-                    "is closed.")
-        return None
-
-    def install_update(self, info: UpdateInfo) -> Optional[str]:
-        """INSTALL NOW: download and verify the installer, run it, close EDLS.
-        Returns why it can't start (see update_blocker), else None; progress
-        and the outcome come back through on_update_progress and the log."""
-        blocker = self.update_blocker()
-        if blocker is None and self._closed.is_set():
-            blocker = "EDLS is closing."
-        if blocker:
-            return blocker
-        self._log(f"Downloading EDLS {info.version}...")
-        self._update_thread = threading.Thread(
-            target=self._install_update, args=(info,), daemon=True)
-        self._update_thread.start()
-        return None
-
-    def _install_update(self, info: UpdateInfo) -> None:
-        def progress(pct: int) -> None:
-            self.dispatch(lambda: self.on_update_progress.emit(pct))
-        try:
-            path = download_update(info, progress, self._closed.is_set)
-            # Re-check: the CMDR may have started the game mid-download.
-            blocker = self._idle_blocker()
-            if blocker:
-                self._log(f"Update downloaded but not installed: {blocker}",
-                          "warning")
-                return
-            self.pm.run_installer(path)
-        except (UpdateError, OSError, ValueError) as exc:
-            log.warning("Update failed: %s", exc)
-            self._log(f"Update failed: {exc}", "error")
-            return
-        finally:
-            self.dispatch(lambda: self.on_update_progress.emit(None))
-        self._log(f"Installing EDLS {info.version} - EDLS will restart.",
-                  "success")
-        self._quit()
+        log.info("Update check: EDLS %s is available.", version)
+        self.dispatch(lambda: self.on_update.emit(version))
 
     def close(self) -> None:
         """Window is closing: stop the workers, but leave the game and tools
@@ -1479,8 +1318,6 @@ def main() -> int:
         return _close_elevated(sys.argv[2:])
     setup_logging()
     install_crash_logging()
-    # installer.iss passes this when it restarts EDLS after an update.
-    just_updated = "--updated" in sys.argv[1:]
     import ui  # late import: driving the engine headless needs no GUI toolkit
     # Before anything touches settings.json: a second copy just brings the
     # running one to the front and leaves.
@@ -1489,7 +1326,7 @@ def main() -> int:
         return 0
     settings = config.load_settings()
     engine = Engine(settings)
-    return ui.run(engine, settings, just_updated=just_updated)
+    return ui.run(engine, settings)
 
 
 if __name__ == "__main__":
