@@ -44,7 +44,7 @@ SETTINGS_VERSION = 1
 
 # Display version, shown in the UI and used for the build's file metadata.
 # Single source of truth (replaces the original $script:AppVersion).
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 
 # Where updates come from: the repo's GitHub Releases. A release's tag must be
 # its version (e.g. "1.3.0", matching APP_VERSION when it was built). EDLS only
@@ -129,6 +129,9 @@ class AppDescriptor:
     resolver: Optional[Callable[[], Optional[str]]] = field(
         default=None, compare=False, repr=False
     )
+    # The REGISTRY default this app came from ("" for one the CMDR added). It's
+    # saved, so a renamed default keeps its resolver after a restart.
+    origin: str = ""
 
     def resolve_path(self) -> Optional[str]:
         if self.path:
@@ -268,10 +271,19 @@ def is_newer(candidate: str, current: str = APP_VERSION) -> bool:
     return new is not None and cur is not None and new > cur
 
 
+def _fresh_default(reg: AppDescriptor) -> AppDescriptor:
+    """A REGISTRY default as it joins the CMDR's list (first run, RESTORE
+    DEFAULTS, or a default added in a later version): ticked only if its
+    program is on this PC, so a tool they don't have doesn't greet every
+    LAUNCH with "not found". A copy, so user edits never mutate REGISTRY
+    (resolvers are shared callables, which is fine)."""
+    path = reg.resolve_path()
+    return replace(reg, origin=reg.name,
+                   enabled=bool(path and os.path.exists(path)))
+
+
 def _clone_registry() -> list[AppDescriptor]:
-    """Fresh copies so user edits never mutate REGISTRY (resolvers are shared
-    callables, which is fine)."""
-    return [replace(a) for a in REGISTRY]
+    return [_fresh_default(a) for a in REGISTRY]
 
 
 def default_settings() -> Settings:
@@ -352,9 +364,12 @@ def _app_from_dict(d) -> Optional[AppDescriptor]:
         _warn(f"settings.json: skipped an app entry with no valid name: {d!r}")
         return None
     name = name.strip()
-    reg = REGISTRY_BY_NAME.get(name)
+    # The default it came from: its saved origin, so a renamed default keeps
+    # its resolver -- else its name (files from before 1.3.0 have no origin).
+    origin = _as_str(d.get("origin"), "", f"{name}.origin").strip()
+    reg = REGISTRY_BY_NAME.get(origin) or REGISTRY_BY_NAME.get(name)
     path = _as_str(d.get("path"), "", f"{name}.path")
-    if reg and path == _RETIRED_PATHS.get(name):
+    if reg and path == _RETIRED_PATHS.get(reg.name):
         path = reg.path
     return AppDescriptor(
         name=name,
@@ -363,6 +378,7 @@ def _app_from_dict(d) -> Optional[AppDescriptor]:
         enabled=_as_bool(d.get("enabled"), True, f"{name}.enabled"),
         # Re-attach the resolver for known defaults; custom apps have none.
         resolver=reg.resolver if reg else None,
+        origin=reg.name if reg else "",
     )
 
 
@@ -401,13 +417,14 @@ def _from_dict(raw: dict) -> Settings:
 def _merge_new_defaults(s: Settings) -> bool:
     """Append any registry app missing from settings -- unless the user
     deliberately removed it (tracked in removed_defaults). Lets a new default
-    added in a later version appear for existing installs. Returns True if it
-    changed anything."""
-    existing = {a.name for a in s.apps}
+    added in a later version appear for existing installs, ticked only if it's
+    installed (_fresh_default). Returns True if it changed anything."""
+    # By origin too: a renamed default is still that default.
+    existing = {a.name for a in s.apps} | {a.origin for a in s.apps}
     changed = False
     for reg in REGISTRY:
         if reg.name not in existing and reg.name not in s.removed_defaults:
-            s.apps.append(replace(reg))
+            s.apps.append(_fresh_default(reg))
             changed = True
     return changed
 
@@ -479,7 +496,7 @@ def save_settings(s: Settings) -> bool:
         "check_for_updates": s.check_for_updates,
         "apps": [
             {"name": a.name, "process": a.process_name,
-             "path": a.path, "enabled": a.enabled}
+             "path": a.path, "enabled": a.enabled, "origin": a.origin}
             for a in s.apps
         ],
     }

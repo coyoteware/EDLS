@@ -100,6 +100,46 @@ def main():
     run("busy toggle (launch button)",
         lambda: (win._btns.set_busy(True), win._btns.set_busy(False)))
 
+    def log_keeps_place():
+        # R-25: someone scrolled up to read isn't dragged to the bottom by new
+        # lines; at the bottom, the log follows them.
+        view = ui.LogView()
+        view.resize(400, 120)
+        view.show()
+        for i in range(60):
+            view.append_line(f"line {i}")
+        QApplication.processEvents()
+        sb = view.verticalScrollBar()
+        assert 0 < sb.maximum() == sb.value(), (sb.value(), sb.maximum())
+        sb.setValue(0)
+        view.append_line("while reading")
+        assert sb.value() == 0, "jumped to the bottom"
+        sb.setValue(sb.maximum())
+        view.append_line("at the bottom")
+        assert sb.value() == sb.maximum(), "stopped following"
+        view.close()
+        view.deleteLater()
+    run("log keeps the reader's place", log_keeps_place)
+
+    def names_plain_text():
+        # R-19: a CMDR or app name that looks like HTML shows as typed.
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QLabel
+        plain = Qt.TextFormat.PlainText
+        header = ui.HeaderPanel("<b>Jameson</b>")
+        assert header.cmdr_lbl.textFormat() == plain
+        card = ui.StatusCard(config.AppDescriptor("<i>Tool</i>", "Tool"))
+        assert card.findChild(ui.ElidingLabel).textFormat() == plain
+        entry = ui.AppEntryDialog(parent=win)
+        assert entry.error_lbl.textFormat() == plain
+        msg = ui._HudMessage(win, "Title", "<b>Tool</b> is <i>here</i>", "OK")
+        text = next(lbl for lbl in msg.findChildren(QLabel)
+                    if lbl.text().startswith("<b>"))
+        assert text.textFormat() == plain
+        for w in (header, card, entry, msg):
+            w.deleteLater()
+    run("names show as plain text", names_plain_text)
+
     def status_watcher():
         # The watcher replaced REFRESH. Feed _watch_tick() fake scans on a
         # headless engine (inline dispatch) and check it reports exactly the
@@ -140,9 +180,10 @@ def main():
         assert tick({}) == {}, "watcher overwrote Waiting..."
         assert tick({elite: P()}) == {"Elite": S.RUNNING}
         # A card set by an action after the scan began is skipped (no race).
+        # (The game stays up in this scan, so its card has nothing to report.)
         before = _time.monotonic()
         w._status("Steam", S.ONLINE)
-        assert "Steam" not in tick({}, started=before)
+        assert "Steam" not in tick({elite: P()}, started=before)
         # ERROR (couldn't close) counts as running: kept while it runs,
         # cleared to Offline once it's gone.
         w._status("Steam", S.ERROR)
@@ -825,6 +866,84 @@ def main():
                 config.DATA_DIR, config.SETTINGS_FILE = saved
     run("emptied app list stays empty", emptied_app_list_stays_empty)
 
+    def defaults_ticked_when_found():
+        # R-26 and upgrades: a default joins the list ticked only if its
+        # program is on this PC -- first run, RESTORE DEFAULTS, or a default
+        # that's new in this version (Elite Studio, for 1.2.1 users). A tick
+        # the CMDR set is never changed. Temp files only.
+        import tempfile
+        from dataclasses import replace as _replace
+
+        def found(app):
+            path = app.resolve_path()
+            return bool(path and os.path.exists(path))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = os.path.join(tmp, "Tool.exe")
+            open(exe, "w").close()
+            here = config.AppDescriptor("Here", "Tool", exe, enabled=False)
+            gone = config.AppDescriptor("Gone", "Gone",
+                                        os.path.join(tmp, "Gone.exe"))
+            fresh = config._fresh_default(here)
+            assert fresh.enabled and fresh.origin == "Here", fresh
+            assert not config._fresh_default(gone).enabled, "missing one ticked"
+        for app in config.default_settings().apps:
+            assert app.enabled == found(app), app.name
+            assert app.origin == app.name, app
+        # An upgrade: the file has one default (unticked by the CMDR) and
+        # lacks the rest, which are new to it.
+        mine = _replace(config.REGISTRY[0], enabled=False)
+        s = config.Settings(apps=[mine])
+        assert config._merge_new_defaults(s)
+        assert s.apps[0].enabled is False, "the CMDR's own tick changed"
+        assert len(s.apps) == len(config.REGISTRY)
+        for app in s.apps[1:]:
+            assert app.enabled == found(app), app.name
+    run("defaults start ticked only when installed", defaults_ticked_when_found)
+
+    def renamed_default_keeps_resolver():
+        # R-07: a renamed default (SrvSurvey has no path, only a resolver)
+        # still finds its program after a restart, because settings.json keeps
+        # where it came from. Temp settings dir only.
+        import tempfile
+        from dataclasses import replace as _replace
+        srv = config.REGISTRY_BY_NAME["SrvSurvey"]
+        renamed = _replace(srv, name="My SRV", origin="SrvSurvey")
+        saved = config.DATA_DIR, config.SETTINGS_FILE
+        with tempfile.TemporaryDirectory() as tmp:
+            config.DATA_DIR = tmp
+            config.SETTINGS_FILE = os.path.join(tmp, "settings.json")
+            try:
+                s = config.Settings(
+                    apps=[renamed,
+                          config.AppDescriptor("Mine", "Mine", r"C:\Mine.exe")],
+                    removed_defaults=sorted(config.REGISTRY_BY_NAME))
+                assert config.save_settings(s)
+                back, custom = config.load_settings().apps
+                assert (back.name, back.origin) == ("My SRV", "SrvSurvey"), back
+                assert back.resolver is srv.resolver, "lost its resolver"
+                assert custom.origin == "" and custom.resolver is None, custom
+            finally:
+                config.DATA_DIR, config.SETTINGS_FILE = saved
+        # Renamed is still that default: it doesn't come back a second time,
+        # even without removed_defaults.
+        s = config.Settings(apps=[renamed])
+        config._merge_new_defaults(s)
+        assert [a.origin for a in s.apps].count("SrvSurvey") == 1, s.apps
+        # A file from before 1.3.0 has no origin: a default is known by name.
+        old = config._app_from_dict({"name": "SrvSurvey",
+                                     "process": "SrvSurvey"})
+        assert old.origin == "SrvSurvey" and old.resolver is srv.resolver, old
+        # The Settings table carries it through a save.
+        dlg = ui.SettingsDialog(config.Settings(apps=[renamed]), parent=win)
+        got = []
+        dlg.saved.connect(got.append)
+        dlg._save()
+        app, = got[0].apps
+        assert app.origin == "SrvSurvey" and app.resolver is srv.resolver, app
+        dlg.deleteLater()
+    run("renamed default keeps its auto-find", renamed_default_keeps_resolver)
+
     def hud_popovers():
         # The HUD stand-ins for native dialogs build and show without error; an
         # invalid app entry is reported inline rather than in another popup.
@@ -840,6 +959,95 @@ def main():
         QTimer.singleShot(0, lambda: QApplication.activeModalWidget().accept())
         ui.hud_notice(win, "App list locked", "Locked.")
     run("HUD popovers (app editor, confirm, notice)", hud_popovers)
+
+    def close_countdown():
+        # R-36: STAY OPEN cancels the close countdown, left alone it closes
+        # EDLS, and the window closing ends it quietly. Headless engine, a
+        # short countdown; the only process lookup is faked.
+        import threading
+        from dataclasses import replace as _replace
+        real = eng.CLOSE_DELAY
+        w = eng.Engine(settings)
+        counts, quits, logs = [], [], []
+        w.on_countdown.connect(counts.append)
+        w.on_quit.connect(lambda: quits.append(1))
+        w.on_log.connect(lambda m, lvl: logs.append(m))
+        try:
+            eng.CLOSE_DELAY = 2
+            threading.Timer(0.3, w.stay_open).start()
+            assert w._close_countdown() is False, "STAY OPEN didn't stop it"
+            assert counts == [True, False] and not quits, (counts, quits)
+            assert logs[-1] == "EDLS will stay open.", logs
+            # Mid-session SHUTDOWN, then STAY OPEN: back to waiting for the
+            # game, which is still running.
+            logs.clear()
+            alive = threading.Event()
+            w._thread = threading.Thread(target=alive.wait, daemon=True)
+            w._thread.start()
+
+            class P:   # stands in for a psutil.Process
+                pid = 4242
+            w.pm.find = lambda name: P()
+            w.settings = _replace(settings, close_on_shutdown=True,
+                                  shutdown_scope=config.ShutdownScope.LAUNCHED_ONLY)
+            threading.Timer(0.3, w.stay_open).start()
+            w._manual_shutdown()
+            alive.set()
+            assert logs[-1] == "Waiting for Elite: Dangerous to close...", logs
+            assert not quits, quits
+            # Left alone, it closes EDLS.
+            eng.CLOSE_DELAY = 1
+            counts.clear(); logs.clear()
+            assert w._close_countdown() is True and quits == [1], quits
+            assert counts == [True] and "Farewell, CMDR. o7" in logs, logs
+            # The window closing mid-countdown: no quit of its own.
+            eng.CLOSE_DELAY = 2
+            quits.clear()
+            threading.Timer(0.3, w.close).start()
+            assert w._close_countdown() is True and not quits, quits
+        finally:
+            eng.CLOSE_DELAY = real
+    run("close countdown: STAY OPEN, run out, window closed", close_countdown)
+
+    def stay_open_key():
+        # The view side of STAY OPEN, and R-22: when the countdown runs out
+        # with a dialog open, EDLS stays open instead of closing behind it.
+        from PySide6.QtCore import QTimer
+        btn = win._btns.launch_btn
+        stays, closes, seen = [], [], {}
+        win._engine.stay_open = lambda: stays.append(1)
+        win.close = lambda: closes.append(1)
+        try:
+            win._on_busy(True)
+            win._on_countdown(True)
+            assert btn.text() == "STAY OPEN" and btn.isEnabled(), btn.text()
+            win._on_launch_clicked()
+            assert stays == [1], "STAY OPEN didn't reach the engine"
+            win._on_countdown(False)
+            assert btn.text() == "RUNNING..." and not btn.isEnabled()
+            win._on_busy(False)
+            assert btn.text() == "LAUNCH" and btn.isEnabled()
+
+            win._on_countdown(True)
+
+            def countdown_ends():   # with the notice below still open
+                try:
+                    win._on_quit()
+                    seen.update(closes=list(closes), counting=win._counting)
+                finally:
+                    QApplication.activeModalWidget().accept()
+            QTimer.singleShot(0, countdown_ends)
+            ui.hud_notice(win, "Settings", "Still open.")
+            assert seen == {"closes": [], "counting": False}, seen
+            assert btn.text() == "LAUNCH", btn.text()
+            win._on_quit()   # nothing open now: it closes
+            assert closes == [1], closes
+        finally:
+            vars(win._engine).pop("stay_open", None)
+            vars(win).pop("close", None)
+            win._on_countdown(False)
+            win._on_busy(False)
+    run("STAY OPEN key; no closing behind a dialog", stay_open_key)
 
     # ---- updates: offline fakes only. Nothing here may reach GitHub, write
     # the CMDR's settings.json, or open a browser.

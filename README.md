@@ -57,7 +57,7 @@ full Epic Games launcher installed.
 
 ## Installation
 
-Download EDLS-Setup-1.2.1.exe from the [Releases page](https://github.com/coyoteware/EDLS/releases/tag/1.2)
+Download EDLS-Setup-1.3.0.exe from the [Releases page](https://github.com/coyoteware/EDLS/releases/latest)
 
 VirusTotal analysis: [https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection](https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection)
 
@@ -73,14 +73,14 @@ over your current version and keeps your settings. Turn the check off in Setting
 ## Configuration
 
 EDLS ships with default registry entries for these tools (each can be enabled,
-disabled, or have its path edited):
+disabled, or have its path edited). The ones it finds on your PC start out enabled:
 
 |     |     |     |
 | --- | --- | --- |
 | EDMarketConnector | SrvSurvey | Odyssey Materials Helper |
 | EDCoPilot | EDHM-UI | opentrack |
 | ICARUS Terminal | EDDiscovery | VoiceAttack |
-| EDCoPTER | Elite Observatory | |
+| EDCoPTER | Elite Observatory | Elite Studio |
 
 >>*NOTE* on filepaths: The filepath for SrvSurvey is a diabolical beast. You are unlikely to be successful in entering it manually. If for whatever reason EDLS is unable to find its install automatically, please report it at the issues page.
 

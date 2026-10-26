@@ -91,6 +91,14 @@ a visual outcome you haven't confirmed with him.
   (`LAUNCHER_WAIT`) for the tool itself and tracks that by name. Odyssey Materials
   Helper's resolver prefers its updating launcher over the helper exe; `_RETIRED_PATHS`
   moves a saved old default path over on load.
+- **A default starts ticked only if it's installed** (`config._fresh_default`): first
+  run, RESTORE DEFAULTS, and a default that's new to an existing settings.json. Ticks
+  the CMDR set are never changed. Each saved app keeps its `origin` (the REGISTRY
+  name), so a renamed default keeps its resolver after a restart.
+- **The close countdown can be cancelled.** While `Engine._close_countdown` runs,
+  `on_countdown(True)` turns LAUNCH into STAY OPEN (`Engine.stay_open()`). If the
+  countdown runs out while a dialog is open, the view stays open rather than closing
+  behind it.
 - **Every card status goes out through `Engine._status()`.** The status watcher
   (which replaced REFRESH) compares each scan with what `_status()` recorded and only
   emits differences — emitting any other way makes cards stale or flicker.

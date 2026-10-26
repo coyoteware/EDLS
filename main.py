@@ -616,6 +616,7 @@ class Engine:
         self.on_busy = Signal()     # (busy: bool)  -> toggle the LAUNCH button
         self.on_quit = Signal()     # ()  -> close the app: a full session ended
         self.on_update = Signal()   # (version: str)  -> a newer release is out
+        self.on_countdown = Signal()   # (counting: bool) -> LAUNCH offers STAY OPEN
 
         # The view injects a function that runs a callable on the GUI thread.
         # Default runs inline, which is correct for headless use and tests.
@@ -634,6 +635,8 @@ class Engine:
         self._stop = threading.Event()     # interrupts the current waits
         self._closed = threading.Event()   # window closed: start nothing new
         self._wake = threading.Event()     # asks the watcher to scan right away
+        # Ends the close countdown early: STAY OPEN, or the window closing.
+        self._countdown_cut = threading.Event()
         self._last_action = 0.0
 
         # What each card currently claims, so the watcher only speaks up when
@@ -662,6 +665,9 @@ class Engine:
 
     def _quit(self) -> None:
         self.dispatch(lambda: self.on_quit.emit())
+
+    def _countdown(self, counting: bool) -> None:
+        self.dispatch(lambda: self.on_countdown.emit(counting))
 
     @property
     def enabled_apps(self) -> list[AppDescriptor]:
@@ -795,9 +801,9 @@ class Engine:
         if game_running:
             self._log("Quit Elite: Dangerous from the in-game menu - EDLS never "
                       "closes the game.", "warning")
-        if self.settings.close_on_shutdown:
-            self._close_countdown()
-        elif self.session_active and game_running:
+        if self.settings.close_on_shutdown and self._close_countdown():
+            return
+        if self.session_active and game_running:
             self._log("Waiting for Elite: Dangerous to close...", "dim")
 
     def start_app(self, name: str) -> None:
@@ -1023,6 +1029,11 @@ class Engine:
         log.info("Update check: EDLS %s is available.", version)
         self.dispatch(lambda: self.on_update.emit(version))
 
+    def stay_open(self) -> None:
+        """STAY OPEN, clicked during the close countdown: EDLS doesn't close
+        after all."""
+        self._countdown_cut.set()
+
     def close(self) -> None:
         """Window is closing: stop the workers, but leave the game and tools
         running -- closing the launcher should not close everything. Also
@@ -1030,6 +1041,7 @@ class Engine:
         self._closed.set()
         self._stop.set()
         self._wake.set()
+        self._countdown_cut.set()
 
     # ---- the sequence ----
     def _run(self) -> None:
@@ -1065,22 +1077,30 @@ class Engine:
             self._log(f"Unexpected error: {exc}", "error")
         finally:
             log.info("=== Session ended ===")
+            self._busy(False)
             if close_after:
-                self._close_countdown()   # LAUNCH stays disabled until we go
-            else:
-                self._busy(False)
+                self._close_countdown()
 
-    def _close_countdown(self) -> None:
-        """Close EDLS after a short, logged countdown (the window closing
-        interrupts it). The game and Steam are never touched."""
-        self._busy(True)
+    def _close_countdown(self) -> bool:
+        """Close EDLS after a short, logged countdown, while LAUNCH offers
+        STAY OPEN (stay_open()). True if EDLS is going -- the countdown ran
+        out, or the window closed -- and False if the CMDR chose to stay. The
+        game and Steam are never touched."""
+        self._countdown_cut.clear()
+        if self._closed.is_set():
+            return True
+        self._countdown(True)
         self._log(f"EDLS will close in {CLOSE_DELAY} seconds.")
-        if self._closed.wait(CLOSE_DELAY - 1):
-            return
-        self._log("Farewell, CMDR. o7", "success")
-        if self._closed.wait(1):
-            return
-        self._quit()
+        if not self._countdown_cut.wait(CLOSE_DELAY - 1):
+            self._log("Farewell, CMDR. o7", "success")
+            if not self._countdown_cut.wait(1):
+                self._quit()
+                return True
+        if self._closed.is_set():
+            return True
+        self._countdown(False)
+        self._log("EDLS will stay open.")
+        return False
 
     def _preflight(self) -> bool:
         self._log("Preflight checks...", "dim")

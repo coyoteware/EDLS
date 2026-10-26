@@ -28,7 +28,10 @@ Contract with main.py:
     engine.on_busy.connect(...)      (busy: bool)
     engine.on_quit.connect(...)      ()  -- a full session ended; close the app
     engine.on_update.connect(...)    (version: str)  -- a newer release is out
+    engine.on_countdown.connect(...) (counting: bool) -- the close countdown:
+                                     LAUNCH reads STAY OPEN meanwhile
     engine.check_for_updates()
+    engine.stay_open()               STAY OPEN clicked: don't close after all
 """
 from __future__ import annotations
 
@@ -277,6 +280,8 @@ class ElidingLabel(QLabel):
         # natural width.
         self.setSizePolicy(QSizePolicy.Policy.Ignored,
                            QSizePolicy.Policy.Preferred)
+        # A name, shown as typed: never read as markup ("<b>...</b>").
+        self.setTextFormat(Qt.TextFormat.PlainText)
         super().setText(text)
 
     def setText(self, text: str) -> None:  # noqa: N802
@@ -444,7 +449,8 @@ class StatusCard(ChamferedFrame):
 
 # ── Log view ──────────────────────────────────────────────────────────────────
 class LogView(QTextEdit):
-    """Read-only terminal-style log. Appends coloured lines; auto-scrolls."""
+    """Read-only terminal-style log. Appends coloured lines, and follows them
+    while it's scrolled to the bottom."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -464,9 +470,12 @@ class LogView(QTextEdit):
         ts = time.strftime("[%H:%M:%S]")
         ts_html = f'<span style="color:{LOG_TIME.name()};">{ts}</span>'
         msg_html = f'<span style="color:{color.name()};">&nbsp;{_esc(message)}</span>'
-        self.append(f"{ts_html}{msg_html}")
+        # Scrolled up to read something? Then new lines don't drag you down.
         sb = self.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        follow = sb.value() >= sb.maximum()
+        self.append(f"{ts_html}{msg_html}")
+        if follow:
+            sb.setValue(sb.maximum())
 
 
 def _thin_scrollbar_qss() -> str:
@@ -761,6 +770,7 @@ class HeaderPanel(ChamferedFrame):
         cmdr_row.addStretch()
         cmdr_row.addWidget(make_badge("CMDR", C_AMBER))
         self.cmdr_lbl = QLabel(cmdr_name.upper())
+        self.cmdr_lbl.setTextFormat(Qt.TextFormat.PlainText)   # never markup
         self.cmdr_lbl.setFont(font_body(12, QFont.Weight.DemiBold))
         self.cmdr_lbl.setStyleSheet(
             f"color: {C_CMDR.name()}; letter-spacing: 4px;")
@@ -1007,9 +1017,12 @@ class ButtonBar(QWidget):
             **_bar_colors("secondary_on" if self._auto_start else "secondary"))
         self.autostart_toggled.emit(self._auto_start)
 
-    def set_busy(self, busy: bool) -> None:
-        self.launch_btn.setEnabled(not busy)
-        self.launch_btn.setText("RUNNING..." if busy else "LAUNCH")
+    def set_busy(self, busy: bool, counting: bool = False) -> None:
+        """LAUNCH reads RUNNING... (disabled) during a session, and STAY OPEN
+        while the close countdown runs -- clicking that cancels the close."""
+        self.launch_btn.setEnabled(counting or not busy)
+        self.launch_btn.setText("STAY OPEN" if counting
+                                else "RUNNING..." if busy else "LAUNCH")
 
     def show_update(self, version: Optional[str]) -> None:
         """The update link: "update x.y.z available" in the themed accent, or
@@ -1528,6 +1541,7 @@ class _HudMessage(HudPopover):
         c = self._c
         self.body.addWidget(_eyebrow(title, c["meta"]))
         msg = QLabel(text)
+        msg.setTextFormat(Qt.TextFormat.PlainText)
         msg.setWordWrap(True)
         msg.setFont(font_mono(10))
         msg.setStyleSheet(f"color: {c['text']};")
@@ -1593,6 +1607,7 @@ class AppEntryDialog(HudPopover):
         self.body.addLayout(_stacked_field("FILE", path_row, c))
 
         self.error_lbl = QLabel()
+        self.error_lbl.setTextFormat(Qt.TextFormat.PlainText)   # quotes the name
         self.error_lbl.setWordWrap(True)
         self.error_lbl.setFont(font_mono(9))
         self.error_lbl.setStyleSheet(f"color: {c['error']};")
@@ -1707,7 +1722,7 @@ class SettingsDialog(QDialog):
         avail = self.screen().availableGeometry().height() - 60
         self.resize(660, min(780 if first_run else 700, avail))
         self.setObjectName("settingsDialog")
-        self._default_cmdr = config.default_settings().cmdr_name
+        self._default_cmdr = config.Settings().cmdr_name
         # The Light mode toggle previews its theme live (see _preview_theme);
         # closing any way but Save puts this one back (see done).
         self._open_theme = _live_theme()
@@ -1996,7 +2011,8 @@ class SettingsDialog(QDialog):
     def _populate_table(self, apps: list[AppDescriptor]) -> None:
         """Replace all table rows with the given app list."""
         self._fill([(a.name, a.process_name, a.path or "", a.enabled,
-                     a.name if a.name in config.REGISTRY_BY_NAME else "")
+                     a.origin or (a.name if a.name in config.REGISTRY_BY_NAME
+                                  else ""))
                     for a in apps])
 
     def _fill(self, rows: list[tuple]) -> None:
@@ -2186,6 +2202,7 @@ class SettingsDialog(QDialog):
                 path=path or (reg.path if reg else None),
                 enabled=enabled,
                 resolver=reg.resolver if reg else None,
+                origin=reg.name if reg else "",
             ))
 
         removed = config.recompute_removed_defaults(
@@ -2226,6 +2243,7 @@ class MainWindow(QMainWindow):
         self._invoker = _Invoker()
         engine.dispatch = self._invoker.invoke
         self._busy = False   # tracked so a theme rebuild can restore button state
+        self._counting = False   # the close countdown runs: LAUNCH is STAY OPEN
         # Last state per card. Rebuilding the cards (Settings save, theme switch)
         # re-applies these, so "Waiting..." or ERROR survive the rebuild.
         self._card_states: dict[str, tuple[AppState, Optional[int]]] = {}
@@ -2246,6 +2264,7 @@ class MainWindow(QMainWindow):
         engine.on_busy.connect(self._on_busy)
         engine.on_quit.connect(self._on_quit)
         engine.on_update.connect(self._on_update)
+        engine.on_countdown.connect(self._on_countdown)
 
         self._build_content()
 
@@ -2302,7 +2321,7 @@ class MainWindow(QMainWindow):
         self._btns.settings_clicked.connect(self._open_settings)
         self._btns.launch_clicked.connect(self._on_launch_clicked)
         self._btns.update_clicked.connect(self._open_update)
-        self._btns.set_busy(self._busy)
+        self._btns.set_busy(self._busy, self._counting)
         self._show_update_link()
         self._update_launch_mute()
         root.addWidget(self._btns)
@@ -2322,9 +2341,13 @@ class MainWindow(QMainWindow):
         own, so the two can't race (it stays clickable to explain why)."""
         elite = self._card_states.get(KEY_ELITE, (AppState.OFFLINE, None))[0]
         self._btns.launch_btn.set_muted(
-            not self._busy and elite is AppState.WAITING)
+            not self._busy and not self._counting
+            and elite is AppState.WAITING)
 
     def _on_launch_clicked(self) -> None:
+        if self._counting:   # it reads STAY OPEN
+            self._engine.stay_open()
+            return
         if self._btns.launch_btn.muted:
             self._log.append("The game is already being started from its card "
                              "- wait for it to finish.", "warning")
@@ -2416,11 +2439,24 @@ class MainWindow(QMainWindow):
     @Slot(bool)
     def _on_busy(self, busy: bool) -> None:
         self._busy = busy
-        self._btns.set_busy(busy)
+        self._btns.set_busy(busy, self._counting)
+        self._update_launch_mute()
+
+    @Slot(bool)
+    def _on_countdown(self, counting: bool) -> None:
+        self._counting = counting
+        self._btns.set_busy(self._busy, counting)
         self._update_launch_mute()
 
     @Slot()
     def _on_quit(self) -> None:
+        # The countdown ran out with a dialog open (Settings, a popover, the
+        # file picker). Closing now would pull the window out from under it,
+        # so EDLS stays open instead.
+        if QApplication.activeModalWidget() is not None:
+            self._on_countdown(False)
+            self._log.append("EDLS stayed open - a dialog was open.", "info")
+            return
         self.close()
 
     # ---- updates ----
