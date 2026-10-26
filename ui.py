@@ -21,12 +21,15 @@ Fonts: Euro Caps (display/body) and Share Tech Mono (terminal) are loaded from
 assets/ if present, falling back to system fonts so the app is always runnable.
 
 Contract with main.py:
-    run(engine, settings) -> int
+    run(engine, settings, just_updated=False) -> int
     engine.dispatch is set to a Qt-thread-safe invoker.
     engine.on_log.connect(...)       (message: str, level: str)
     engine.on_status.connect(...)    (key: str, state: AppState, pid: int | None)
     engine.on_busy.connect(...)      (busy: bool)
     engine.on_quit.connect(...)      ()  -- a full session ended; close the app
+    engine.on_update.connect(...)    (info: UpdateInfo)  -- a newer release
+    engine.on_update_progress.connect(...)  (percent: int | None)
+    engine.check_for_updates() / install_update(info) -> str | None
 """
 from __future__ import annotations
 
@@ -60,7 +63,7 @@ from PySide6.QtSvg import QSvgRenderer
 
 import config
 from config import (
-    AppDescriptor, AppState, Settings, ShutdownScope, Theme,
+    AppDescriptor, AppState, Settings, ShutdownScope, Theme, UpdateInfo,
     KEY_STEAM, KEY_ELITE,
 )
 
@@ -921,6 +924,7 @@ class ButtonBar(QWidget):
     autostart_toggled = Signal(bool)
     settings_clicked  = Signal()
     launch_clicked    = Signal()
+    update_clicked    = Signal()
 
     def __init__(self, version: str, auto_start: bool,
                  parent: Optional[QWidget] = None) -> None:
@@ -953,6 +957,15 @@ class ButtonBar(QWidget):
         issue.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextBrowserInteraction)
         ver_row.addWidget(issue)
+        # "update x.y.z" link, shown once the update check finds a release.
+        self.update_lbl = QLabel()
+        self.update_lbl.setFont(font_mono(9))
+        self.update_lbl.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.update_lbl.linkActivated.connect(
+            lambda _href: self.update_clicked.emit())
+        self.update_lbl.hide()
+        ver_row.addWidget(self.update_lbl)
         ver_row.addStretch()
         cred_vbox.addLayout(ver_row)
         hbox.addLayout(cred_vbox)
@@ -998,6 +1011,22 @@ class ButtonBar(QWidget):
     def set_busy(self, busy: bool) -> None:
         self.launch_btn.setEnabled(not busy)
         self.launch_btn.setText("RUNNING..." if busy else "LAUNCH")
+
+    def show_update(self, version: Optional[str],
+                    percent: Optional[int] = None) -> None:
+        """The update link: hidden (version None), "update x.y.z" in the
+        themed accent, or plain "downloading NN%" while it downloads."""
+        lbl = self.update_lbl
+        if version is None:
+            lbl.hide()
+            return
+        if percent is None:
+            lbl.setText(f"<a href='#update' style='color:{C_SUCCESS.name()};'>"
+                        f"update {_esc(version)} available</a>")
+        else:
+            lbl.setText(f"<span style='color:{C_TMID.name()};'>"
+                        f"downloading {percent}%</span>")
+        lbl.show()
 
 
 # ── Background widget (starfield + vignette) ──────────────────────────────────
@@ -1537,6 +1566,72 @@ def hud_confirm(parent: Optional[QWidget], title: str, text: str,
     return dlg.exec() == QDialog.DialogCode.Accepted
 
 
+class UpdateDialog(HudPopover):
+    """What a newer release offers, with the CMDR's choice in `choice` after
+    exec(): "install", "page", "skip", or "" (LATER / Esc). INSTALL NOW is
+    only offered when the release carries a verifiable installer."""
+
+    def __init__(self, info: UpdateInfo,
+                 parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent, width=520)
+        self.choice = ""
+        c = self._c
+        self.body.addWidget(_eyebrow("Update available", c["meta"]))
+        head = QLabel(f"EDLS {info.version} is out - you have "
+                      f"{config.APP_VERSION}.")
+        head.setWordWrap(True)
+        head.setFont(font_mono(10))
+        head.setStyleSheet(f"color: {c['accent']};")
+        self.body.addWidget(head)
+
+        if info.notes:
+            notes = QTextEdit()
+            notes.setReadOnly(True)
+            notes.setMarkdown(info.notes)
+            notes.setFont(font_mono(9))
+            notes.setFixedHeight(200)
+            notes.setStyleSheet(
+                f"QTextEdit {{ background: {c['field']}; color: {c['text']};"
+                f" border: 1px solid {c['edge']}; padding: 4px; }}"
+                + _thin_scrollbar_qss())
+            self.body.addWidget(notes)
+
+        hint = QLabel(
+            "INSTALL NOW downloads the update, checks it, and restarts EDLS. "
+            "Your settings are kept." if info.installable else
+            "This release has no installer EDLS can check - get it from the "
+            "release page.")
+        hint.setWordWrap(True)
+        hint.setFont(font_mono(9))
+        hint.setStyleSheet(f"color: {c['label']};")
+        self.body.addWidget(hint)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        keys = [("SKIP THIS VERSION", "skip", "secondary"),
+                ("LATER", "", "secondary"),
+                ("RELEASE PAGE", "page",
+                 "secondary" if info.installable else "launch")]
+        if info.installable:
+            keys.append(("INSTALL NOW", "install", "launch"))
+        later = None
+        for i, (text, choice, kind) in enumerate(keys):
+            btn = _key(text, kind)
+            btn.clicked.connect(lambda _=False, ch=choice: self._choose(ch))
+            row.addWidget(btn)
+            if i == 0:
+                row.addStretch()
+            if choice == "":
+                later = btn
+        later.setDefault(True)   # Enter is the no-op choice
+        later.setFocus()
+        self.body.addLayout(row)
+
+    def _choose(self, choice: str) -> None:
+        self.choice = choice
+        self.accept()
+
+
 # ── Add / edit app dialog ─────────────────────────────────────────────────────
 class AppEntryDialog(HudPopover):
     """Modal editor for a single companion app: a Name plus a browsable file
@@ -1644,6 +1739,10 @@ _TOGGLE_TIPS: dict[str, tuple[bool, str]] = {
     "toggle_close_shutdown": (True,
         "After SHUTDOWN closes your tools, EDLS closes itself after a short "
         "countdown. Off: the window stays open."),
+    "toggle_updates": (True,
+        "At startup EDLS asks GitHub whether a newer version is out and, if "
+        "so, shows an 'update' link next to the version. Nothing is downloaded "
+        "until you choose INSTALL NOW.\nOff: EDLS never checks."),
     "toggle_light": (False,
         "Lightens the window, header and bottom bar. The status and log "
         "panes stay dark."),
@@ -1782,6 +1881,10 @@ class SettingsDialog(QDialog):
             "toggle_close_shutdown",
             "Close EDLS after SHUTDOWN",
             state.close_on_shutdown)
+        self.toggle_updates = _toggle_row(
+            "toggle_updates",
+            "Check for EDLS updates at startup",
+            state.check_for_updates)
         self.toggle_light = _toggle_row(
             "toggle_light",
             "Light mode",
@@ -2111,6 +2214,7 @@ class SettingsDialog(QDialog):
         self.toggle_admin.setChecked(defaults.allow_elevation)
         self.toggle_close_exit.setChecked(defaults.close_on_game_exit)
         self.toggle_close_shutdown.setChecked(defaults.close_on_shutdown)
+        self.toggle_updates.setChecked(defaults.check_for_updates)
         self.toggle_light.setChecked(defaults.theme is Theme.LIGHT)
         self._populate_table(defaults.apps)
         # Clear any suppressed defaults so the reset list isn't re-filtered on save.
@@ -2136,6 +2240,7 @@ class SettingsDialog(QDialog):
             allow_elevation=self.toggle_admin.isChecked(),
             close_on_game_exit=self.toggle_close_exit.isChecked(),
             close_on_shutdown=self.toggle_close_shutdown.isChecked(),
+            check_for_updates=self.toggle_updates.isChecked(),
             theme=Theme.LIGHT if self.toggle_light.isChecked() else Theme.DARK,
         )
 
@@ -2196,6 +2301,10 @@ class MainWindow(QMainWindow):
         # Last state per card. Rebuilding the cards (Settings save, theme switch)
         # re-applies these, so "Waiting..." or ERROR survive the rebuild.
         self._card_states: dict[str, tuple[AppState, Optional[int]]] = {}
+        # The release the update check found, and download progress (None when
+        # not downloading) -- kept here so a theme rebuild restores the link.
+        self._update: Optional[UpdateInfo] = None
+        self._update_pct: Optional[int] = None
 
         # Background persists across theme switches (it repaints from the themed
         # globals); only the central content is rebuilt on a theme change.
@@ -2209,6 +2318,8 @@ class MainWindow(QMainWindow):
         engine.on_status.connect(self._on_status)
         engine.on_busy.connect(self._on_busy)
         engine.on_quit.connect(self._on_quit)
+        engine.on_update.connect(self._on_update)
+        engine.on_update_progress.connect(self._on_update_progress)
 
         self._build_content()
 
@@ -2264,7 +2375,9 @@ class MainWindow(QMainWindow):
         self._btns.autostart_toggled.connect(self._on_autostart)
         self._btns.settings_clicked.connect(self._open_settings)
         self._btns.launch_clicked.connect(self._on_launch_clicked)
+        self._btns.update_clicked.connect(self._open_update)
         self._btns.set_busy(self._busy)
+        self._show_update_link()
         self._update_launch_mute()
         root.addWidget(self._btns)
 
@@ -2383,6 +2496,45 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_quit(self) -> None:
         self.close()
+
+    # ---- updates ----
+    def _show_update_link(self) -> None:
+        self._btns.show_update(self._update and self._update.version,
+                               self._update_pct)
+
+    @Slot(object)
+    def _on_update(self, info: UpdateInfo) -> None:
+        self._update = info
+        self._show_update_link()
+        self._log.append(f"EDLS {info.version} is available - click "
+                         "'update' next to the version below.", "success")
+
+    @Slot(object)
+    def _on_update_progress(self, percent: Optional[int]) -> None:
+        self._update_pct = percent
+        self._show_update_link()
+
+    def _open_update(self) -> None:
+        info = self._update
+        if info is None or self._update_pct is not None:
+            return
+        dlg = UpdateDialog(info, self)
+        dlg.exec()
+        if dlg.choice == "install":
+            blocker = self._engine.install_update(info)
+            if blocker:
+                hud_notice(self, "Update", blocker)
+            else:
+                self._on_update_progress(0)
+        elif dlg.choice == "page":
+            QDesktopServices.openUrl(QUrl(info.page_url))
+        elif dlg.choice == "skip":
+            self._settings.skipped_version = info.version
+            self._save_settings(self._settings)
+            self._update = None
+            self._show_update_link()
+            self._log.append(f"EDLS {info.version} skipped - you'll be told "
+                             "about the next one.", "dim")
 
     @Slot()
     def _bring_to_front(self) -> None:
@@ -2547,7 +2699,7 @@ def _apply_app_palette() -> None:
     app.setPalette(pal)
 
 
-def run(engine, settings: Settings) -> int:
+def run(engine, settings: Settings, just_updated: bool = False) -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Elite: Dangerous Launch Suite")
     _icon = os.path.join(ASSETS_DIR, "icon.ico")
@@ -2575,8 +2727,12 @@ def run(engine, settings: Settings) -> int:
     QTimer.singleShot(0, win._play_boot_animation)
     follow_delay = BOOT_TOTAL if BOOT_ENABLED else 0
 
+    if just_updated:
+        win._log.append(f"Updated to EDLS {config.APP_VERSION}. o7", "success")
+
     # Show first-run setup once the panels have animated in; otherwise honour
-    # auto-start. The auto-start message is logged here, next to the decision,
+    # auto-start (but not straight after an update: the CMDR clicked INSTALL,
+    # not LAUNCH). The auto-start message is logged here, next to the decision,
     # so it can never claim a launch that isn't going to happen.
     if not settings.setup_complete:
         if settings.auto_start:
@@ -2584,11 +2740,13 @@ def run(engine, settings: Settings) -> int:
                             "first.", "dim")
         QTimer.singleShot(follow_delay, win._open_settings)
     else:
-        if settings.auto_start:
+        if settings.auto_start and not just_updated:
             win._log.append("Auto-start enabled — launching...", "dim")
             QTimer.singleShot(follow_delay, engine.launch)
         # Warm the Settings dialog off-screen after boot settles so the first
         # real open is instant (first-run already opens it, so skip that case).
         QTimer.singleShot(follow_delay + 50, win._prewarm_settings)
+    # After boot, so the request never competes with the window appearing.
+    QTimer.singleShot(follow_delay + 1000, engine.check_for_updates)
 
     return app.exec()

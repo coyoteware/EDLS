@@ -98,6 +98,16 @@ a visual outcome you haven't confirmed with him.
   stays the key for status routing + settings.
 - **`config.APP_VERSION`** is the single source of truth for the version string
   (`build.ps1` reads it for the exe's version resource and the installer).
+- **Releasing / updates.** Bump `APP_VERSION`, then push a tag that equals it
+  (`1.3.0`, no `v`). `.github/workflows/release.yml` runs selftest + `build.ps1` and
+  makes a **draft** release with `EDLS-Setup-<v>.exe` and its `.sha256`; publishing
+  the draft is what offers the update to users (`Engine.check_for_updates` reads
+  GitHub's `releases/latest`, which skips drafts and pre-releases). INSTALL NOW only
+  runs when idle (`Engine.update_blocker`: no session, no card action in flight, game
+  not running), verifies
+  the SHA256, runs the installer with `/SILENT ... /RELAUNCH=1` and quits; the
+  installer restarts EDLS with `--updated` (no auto-start that time). The checksum
+  only proves the download is intact, not who made it -- the exe is unsigned.
 - **The panes are the dark HUD in both themes** (the "Full Daylight" look): day mode
   lightens the window, header, bottom bar and card keys, not the status/log panes or
   cards. Pane surfaces and everything on a card read the fixed `theme.PANE.*`, never
