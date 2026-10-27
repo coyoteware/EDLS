@@ -24,6 +24,7 @@ Targets Windows 10/11 + Steam, matching the original.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import logging.handlers
@@ -311,8 +312,10 @@ class ProcessManager:
     launch engine, the per-card START/STOP buttons, and the manual SHUTDOWN all
     behave identically instead of reimplementing process handling three ways.
 
-    It tracks what *we* launched (`launched`) separately from what merely happens
-    to be running, so ShutdownScope can be honored precisely."""
+    It tracks what *we* launched or took over (`launched`: a tool that was
+    already running when LAUNCH or its START reached it counts too) separately
+    from what merely happens to be running, so ShutdownScope can be honored
+    precisely."""
 
     def __init__(self) -> None:
         self.launched: dict[str, int] = {}   # app name -> pid we started
@@ -583,7 +586,8 @@ class ProcessManager:
 # =============================================================================
 def _latest_release() -> dict:
     """GitHub's latest published release, as its API describes it. Raises
-    OSError (offline, HTTP errors) or ValueError (not JSON)."""
+    OSError (offline, HTTP errors), http.client.HTTPException (a reply cut
+    short) or ValueError (not JSON)."""
     req = urllib.request.Request(config.LATEST_RELEASE_API, headers={
         "Accept": "application/vnd.github+json",
         "User-Agent": f"EDLS/{config.APP_VERSION}"})
@@ -594,7 +598,7 @@ def _latest_release() -> dict:
 def check_for_update(current: str = config.APP_VERSION) -> Optional[str]:
     """The latest release's version, if it's newer than `current`. Drafts and
     pre-releases never count (GitHub leaves them out of "latest"). Raises
-    OSError / ValueError when GitHub can't be asked."""
+    what _latest_release() does when GitHub can't be asked."""
     version = str(_latest_release().get("tag_name") or "").strip().lstrip("v")
     return version if config.is_newer(version, current) else None
 
@@ -1020,7 +1024,7 @@ class Engine:
     def _check_for_updates(self) -> None:
         try:
             version = check_for_update()
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, http.client.HTTPException) as exc:
             log.info("Update check failed: %s", exc)
             return
         if version is None:
@@ -1048,7 +1052,8 @@ class Engine:
         log.info("=== Session started ===")
         close_after = False
         try:
-            if not self._preflight():
+            paths = self._preflight()
+            if paths is None:
                 return
             if not self._start_steam():
                 return
@@ -1061,7 +1066,7 @@ class Engine:
                               f"{ELITE_WAIT}s - launch cancelled. Press LAUNCH "
                               "to try again.", "error")
                 return
-            self._launch_tools()
+            self._launch_tools(paths)
             self._log("All systems nominal.", "success")
             if not self._monitor(elite):
                 # The window was closed mid-session, not the game exiting --
@@ -1102,7 +1107,10 @@ class Engine:
         self._log("EDLS will stay open.")
         return False
 
-    def _preflight(self) -> bool:
+    def _preflight(self) -> Optional[dict[str, str]]:
+        """Check Steam is installed (None if not) and find each enabled tool:
+        its path by name, for _launch_tools -- resolved once, since a resolver
+        like SrvSurvey's walks a directory tree."""
         self._log("Preflight checks...", "dim")
         if winreg is not None:
             try:
@@ -1110,13 +1118,16 @@ class Engine:
             except OSError:
                 self._status(KEY_STEAM, AppState.NOT_FOUND)
                 self._log("Steam does not appear to be installed.", "error")
-                return False
+                return None
+        paths: dict[str, str] = {}
         for app in self.enabled_apps:
             path = app.resolve_path()
-            if not path or not os.path.exists(path):
+            if path and os.path.exists(path):
+                paths[app.name] = path
+            else:
                 self._log(f"{app.name} not found - will be skipped.", "warning")
                 self._status(app.name, AppState.NOT_FOUND)
-        return True
+        return paths
 
     def _start_steam(self) -> bool:
         """Bring Steam up for the launch sequence. Returns False only if the
@@ -1169,11 +1180,12 @@ class Engine:
             self._status(KEY_STEAM, AppState.ONLINE, steam.pid)
         return proc
 
-    def _launch_tools(self) -> list[AppDescriptor]:
+    def _launch_tools(self, paths: dict[str, str]) -> list[AppDescriptor]:
+        """Start each enabled tool preflight found (`paths`, by name)."""
         launched: list[AppDescriptor] = []
         for app in self.enabled_apps:
-            path = app.resolve_path()
-            if not path or not os.path.exists(path):
+            path = paths.get(app.name)
+            if path is None:
                 continue  # already reported NOT_FOUND in preflight
             if self.pm.find(app.process_name):
                 self._log(f"{app.name} already running - skipping.", "dim")

@@ -1562,16 +1562,26 @@ class _HudMessage(HudPopover):
         self.body.addLayout(row)
 
 
+def _run_dialog(dlg: QDialog) -> bool:
+    """exec() a modal dialog, then free it -- it's parented to a long-lived
+    window, so it would otherwise linger, hidden, until EDLS exits. The
+    deletion waits for the event loop, so the caller can still read it.
+    True if it was accepted."""
+    try:
+        return dlg.exec() == QDialog.DialogCode.Accepted
+    finally:
+        dlg.deleteLater()
+
+
 def hud_notice(parent: Optional[QWidget], title: str, text: str) -> None:
     """HUD stand-in for QMessageBox.information: a title, the text, and OK."""
-    _HudMessage(parent, title, text, "OK").exec()
+    _run_dialog(_HudMessage(parent, title, text, "OK"))
 
 
 def hud_confirm(parent: Optional[QWidget], title: str, text: str,
                 yes: str = "YES", no: str = "CANCEL") -> bool:
     """HUD stand-in for QMessageBox.question. True only if `yes` was chosen."""
-    dlg = _HudMessage(parent, title, text, yes, no)
-    return dlg.exec() == QDialog.DialogCode.Accepted
+    return _run_dialog(_HudMessage(parent, title, text, yes, no))
 
 
 # ── Add / edit app dialog ─────────────────────────────────────────────────────
@@ -1669,8 +1679,10 @@ _TOGGLE_TIPS: dict[str, tuple[bool, str]] = {
         "whether they're running. Off: only enabled apps get a card."),
     "toggle_scope": (True,
         "On: SHUTDOWN and the end-of-session teardown close every enabled app, "
-        "even ones you started yourself.\nOff: only apps EDLS launched are "
-        "closed.\nSteam and Elite: Dangerous are never closed."),
+        "even ones you started yourself.\nOff: only apps EDLS started, or took "
+        "over because they were already running when you pressed LAUNCH (or "
+        "their START), are closed.\nSteam and Elite: Dangerous are never "
+        "closed."),
     "toggle_admin": (True,
         "Some tools, like EDHM-UI, need administrator rights.\nOn: Windows "
         "asks you (the UAC prompt) when EDLS starts one, and again if EDLS has "
@@ -2096,7 +2108,7 @@ class SettingsDialog(QDialog):
         if self._blocked():
             return
         dlg = AppEntryDialog(taken_names=self._existing_names(), parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if not _run_dialog(dlg):
             return
         name, path = dlg.values()
         self._insert_app_row(name, path, _derive_process(path) or name)
@@ -2122,7 +2134,7 @@ class SettingsDialog(QDialog):
             path_item.text() if path_item else "",
             taken_names=self._existing_names(exclude_row=row),
             parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if not _run_dialog(dlg):
             return
         name, path = dlg.values()
         # Re-derive the process from the (maybe new) file, but keep the existing
@@ -2525,7 +2537,7 @@ class MainWindow(QMainWindow):
         dlg.locked_attempt.connect(lambda: self._log.append(
             "The companion app list is locked during a session - it unlocks "
             "when the game closes, or when EDLS restarts.", "warning"))
-        dlg.exec()
+        _run_dialog(dlg)
 
     def _prewarm_settings(self) -> None:
         """Pay Qt's one-time first-dialog realization cost off-screen while idle,

@@ -68,6 +68,9 @@ a visual outcome you haven't confirmed with him.
   PowerShell PascalCase (settings reset once on migration; that's fine).
 - **`ShutdownScope` is a user setting** (`LAUNCHED_ONLY` | `ALL_ENABLED`); both the
   SHUTDOWN button and the on-exit teardown honor it. Don't hardcode one behavior.
+  "Launched" includes what EDLS took over: a tool already running when LAUNCH or its
+  card's START reached it (`ProcessManager.launch()` records it), which is what lets a
+  re-attach after reopening EDLS clean up.
 - **EDLS never closes Steam or the game** (force-closing Elite breaks Frontier's
   ToS). `ProcessManager.stop()` refuses `PROTECTED_PROCESSES`; never add a kill
   path around it, and the Elite card has no STOP. The Steam card's STOP is refused

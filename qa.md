@@ -315,7 +315,9 @@ The Settings toggle "Shutdown closes all enabled apps (not just those EDLS launc
 sets the scope:
 
 - **Off (default, "launched only").** SHUTDOWN and the end-of-session teardown close only
-  apps that this EDLS window started.
+  apps that this EDLS window started or took over. A tool that was already running when
+  you pressed LAUNCH (or its card's START) is taken over, so it's closed too. One you
+  open yourself mid-session is left alone.
 - **On ("all enabled").** They close every *enabled* companion app that's running,
   whoever started it.
 - Unticked (disabled) apps, Steam and the game are never closed, in either mode.
@@ -432,6 +434,9 @@ Don't report these as bugs, unless they bother you as a player. That feedback is
 - The Elite card's START is "game only". It starts no tools and doesn't watch the game.
 - In "Status check: X of Y running", Y counts Steam + Elite + **every** app in
   Settings, whether it's enabled or not and whether its card is shown or not.
+- Under "launched only", a tool you opened before pressing LAUNCH is still closed at
+  the end: LAUNCH takes it over. That's also what lets a re-attach after reopening EDLS
+  (JR-04) clean up.
 - Only one EDLS runs at a time. Starting a second copy brings the first to the front (or
   flashes its taskbar button) and the second quits.
 - The window opens centred and sized to fit your screen. Its size and position aren't
@@ -586,7 +591,7 @@ Do this section in **both** themes.
 | LS-31 | P1 | R | **Cold start:** reboot, Steam closed → LAUNCH | The game appears within the 60 s. Record how long it took. If it was cancelled on a normal cold start, report it: the limit is too short for your PC (R-35). |
 | LS-14 | P2 | R | Start the game from Steam directly (not EDLS) → in EDLS press LAUNCH | EDLS sends Steam no second launch request: the log says "Elite: Dangerous is already running - attaching.", and no error popup, second launcher or second game window appears (R-02 fix). It picks up the running game straight away, starts the tools, watches the game, and tears down when it exits. |
 | LS-15 | P2 | R | LAUNCH → in game → close EDLS (X) → reopen EDLS | The game and tools keep running. The reopened EDLS shows them Online/Running. Then press SHUTDOWN: with "launched only" you get "No tools running." (this new window launched nothing, by design); with "all enabled" the enabled tools close. |
-| LS-16 | P2 | R | Continue from LS-15: press LAUNCH to re-attach → play → exit the game | Teardown runs and EDLS closes. Note which tools closed (with "launched only", tools that were already open are closed too; see R-03). |
+| LS-16 | P2 | R | Continue from LS-15: press LAUNCH to re-attach → play → exit the game | Teardown runs and EDLS closes. Note which tools closed (with "launched only", tools that were already open are closed too: LAUNCH took them over). |
 | LS-17 | P2 | R | Play a session of 2+ hours → exit | Teardown still works at the end. Note EDLS memory (§8.16). |
 | LS-18 | P2 | R | Mid-session → put the PC to sleep (or hibernate) → wake → keep playing → exit | EDLS is still watching, and teardown happens at exit. |
 | LS-19 | P3 | R | Mid-session → unplug the network for a minute | No effect on EDLS. |
@@ -613,7 +618,7 @@ running.
 | --- | --- | --- | --- | --- |
 | SC-01 | P1 | App started by LAUNCH | Closes | Closes |
 | SC-02 | P1 | App started from its card's START button | Closes | Closes |
-| SC-03 | P1 | App **you** opened before pressing LAUNCH (log: "already running - skipping") | Stays open per the README (**R-03**: suspected to close) | Closes |
+| SC-03 | P1 | App **you** opened before pressing LAUNCH (log: "already running - skipping") | Closes: LAUNCH took it over | Closes |
 | SC-04 | P1 | App you opened yourself during the session | Stays open | Closes |
 | SC-05 | P1 | App you opened yourself, no LAUNCH at all → SHUTDOWN | Stays open. Log: "No tools running." | Closes |
 | SC-06 | P1 | Unticked (disabled) app that's running | Stays open | Stays open |
@@ -665,7 +670,7 @@ Every test here is P1. **Any failure is a Blocker.**
 | CC-02 | P1 | A | Companion app STOP | "Stopping X..." → "X stopped.". The app closes and the card shows Stopped. The window stays responsive while it closes. |
 | CC-03 | P2 | A | START on an app whose path is wrong | The card shows **Not found** and the log says "X not found - check its path in Settings." (R-12 fix). Point it at a `.txt` file instead: the card shows **Failed** with "Couldn't start X (see launcher.log).". |
 | CC-04 | P2 | A | Close an app yourself, then immediately (before its card catches up) press STOP | "X wasn't running." The card shows Stopped. Nothing else closes. |
-| CC-05 | P2 | A | Open an app yourself, then immediately press START on its card | No second copy. "X is already running." The card shows Online. (EDLS now counts it as one it launched, R-03.) |
+| CC-05 | P2 | A | Open an app yourself, then immediately press START on its card | No second copy. "X is already running." The card shows Online. (EDLS takes it over: SHUTDOWN treats it as one it launched.) |
 | CC-06 | P2 | A | Click START/STOP on one card 10 times fast | No crash and no extra copies. Within a few seconds the card shows the true state. |
 | CC-07 | P1 | R | Steam closed → Steam card START | "Launching Steam..." → "Steam online. (PID …)". The card shows Online and Steam opens. |
 | CC-08 | P3 | R | Steam START when Steam takes more than 20 s (e.g. a big update) | "Steam did not start within 20s." (red), card shows Failed. When Steam does open, the card flips to Online by itself. |
@@ -1045,7 +1050,7 @@ Play these as a real user would. Note anything awkward, not just failures.
 | --- | --- | --- | --- | --- |
 | JR-01 | P1 | R | **New CMDR.** Fresh install → setup window → pick your tools → LAUNCH → play 15 min → exit to desktop → next day open EDLS again | Setup is understandable. Everything closes properly. Settings are remembered. |
 | JR-02 | P1 | R | **Daily driver.** AUTO START on → each day just open EDLS → play → exit. Repeat on 3 days. | It's hands-off every time, and EDLS closes itself at the end. |
-| JR-03 | P1 | R | **Pre-opened tools.** Open EDMC yourself → open EDLS → LAUNCH → play → exit | Is EDMC closed at the end? Under "launched only" the README says it shouldn't be (R-03). |
+| JR-03 | P1 | R | **Pre-opened tools.** Open EDMC yourself → open EDLS → LAUNCH → play → exit | EDMC is closed at the end, under "launched only" too: LAUNCH took it over. |
 | JR-04 | P2 | R | **Oops.** LAUNCH → close EDLS by accident mid-game → reopen → LAUNCH to re-attach → exit | No harm to the game. Re-attaching works without a second launch request (R-02 fix). Teardown happens. |
 | JR-05 | P2 | R | **Tinkerer.** Mid-session: try to add a tool (locked: note how the popup reads), switch theme, change scope and the close-EDLS toggles → keep playing → exit | The lock is understandable. The teardown and close behaviour match your final settings. |
 | JR-06 | P2 | R | **Game only.** Elite card START → later START two tools from their cards → exit the game → SHUTDOWN | Nothing closes when the game exits (the Elite card just goes Offline). SHUTDOWN closes the card-started tools. |

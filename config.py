@@ -99,7 +99,7 @@ class AppState(Enum):
 class ShutdownScope(Enum):
     """What SHUTDOWN (and the on-exit teardown) is allowed to close.
     This is a user setting -- see Settings.shutdown_scope."""
-    LAUNCHED_ONLY = "launched_only"   # only processes EDLS itself started
+    LAUNCHED_ONLY = "launched_only"   # only what EDLS started or took over
     ALL_ENABLED = "all_enabled"       # any enabled companion app that's running
 
 
@@ -282,12 +282,8 @@ def _fresh_default(reg: AppDescriptor) -> AppDescriptor:
                    enabled=bool(path and os.path.exists(path)))
 
 
-def _clone_registry() -> list[AppDescriptor]:
-    return [_fresh_default(a) for a in REGISTRY]
-
-
 def default_settings() -> Settings:
-    return Settings(apps=_clone_registry())
+    return Settings(apps=[_fresh_default(a) for a in REGISTRY])
 
 
 # Hand-edited settings.json can hold anything. Each reader below returns the

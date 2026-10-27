@@ -542,7 +542,7 @@ def main():
             decline[0] = False
             prompts.clear()
             w = engine(False)
-            w._launch_tools()
+            w._launch_tools({t.name: exe for t in tools})
             assert not prompts and statuses[-1] is S.FAILED, (prompts, statuses)
             assert "Settings" in logs[-1][1], logs[-1]
 
@@ -637,6 +637,44 @@ def main():
             else:
                 os.environ["LOCALAPPDATA"] = real_env
     run("launcher tools: prefer the launcher, track the tool", launcher_tools)
+
+    def resolve_once():
+        # LAUNCH finds each tool once: preflight hands its paths on, so a slow
+        # resolver (SrvSurvey's directory walk) runs once, not twice. Fakes
+        # only: no registry lookup, process scan or launch.
+        import tempfile
+        from dataclasses import replace as _replace
+        real_winreg = eng.winreg
+        calls, started = [], []
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as fh:
+            exe = fh.name
+
+        class P:   # stands in for a psutil.Process
+            pid = 990301
+
+        def engine(found):
+            tool = config.AppDescriptor(
+                "Walker", "Walker",
+                resolver=lambda: calls.append(1) or (exe if found else exe + ".x"))
+            w = eng.Engine(_replace(settings, apps=[tool]))
+            w.pm.find = lambda name: None
+            w.pm.launch = lambda app, resolved_path=None, elevate=None: (
+                started.append(resolved_path) or P())
+            return w
+
+        try:
+            eng.winreg = None   # skip the Steam registry check
+            w = engine(found=True)
+            paths = w._preflight()
+            assert paths == {"Walker": exe}, paths
+            w._launch_tools(paths)
+            assert started == [exe] and calls == [1], (started, calls)
+            # Nothing found is an empty result, not "Steam is missing" (None).
+            assert engine(found=False)._preflight() == {}
+        finally:
+            eng.winreg = real_winreg
+            os.remove(exe)
+    run("LAUNCH resolves each tool's path once", resolve_once)
 
     def elite_card_muting():
         # R-09: while the game is starting (or running) the Elite card button
@@ -810,7 +848,7 @@ def main():
         # The default CMDR name is placeholder (ghost) text, never real text,
         # and saving an empty field resets the name to the default.
         from dataclasses import replace
-        default = config.default_settings().cmdr_name
+        default = config.Settings().cmdr_name
 
         def saved_name(start, typed):
             dlg = ui.SettingsDialog(replace(settings, cmdr_name=start))
@@ -960,6 +998,32 @@ def main():
         ui.hud_notice(win, "App list locked", "Locked.")
     run("HUD popovers (app editor, confirm, notice)", hud_popovers)
 
+    def dialogs_freed():
+        # A finished dialog (a notice, a confirm, Settings) is deleted, not
+        # left hidden under the main window until EDLS exits.
+        from PySide6.QtCore import QCoreApplication, QEvent, QTimer
+        from PySide6.QtWidgets import QDialog
+
+        def flush():
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+        def answer(accept):
+            dlg = QApplication.activeModalWidget()
+            dlg.accept() if accept else dlg.reject()
+
+        flush()
+        before = len(win.findChildren(QDialog))
+        QTimer.singleShot(0, lambda: answer(True))
+        ui.hud_notice(win, "Notice", "Done.")
+        QTimer.singleShot(0, lambda: answer(False))
+        assert ui.hud_confirm(win, "Confirm", "Sure?") is False
+        QTimer.singleShot(0, lambda: answer(False))
+        win._open_settings()
+        flush()
+        assert len(win.findChildren(QDialog)) == before, \
+            (before, len(win.findChildren(QDialog)))
+    run("finished dialogs are freed", dialogs_freed)
+
     def close_countdown():
         # R-36: STAY OPEN cancels the close countdown, left alone it closes
         # EDLS, and the window closing ends it quietly. Headless engine, a
@@ -1105,6 +1169,13 @@ def main():
                 raise OSError("no network")
             eng.check_for_update = offline
             w._check_for_updates()   # quiet: nothing offered, nothing raised
+            assert offered == ["9.0.0"], offered
+
+            def cut_short():   # not an OSError: a reply that stops halfway
+                import http.client
+                raise http.client.IncompleteRead(b"")
+            eng.check_for_update = cut_short
+            w._check_for_updates()
             assert offered == ["9.0.0"], offered
         finally:
             eng.check_for_update = real

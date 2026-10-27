@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontInfo, QIcon, QPainter, QPen, QPixmap
 
 # Avoid a hard import cycle: Theme is an enum in config.py. We only compare by
@@ -217,7 +217,3 @@ def power_icon(color: QColor, px: int = 18) -> QIcon:
 
     pm.setDevicePixelRatio(2.0)
     return QIcon(pm)
-
-
-# Drop-in icon size constant (matches ui.py BTN_ICON).
-ICON_SIZE = QSize(18, 18)
