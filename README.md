@@ -68,6 +68,8 @@ an **update** link appears next to the version number. Click it for the steps an
 button to the release page: download the new installer there and run it. It installs
 over your current version and keeps your settings. Turn the check off in Settings.
 
+What's new: [release-notes.md](release-notes.md).
+
 ---
 
 ## Configuration
