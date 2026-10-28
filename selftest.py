@@ -639,6 +639,30 @@ def main():
                 os.environ["LOCALAPPDATA"] = real_env
     run("launcher tools: prefer the launcher, track the tool", launcher_tools)
 
+    def eddi_install_modes():
+        # EDDI installs for this account only (its installer's default) or for
+        # all users: either is found, this account's first. Temp files only.
+        import tempfile
+        real_env = {k: os.environ.get(k) for k in ("LOCALAPPDATA", "ProgramFiles")}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["LOCALAPPDATA"] = os.path.join(tmp, "Local")
+                os.environ["ProgramFiles"] = os.path.join(tmp, "Program Files")
+                eddi = config.REGISTRY_BY_NAME["EDDI"]
+                assert eddi.resolve_path() is None, eddi.resolve_path()
+                mine, everyone = map(config._expand_env, config._EDDI_PATHS)
+                for exe in (everyone, mine):   # this account's wins once it's there
+                    os.makedirs(os.path.dirname(exe), exist_ok=True)
+                    open(exe, "w").close()
+                    assert eddi.resolve_path() == exe, eddi.resolve_path()
+        finally:
+            for key, value in real_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+    run("EDDI: found for this account or all users", eddi_install_modes)
+
     def start_minimized():
         # Settings.start_minimized asks Windows to start a tool minimized
         # (SW_SHOWMINNOACTIVE), through Popen and through the UAC prompt alike,

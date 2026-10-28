@@ -83,7 +83,7 @@ confused you, even if the test technically passed.
   already launch through **min-ed-launcher** (see the README's Prerequisites). Epic and
   Frontier-store licences are out of scope, because EDLS always launches through Steam.
   If that's all you have, do the harness tests and say so in your report.
-- Some of the 12 supported companion apps installed (optional, but needed for §8.15).
+- Some of the 13 supported companion apps installed (optional, but needed for §8.15).
 - Recommended: **Process Explorer** (free, from Microsoft Sysinternals). It shows which
   program started which, and is used in §8.14.
 
@@ -502,7 +502,7 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify** or **Resolved*
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| ST-01 | P1 | A | Delete the whole `%LOCALAPPDATA%\EDLS` folder → start EDLS | Window opens centred (1000×880, or smaller to fit your screen). The four sections fade in within half a second. Then "EDLS — First-Time Setup" opens by itself. The log shows "Elite: Dangerous Launch Suite ready." and, a few seconds later, "Status check: N of 13 running.". The folder now contains `settings.json` and `launcher.log`. |
+| ST-01 | P1 | A | Delete the whole `%LOCALAPPDATA%\EDLS` folder → start EDLS | Window opens centred (1000×880, or smaller to fit your screen). The four sections fade in within half a second. Then "EDLS — First-Time Setup" opens by itself. The log shows "Elite: Dangerous Launch Suite ready." and, a few seconds later, "Status check: N of 15 running.". The folder now contains `settings.json` and `launcher.log`. |
 | ST-02 | P1 | A | Normal start (setup already done) | No setup window. Nothing flickers, and no extra window or taskbar button flashes in the first second. (EDLS quietly pre-builds the Settings window off-screen.) |
 | ST-03 | P1 | R | Open Steam, the game and some tools by hand → start EDLS | Within about 5 seconds the cards show Online/Running for what's open. The Elite card shows QUIT IN-GAME. |
 | ST-04 | P1 | A | Idle → close with X | Closes straight away. The terminal returns to the prompt with no traceback. |
@@ -525,14 +525,14 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify** or **Resolved*
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "WELCOME TO EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is empty, with the default name as grey ghost text and the caret in the field. Toggles: show cards **on**, shutdown-all **off**, ask for admin rights **on**, start tools minimized **off**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, check for updates **on**, light mode **off**. The app list sits to the right of the toggles. All 12 default apps are listed, all visible without scrolling; only the ones installed on this PC are ticked (R-26 fix). Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, CANCEL, BEGIN. |
+| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "WELCOME TO EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is empty, with the default name as grey ghost text and the caret in the field. Toggles: show cards **on**, shutdown-all **off**, ask for admin rights **on**, start tools minimized **off**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, check for updates **on**, light mode **off**. The app list sits to the right of the toggles. All 13 default apps are listed, all visible without scrolling; only the ones installed on this PC are ticked (R-26 fix). Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, CANCEL, BEGIN. |
 | FR-02 | P1 | A | Enter a name → untick tools you don't have → Save → restart EDLS | The CMDR row shows the name in capitals. Unticked apps appear as dimmed DISABLED cards. After restart there's no setup window and everything is kept. |
 | FR-03 | P1 | A | Fresh start → close the setup window with Cancel, then repeat with Esc, then with X | The window closes and the main window works with defaults. SETTINGS opens the first-run version again. On the next start the setup window reappears. |
 | FR-04 | P2 | A | Turn AUTO START on → close EDLS → set `"setup_complete": false` in settings.json → start EDLS | The setup window opens and **no launch starts**. The log says "Auto-start skipped - finish first-time setup first." and never "Auto-start enabled — launching..." (R-34 fix). |
 | FR-05 | P2 | A | In the setup window, type a name, clear it again → BEGIN | The default name is used. A blank name is never saved. |
 | FR-06 | P2 | A | In the setup window, turn Light mode on → Save | The whole window switches to light. |
 | FR-07 | P3 | R | Fresh start on a PC with only a few of the tools installed → BEGIN without changing the ticks → LAUNCH | Only the installed tools were ticked, so there's no pile of "… not found - will be skipped." lines (R-26 fix). A tool installed somewhere other than its default path starts unticked: tick it and set its path. |
-| FR-08 | P1 | A | **Upgrade:** start 1.3.0 on a 1.2.1 `settings.json` (or delete the Elite Studio entry from `settings.json` first) | Elite Studio joins the app list, ticked only if it's installed. Every other tick is as you left it. |
+| FR-08 | P1 | A | **Upgrade:** start 1.3.0 on a 1.2.1 `settings.json` (or delete the Elite Studio and EDDI entries from `settings.json` first) | Elite Studio and EDDI join the end of the app list, each ticked only if it's installed. Every other tick is as you left it. An app you'd already added yourself as "EDDI" isn't added a second time. |
 
 ### 8.3 Layout and visuals (UI)
 
@@ -603,7 +603,7 @@ Do this section in **both** themes.
 | LS-24 | P2 | A | On a Windows account that has never run Steam (or a VM without Steam) → LAUNCH | The Steam card shows Not found. Red "Steam does not appear to be installed.". LAUNCH becomes clickable again. Nothing else starts. |
 | LS-25 | P3 | A | Uninstall Steam but leave its registry entries (VM only) → LAUNCH | Record. Look for endless waiting or Windows "pick an app to open this link" prompts. |
 | LS-26 | P2 | H | LAUNCH → open the fake game → close it the moment the tools appear | Teardown runs, the tools close, EDLS closes. No errors. |
-| LS-27 | P2 | A | Enable all 12 defaults plus several dummies → LAUNCH | Everything starts. Note the total time and any app that fails to start when many start at once. |
+| LS-27 | P2 | A | Enable all 13 defaults plus several dummies → LAUNCH | Everything starts. Note the total time and any app that fails to start when many start at once. |
 | LS-28 | P1 | H | Settings → "Close EDLS when the game exits" **off** → LAUNCH → open the fake game → close it | Teardown runs, then "Session ended.". **No countdown**: EDLS stays open, LAUNCH comes back, and the app list in Settings is editable again. LAUNCH again works. |
 | LS-29 | P2 | H | Default settings → LAUNCH → close the fake game → during "EDLS will close in 5 seconds." close the window yourself | It closes cleanly with no traceback, and nothing else happens afterwards. Also check that during the countdown LAUNCH reads STAY OPEN and clicking SETTINGS still works. |
 | LS-30 | P1 | H | LAUNCH and don't open the fake game for 60 s → then open it | At 60 s the launch is cancelled exactly as in LS-13 and LAUNCH comes back. When you open the fake game, the Elite card flips to Running within about 5 s, with no tools started. LAUNCH then re-attaches. |
@@ -746,7 +746,7 @@ about every 5 s otherwise.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| SE-15 | P1 | A | Look at the list | "DRAG TO REORDER" in grey at the top right of the list. Columns: ON tick box, NAME, PATH (no process column). Default paths show placeholders like `%ProgramFiles(x86)%\…`. SrvSurvey's path is blank because EDLS finds it by itself. |
+| SE-15 | P1 | A | Look at the list | "DRAG TO REORDER" in grey at the top right of the list. Columns: ON tick box, NAME, PATH (no process column). Default paths show placeholders like `%ProgramFiles(x86)%\…`. The paths of SrvSurvey, OdysseyMaterials and EDDI are blank because EDLS finds them by itself. |
 | SE-55 | P1 | A | Drag a row (by its name or path) up the list, then down, then to above the first row and below the last. Start one more drag and drop it back where it was. Do it in both themes. | While you drag, an orange line shows where the row will land, and there's no line when it would land where it already is. The row moves there, keeps its tick and path, and stays selected. The list doesn't jump. Save: the cards and LAUNCH follow the new order (UI-11), and it's kept after a restart. Cancel: the old order. Record whether the drag feels obvious. |
 | SE-56 | P2 | A | Select a row → Ctrl+Down, Ctrl+Up, including at the top and bottom of the list | The row moves one place and stays selected. At the ends nothing happens. Save keeps the order. |
 | SE-16 | P1 | A | Untick an app → Save → LAUNCH | It stays unticked after a restart and LAUNCH doesn't start it. |
@@ -768,14 +768,14 @@ about every 5 s otherwise.
 | SE-32 | P2 | A | EDIT and — REMOVE with no row selected | Nothing happens and there's no error. |
 | SE-33 | P1 | A | Remove a custom app → Save | Gone from the list and from the cards. |
 | SE-34 | P1 | A | Remove a default app (e.g. EDCoPilot) → Save → restart EDLS | It stays removed and doesn't come back. |
-| SE-35 | P2 | A | Remove **every** app → Save → restart EDLS | The list stays empty: only the Steam and Elite cards are left. RESTORE DEFAULTS → Save brings the 12 back, ticked only if installed (R-06 fix). |
+| SE-35 | P2 | A | Remove **every** app → Save → restart EDLS | The list stays empty: only the Steam and Elite cards are left. RESTORE DEFAULTS → Save brings the 13 back, ticked only if installed (R-06 fix). |
 | SE-36 | P2 | A | After SE-34, add an app with the removed default's exact name and path | Works and launches. |
 | SE-37 | P2 | A | Rename EDMarketConnector to "EDMC" → Save → restart → LAUNCH | Still launches. The original "EDMarketConnector" row doesn't reappear. |
 | SE-38 | P2 | A | Rename SrvSurvey (path blank) → Save → LAUNCH → restart EDLS → LAUNCH | Found both times: the renamed app keeps its auto-find after the restart (R-07 fix). |
 | SE-39 | P2 | A | Clear the path of a default app that has one (e.g. EDMarketConnector) → Save → reopen | The default path comes back. Record whether that's confusing. |
 | SE-40 | P3 | A | EDIT a default app whose path has a `%…%` placeholder → Browse… | Record which folder the file picker opens in. |
-| SE-41 | P1 | A | RESTORE DEFAULTS → **CANCEL**. Then RESTORE DEFAULTS → **RESET** → Cancel. Then RESTORE DEFAULTS → RESET → Save. | The confirmation is a chamfered popover over Settings, and Enter picks CANCEL. CANCEL: nothing changes. RESET: every field resets in the window (the name field empties to the grey default, default toggles, the 12 defaults, ticked only if installed, custom apps gone). Cancel: nothing saved. Save: the defaults are kept after a restart. AUTO START is unchanged. |
-| SE-42 | P2 | A | Remove some defaults → Save → RESTORE DEFAULTS → Yes → Save → restart | All 12 are back and stay back. |
+| SE-41 | P1 | A | RESTORE DEFAULTS → **CANCEL**. Then RESTORE DEFAULTS → **RESET** → Cancel. Then RESTORE DEFAULTS → RESET → Save. | The confirmation is a chamfered popover over Settings, and Enter picks CANCEL. CANCEL: nothing changes. RESET: every field resets in the window (the name field empties to the grey default, default toggles, the 13 defaults, ticked only if installed, custom apps gone). Cancel: nothing saved. Save: the defaults are kept after a restart. AUTO START is unchanged. |
+| SE-42 | P2 | A | Remove some defaults → Save → RESTORE DEFAULTS → Yes → Save → restart | All 13 are back and stay back. |
 | SE-43 | P2 | A | OPEN LOG FOLDER | Explorer opens `%LOCALAPPDATA%\EDLS`. |
 | SE-44 | P2 | H | 25+ apps in the list. Drag a row from the top to the bottom. | The list scrolls, and scrolls by itself while you hold a dragged row near its top or bottom edge. Save works. (Cards: UI-12.) |
 | SE-45 | P2 | H | Open Settings mid-session and change things other than the app list (name, theme, toggles, scope) | Allowed. Changes take effect straight away for the rest of the session. See §9. |
@@ -797,7 +797,7 @@ Close EDLS before each edit. Keep a backup.
 | PS-02 | P1 | A | Replace the contents with `hello` → start. Repeat with `[1, 2]`. | No crash. Settings reset to defaults and the setup window appears. The activity log shows an orange "settings.json couldn't be read (…) - settings were reset to defaults. The old file was kept as settings.json.bad.", and `settings.json.bad` holds what you wrote. |
 | PS-03 | P1 | A | Open `settings.json` in Notepad → Save As → Encoding: **UTF-8 with BOM** (change nothing else) → start | Settings kept exactly; no warnings (R-05 fix). |
 | PS-04 | P1 | A | `"elite_app_id": "abc"` → start | No crash. The activity log shows "settings.json: 'elite_app_id' has an invalid value - using 359320."; everything else is kept (R-04 fix). |
-| PS-05 | P2 | A | `"apps": null` → start | No crash. The 12 default apps are restored, ticked only if installed. |
+| PS-05 | P2 | A | `"apps": null` → start | No crash. The 13 default apps are restored, ticked only if installed. |
 | PS-06 | P2 | A | Make one entry in `apps` a plain string, e.g. `"EDMC"` → start | No crash. That entry is skipped with a warning ("skipped an app entry with no valid name"); the other apps load. |
 | PS-07 | P2 | A | `"removed_defaults": null` → start | No crash. |
 | PS-08 | P2 | A | `"cmdr_name": 123` (a number, no quotes) → start | No crash. Warning, and the default name is used. |
@@ -909,6 +909,7 @@ rest.
 | CA-10 | EDCoPTER | `%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe` | EDCoPTER.exe | General checks a–g. |
 | CA-11 | Elite Observatory | `%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe` | ObservatoryCore.exe | General checks a–g. |
 | CA-18 | Elite Studio | `%ProgramFiles%\Elite Studio\EliteStudio.exe` | EliteStudio.exe | It uses WebView2, so it runs several `msedgewebview2.exe` processes under it. After teardown and after STOP, none of those are left (other apps such as Edge run their own, so count `msedgewebview2.exe` in Task Manager → Details before starting it and after closing it). If `launcher.log` says "Elite Studio didn't close when asked", check whether it hides to the tray when you close its window. |
+| CA-20 | EDDI | `%LOCALAPPDATA%\EDDI\Application\EDDI.exe` (installed for you only, the installer's default); if that's missing, `%ProgramFiles%\EDDI\EDDI.exe` (installed for all users) | EDDI.exe | Settings shows its path blank: EDLS finds it by itself. It shows a splash screen first, so check g may not hold. **With VoiceAttack 2** (EDDI's plugin starts EDDI itself, with its window hidden): 1) VoiceAttack ticked, EDDI unticked → LAUNCH → exit the game: EDDI starts with VoiceAttack and is gone after teardown. 2) Both ticked → LAUNCH a few times: record any "EDDI is already running" message, and whether VoiceAttack's EDDI commands work. 3) Both ticked, but start VoiceAttack yourself and wait for EDDI to appear before LAUNCH: EDDI's hidden window ignores a close request, so `launcher.log` may say "EDDI didn't close when asked - killing it.": do check e. |
 
 More:
 

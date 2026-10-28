@@ -179,6 +179,22 @@ def _find_odyssey_materials() -> Optional[str]:
     return launcher if os.path.exists(launcher) else _expand_env(_ODYSSEY_HELPER)
 
 
+# Where EDDI's installer puts it: for this account only (its default), or for
+# all users.
+_EDDI_PATHS = (r"%LOCALAPPDATA%\EDDI\Application\EDDI.exe",
+               r"%ProgramFiles%\EDDI\EDDI.exe")
+
+
+def _find_eddi() -> Optional[str]:
+    """EDDI installs for this account only (the installer's default) or for
+    all users -- whichever is on this PC, this account's first."""
+    for template in _EDDI_PATHS:
+        path = _expand_env(template)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 # =============================================================================
 # THE registry -- add or remove default apps here, nowhere else
 # =============================================================================
@@ -207,6 +223,8 @@ REGISTRY: list[AppDescriptor] = [
                   r"%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe"),
     AppDescriptor("Elite Studio", "EliteStudio",
                   r"%ProgramFiles%\Elite Studio\EliteStudio.exe"),
+    AppDescriptor("EDDI", "EDDI",
+                  resolver=_find_eddi),
 ]
 
 REGISTRY_BY_NAME = {a.name: a for a in REGISTRY}
