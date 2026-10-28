@@ -15,11 +15,12 @@ Tools that need admin rights, an update check, and a round of fixes from QA.
 ## What's new
 
 - **Tools that need admin rights.** EDLS can now start EDHM-UI and other tools that ask for administrator rights: Windows shows its usual UAC prompt. If EDLS has to close one later, Windows asks once more, one prompt for all of them. Don't want the prompts? Turn off "Ask for admin rights when a tool needs them" in Settings.
-- **Update check.** At startup EDLS asks GitHub whether there's a newer version. If there is, an "update" link appears next to the version number and takes you to the release page. EDLS never downloads or installs anything itself. Turn it off in Settings.
+- **Update check.** At startup EDLS asks GitHub whether there's a newer version. If there is, a green UPDATE badge appears next to your CMDR name and takes you to the release page. EDLS never downloads or installs anything itself. Turn it off in Settings.
+- **Start tools minimized.** A new Settings toggle starts your tools minimized, so they don't pop up over the game. Some tools ignore it and open normally anyway (hover the "i" next to the toggle for which). It's off unless you turn it on.
 - **STAY OPEN.** Changed your mind during the 5-second close countdown? LAUNCH turns into STAY OPEN: click it and EDLS stays put.
 - **Elite Studio** joins the default tools.
 - **Only your tools start ticked.** On first run, and after RESTORE DEFAULTS, only the tools EDLS finds on your PC are enabled, so no more wall of "not found" warnings. Upgrading? Elite Studio is added unticked unless you have it, and your other choices stay as they were.
-- **Settings.** Hover help on the toggles (look for the "i"), and the Light mode toggle previews the theme as you flip it (Cancel puts it back).
+- **Settings.** It's wider now, with your tools beside the toggles. Drag a tool up or down the list (or Ctrl+Up/Down) to set the order: it's the order of the cards and the order your tools start in. There's hover help on the toggles (look for the "i"), and the Light mode toggle previews the theme as you flip it (Cancel puts it back).
 - Cards for tools you've disabled now sit after the enabled ones.
 
 ## Other fixes

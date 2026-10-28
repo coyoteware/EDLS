@@ -492,6 +492,7 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify** or **Resolved*
 | RG-17 | P1 | A | Small screens, keyboard, startup lock, one copy: run UI-03, UI-04, UI-12, UI-24, AX-01, AX-02, ST-15. | Fits 1024×768. Tab focus visible. No resizing during the fade-in. Never two copies. |
 | RG-18 | P1 | H/R | This round (1.2.1): PR-10 (also works with the fake game open), LS-14, SE-20, SE-29, SE-35, SC-20, SC-16, and §3.5 | Steam is never asked to exit while the game runs. LAUNCH attaches to a running game without a second launch request. Quoted paths work. Steam and Elite can't be used as app names. An emptied app list stays empty. Tools are asked to close before they're forced. The installer installs, upgrades and uninstalls cleanly. |
 | RG-19 | P1 | H/A | This round (1.3.0): FR-01, FR-08, SE-10, SE-38, SE-46, LG-04, LS-35, SC-22, SQ-37 | Only installed tools start ticked, and an upgrade doesn't tick a new default you don't have. Names show as typed. A renamed SrvSurvey is still found after a restart. EDLS never closes behind an open dialog. The log keeps your place. STAY OPEN cancels the close countdown. |
+| RG-20 | P1 | H/A | Late 1.3.0 additions: SE-04, SE-55, SE-51, UP-02, UP-03, CA-19 and check g of §8.15 for your tools | Settings is landscape and fits 1024×768. Dragging a row sets the card and launch order, and can't be done mid-session. The update shows as a green badge on the CMDR name's row, at the right. With "Start tools minimized" on, tools that allow it start minimized. |
 
 ---
 
@@ -524,7 +525,7 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify** or **Resolved*
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "WELCOME TO EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is empty, with the default name as grey ghost text and the caret in the field. Toggles: show cards **on**, shutdown-all **off**, ask for admin rights **on**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, check for updates **on**, light mode **off**. All 12 default apps are listed; only the ones installed on this PC are ticked (R-26 fix). Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, CANCEL, BEGIN. |
+| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "WELCOME TO EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is empty, with the default name as grey ghost text and the caret in the field. Toggles: show cards **on**, shutdown-all **off**, ask for admin rights **on**, start tools minimized **off**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, check for updates **on**, light mode **off**. The app list sits to the right of the toggles. All 12 default apps are listed, all visible without scrolling; only the ones installed on this PC are ticked (R-26 fix). Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, CANCEL, BEGIN. |
 | FR-02 | P1 | A | Enter a name → untick tools you don't have → Save → restart EDLS | The CMDR row shows the name in capitals. Unticked apps appear as dimmed DISABLED cards. After restart there's no setup window and everything is kept. |
 | FR-03 | P1 | A | Fresh start → close the setup window with Cancel, then repeat with Esc, then with X | The window closes and the main window works with defaults. SETTINGS opens the first-run version again. On the next start the setup window reappears. |
 | FR-04 | P2 | A | Turn AUTO START on → close EDLS → set `"setup_complete": false` in settings.json → start EDLS | The setup window opens and **no launch starts**. The log says "Auto-start skipped - finish first-time setup first." and never "Auto-start enabled — launching..." (R-34 fix). |
@@ -716,7 +717,7 @@ about every 5 s otherwise.
 | SE-01 | P1 | A | SETTINGS | Opens quickly (under half a second). Title "EDLS — Settings", heading "S E T T I N G S". It shows the current values. It's styled like the main window: mono text, square tick boxes, and chamfered buttons with an orange or gold SAVE. Only the Windows title bar looks standard. |
 | SE-02 | P1 | A | Change several things → Cancel. Repeat with Esc and with X. | Nothing is saved. Check by reopening, and again after a restart. |
 | SE-03 | P1 | A | Change several things → Save | Applied straight away, and still there after a restart. |
-| SE-04 | P2 | A | Resize the Settings window | It can't go below about 640×560. The table grows and the buttons stay visible. On a 768-pixel-high screen it opens fully on screen. |
+| SE-04 | P2 | A | Resize the Settings window | It's landscape: CMDR name and toggles on the left, the app list on the right. It can't go below about 940×570 (940×640 for first-time setup). The app list grows with the window, the toggles keep their width, and the buttons stay visible. Only "Shutdown closes all enabled apps…" wraps onto a second line. On a 1024×768 screen it opens fully on screen. |
 | SE-05 | P2 | A | Press Enter while typing in CMDR NAME | Record. It probably saves and closes immediately; say whether that surprised you. |
 
 **CMDR name**
@@ -735,16 +736,19 @@ about every 5 s otherwise.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| SE-12 | P1 | A | Click each of the seven toggles | The six on/off settings are chamfered switches: the knob slides across, the OFF/ON label swaps, and the knob turns gold (orange in light mode). Light mode is a wider moon/sun switch: the orange knob slides over and its icon turns from moon to sun. Save keeps it. Cancel undoes it. A mouse click doesn't leave a focus ring behind. |
+| SE-12 | P1 | A | Click each of the eight toggles | The seven on/off settings are chamfered switches: the knob slides across, the OFF/ON label swaps, and the knob turns gold (orange in light mode). Light mode is a wider moon/sun switch: the orange knob slides over and its icon turns from moon to sun. Save keeps it. Cancel undoes it. A mouse click doesn't leave a focus ring behind. |
 | SE-13 | P2 | A | Keyboard only: Tab through the window and change each toggle | Tab reaches every toggle and a dashed orange outline shows which one has focus. Space or Enter flips it; ← turns it off, → on (R-20 fix). |
 | SE-14 | P1 | A | "Show cards for apps that aren't enabled" on and off → Save | Cards for unticked apps appear and disappear (UI-15, UI-16). |
 | SE-52 | P1 | A | Look at the toggles "Close EDLS when the game exits" and "Close EDLS after SHUTDOWN" | Defaults: on and off. They survive Save, restart and RESTORE DEFAULTS (back to on/off). What they do: LS-04, LS-28, SC-12, SC-18. |
+| SE-57 | P1 | A | Look at "Start tools minimized" and hover its "i" | Default off. It survives Save and restart; RESTORE DEFAULTS turns it off again. The hover help says some tools ignore it (launchers like Odyssey Materials Helper, splash screens, tools that reopen where you left them) and that running tools aren't touched. What it does: [§8.15](#815-companion-app-compatibility-ca) check g, CA-19. |
 
 **Companion apps list**
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| SE-15 | P1 | A | Look at the list | Columns: ON tick box, NAME, PATH (no process column). Default paths show placeholders like `%ProgramFiles(x86)%\…`. SrvSurvey's path is blank because EDLS finds it by itself. |
+| SE-15 | P1 | A | Look at the list | "DRAG TO REORDER" in grey at the top right of the list. Columns: ON tick box, NAME, PATH (no process column). Default paths show placeholders like `%ProgramFiles(x86)%\…`. SrvSurvey's path is blank because EDLS finds it by itself. |
+| SE-55 | P1 | A | Drag a row (by its name or path) up the list, then down, then to above the first row and below the last. Start one more drag and drop it back where it was. Do it in both themes. | While you drag, an orange line shows where the row will land, and there's no line when it would land where it already is. The row moves there, keeps its tick and path, and stays selected. The list doesn't jump. Save: the cards and LAUNCH follow the new order (UI-11), and it's kept after a restart. Cancel: the old order. Record whether the drag feels obvious. |
+| SE-56 | P2 | A | Select a row → Ctrl+Down, Ctrl+Up, including at the top and bottom of the list | The row moves one place and stays selected. At the ends nothing happens. Save keeps the order. |
 | SE-16 | P1 | A | Untick an app → Save → LAUNCH | It stays unticked after a restart and LAUNCH doesn't start it. |
 | SE-17 | P1 | H | + ADD → Browse… → pick `DummyA.exe` | The file picker shows `.exe` files (with an "All files" option). The path fills in. Save adds the row, ticked. After saving Settings the card appears and LAUNCH starts it. |
 | SE-18 | P1 | H | + ADD → type the path by hand | Same as SE-17. |
@@ -773,9 +777,9 @@ about every 5 s otherwise.
 | SE-41 | P1 | A | RESTORE DEFAULTS → **CANCEL**. Then RESTORE DEFAULTS → **RESET** → Cancel. Then RESTORE DEFAULTS → RESET → Save. | The confirmation is a chamfered popover over Settings, and Enter picks CANCEL. CANCEL: nothing changes. RESET: every field resets in the window (the name field empties to the grey default, default toggles, the 12 defaults, ticked only if installed, custom apps gone). Cancel: nothing saved. Save: the defaults are kept after a restart. AUTO START is unchanged. |
 | SE-42 | P2 | A | Remove some defaults → Save → RESTORE DEFAULTS → Yes → Save → restart | All 12 are back and stay back. |
 | SE-43 | P2 | A | OPEN LOG FOLDER | Explorer opens `%LOCALAPPDATA%\EDLS`. |
-| SE-44 | P2 | H | 25+ apps in the list | The list scrolls. Save works. (Cards: UI-12.) |
+| SE-44 | P2 | H | 25+ apps in the list. Drag a row from the top to the bottom. | The list scrolls, and scrolls by itself while you hold a dragged row near its top or bottom edge. Save works. (Cards: UI-12.) |
 | SE-45 | P2 | H | Open Settings mid-session and change things other than the app list (name, theme, toggles, scope) | Allowed. Changes take effect straight away for the rest of the session. See §9. |
-| SE-51 | P1 | H | LAUNCH → open Settings → try every way of changing the app list: + ADD, EDIT, double-click a row, — REMOVE, RESTORE DEFAULTS, Space/Enter/Delete on a row, the ON boxes | The list header says "LOCKED WHILE A SESSION IS RUNNING" and the ON boxes are greyed. Every attempt shows the popup "The companion app list is locked while a session is running…" and changes nothing. The activity log gets **one** warning per Settings opening, not one per attempt. After the game closes (with "Close EDLS when the game exits" off), reopen Settings: it's unlocked (R-15 fix). |
+| SE-51 | P1 | H | LAUNCH → open Settings → try every way of changing the app list: + ADD, EDIT, double-click a row, — REMOVE, RESTORE DEFAULTS, Space/Enter/Delete on a row, Ctrl+Up/Down, dragging a row, the ON boxes | The list header says "LOCKED WHILE A SESSION IS RUNNING" instead of "DRAG TO REORDER", and the ON boxes are greyed. A row can't be dragged. Every other attempt shows the popup "The companion app list is locked while a session is running…" and changes nothing. The activity log gets **one** warning per Settings opening, not one per attempt. After the game closes (with "Close EDLS when the game exits" off), reopen Settings: it's unlocked (R-15 fix). |
 | SE-53 | P2 | A | In the app list, select a row with the arrow keys → Space → Enter → Delete | Space ticks or unticks ON; Enter opens the edit window; Delete removes the row (R-20 fix). |
 | SE-46 | P2 | H | Leave Settings open while the fake game closes (session ends, countdown runs) | When the countdown ends, EDLS stays open behind Settings, logs "EDLS stayed open - a dialog was open." and LAUNCH comes back. Save and Cancel still work. No traceback (R-22 fix). |
 | SE-47 | P2 | A | Settings, the add/edit popover (with an error showing), and the "Restore defaults" and "App list locked" popovers, in both themes | Everything is readable. Nothing is light-on-light or dark-on-dark. The popovers have no Windows title bar: chamfered panels with an orange or amber edge, centred over Settings. Esc closes them. |
@@ -866,7 +870,7 @@ including Steam and the game. That's fixed. These tests guard it.
 
 ### 8.15 Companion app compatibility (CA)
 
-For every default app you have installed, run checks **a–f** and note the app's version.
+For every default app you have installed, run checks **a–g** and note the app's version.
 Treat these as **P1** for EDMarketConnector and any tool you use daily, **P2** for the
 rest.
 
@@ -885,6 +889,11 @@ rest.
   data (logs, databases, profiles) is intact. **Any data loss is Critical** (R-17).
 - **f. No surprises:** no extra console windows, updater prompts or errors when EDLS
   starts it.
+- **g. Starts minimized:** with "Start tools minimized" on in Settings, LAUNCH starts it
+  minimized on the taskbar and the game keeps focus. It's only a request to Windows, so
+  record which tools open normally anyway. Expect Odyssey Materials Helper to (it starts
+  through its launcher), and maybe tools with a splash screen or that reopen where you
+  left them.
 
 | ID | App (card name) | Where EDLS looks by default | Program name EDLS watches | Extra things to check |
 | --- | --- | --- | --- | --- |
@@ -897,8 +906,8 @@ rest.
 | CA-07 | ICARUS Terminal | `%ProgramFiles(x86)%\ICARUS Terminal\ICARUS Terminal.exe` | ICARUS Terminal.exe | Probably runs several processes. Check they all close. |
 | CA-08 | EDDiscovery | `%ProgramFiles%\EDDiscovery\EDDiscovery.exe` | EDDiscovery.exe | It has a local database. After a forced close it must open normally, with no repair or "database locked" messages and with recent data present. |
 | CA-09 | VoiceAttack | `%ProgramFiles%\VoiceAttack\VoiceAttack.exe` | VoiceAttack.exe | Often run as administrator: see SC-16 and SC-21. Profiles and settings intact. |
-| CA-10 | EDCoPTER | `%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe` | EDCoPTER.exe | General checks a–f. |
-| CA-11 | Elite Observatory | `%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe` | ObservatoryCore.exe | General checks a–f. |
+| CA-10 | EDCoPTER | `%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe` | EDCoPTER.exe | General checks a–g. |
+| CA-11 | Elite Observatory | `%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe` | ObservatoryCore.exe | General checks a–g. |
 | CA-18 | Elite Studio | `%ProgramFiles%\Elite Studio\EliteStudio.exe` | EliteStudio.exe | It uses WebView2, so it runs several `msedgewebview2.exe` processes under it. After teardown and after STOP, none of those are left (other apps such as Edge run their own, so count `msedgewebview2.exe` in Task Manager → Details before starting it and after closing it). If `launcher.log` says "Elite Studio didn't close when asked", check whether it hides to the tray when you close its window. |
 
 More:
@@ -911,6 +920,7 @@ More:
 | CA-15 | P2 | A | A tool that shows an update prompt on start | Record whether the prompt blocks anything or confuses EDLS. |
 | CA-16 | P2 | R | If your min-ed-launcher config also starts companion apps (its own process list) → LAUNCH → exit | Record duplicates or conflicts. Test with that option on and off. |
 | CA-17 | P2 | R | A tool with its own "close when the game exits" feature | No errors when EDLS finds it already gone at teardown. |
+| CA-19 | P2 | A | "Start tools minimized" on → a card's START (EDHM-UI too, if you have it: it goes through the UAC prompt). Then turn it off → SAVE → LAUNCH. | START starts the tool minimized as well (where the tool allows it, see check g). A tool that was already running isn't minimized or moved. With the toggle off, tools open normally, as before. |
 
 ### 8.16 Performance (PF)
 
@@ -964,19 +974,19 @@ Use Task Manager → Details → the `python.exe` whose command line ends in `ma
 ### 8.20 Update check (UP)
 
 EDLS asks GitHub for the latest release about a second after it starts. It never downloads
-or installs anything: if a newer version is out, the update link explains the steps and
-opens the release page. To see the link, run an older EDLS: from source (§3.2) with
+or installs anything: if a newer version is out, the update badge explains the steps and
+opens the release page. To see the badge, run an older EDLS: from source (§3.2) with
 `APP_VERSION` near the top of `config.py` set lower, e.g. `"1.0.0"`. Put it back
 afterwards.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| UP-01 | P1 | A | Run the latest version → start EDLS | No update link and nothing about updates in the activity log. `launcher.log` has "Update check: EDLS &lt;version&gt; is the latest." |
-| UP-02 | P1 | A | Run an older version → start EDLS. Repeat in light mode. | About a second after the panels appear, "update x.y.z available" shows after "report issue": gold, orange in light mode. The log says "EDLS x.y.z is available - click 'update' next to the version below." |
-| UP-03 | P1 | A | Click the update link. Repeat in light mode, and reach the link with Tab → Enter. | A popover: "U P D A T E   A V A I L A B L E", "EDLS x.y.z is out - you have …", then how to update (download `EDLS-Setup-x.y.z.exe` from the release page and run it). Two buttons: LATER and RELEASE PAGE. Enter and Esc both mean LATER: nothing happens and the link stays. Record anything in the text that's unclear. |
-| UP-04 | P1 | A | Update popover → RELEASE PAGE | Your browser opens the latest release's GitHub page, showing that version with its installer under Assets. The link stays. |
-| UP-05 | P1 | A | With EDLS open, follow the popover's steps: download the installer and run it. Needs a published release newer than the installed EDLS. | Same as IN-02: setup closes EDLS, and Steam, the game and the tools stay open. Let setup start EDLS at the end: the badge shows the new version, there's no update link, and your settings and app list are unchanged. |
-| UP-06 | P1 | A | Settings → "Check for EDLS updates at startup" off → Save → restart an older version | No link. `launcher.log` has no "Update check" line at all. Turn it back on → restart: the link is back. |
+| UP-01 | P1 | A | Run the latest version → start EDLS | No update badge and nothing about updates in the activity log. `launcher.log` has "Update check: EDLS &lt;version&gt; is the latest." |
+| UP-02 | P1 | A | Run an older version → start EDLS. Repeat in light mode. | About a second after the panels appear, a green "UPDATE x.y.z AVAILABLE" badge shows at the right end of the CMDR name's row (green in both themes). The CMDR name stays centred under the title and the header grows only a few pixels. Repeat with a long CMDR name (40+ characters): the name moves left rather than run into the badge. The log says "EDLS x.y.z is available - click the UPDATE badge next to your CMDR name." in green (pale green in light mode). |
+| UP-03 | P1 | A | Click the update badge. Repeat in light mode, and reach the badge with Tab → Enter. | A popover: "U P D A T E   A V A I L A B L E", "EDLS x.y.z is out - you have …", then how to update (download `EDLS-Setup-x.y.z.exe` from the release page and run it). Two buttons: LATER and RELEASE PAGE. Enter and Esc both mean LATER: nothing happens and the badge stays. Record anything in the text that's unclear. |
+| UP-04 | P1 | A | Update popover → RELEASE PAGE | Your browser opens the latest release's GitHub page, showing that version with its installer under Assets. The badge stays. |
+| UP-05 | P1 | A | With EDLS open, follow the popover's steps: download the installer and run it. Needs a published release newer than the installed EDLS. | Same as IN-02: setup closes EDLS, and Steam, the game and the tools stay open. Let setup start EDLS at the end: the version chip shows the new version, there's no update badge, and your settings and app list are unchanged. |
+| UP-06 | P1 | A | Settings → "Check for EDLS updates at startup" off → Save → restart an older version | No badge. `launcher.log` has no "Update check" line at all. Turn it back on → restart: the badge is back. |
 | UP-07 | P2 | A | Disconnect from the internet → start EDLS | No popup and nothing in the activity log. `launcher.log` has "Update check failed: …". Everything else works. |
 
 ---

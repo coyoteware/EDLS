@@ -251,6 +251,8 @@ class Settings:
     apps: list[AppDescriptor] = field(default_factory=list)
     removed_defaults: list[str] = field(default_factory=list)
     check_for_updates: bool = True
+    # Ask Windows to start each tool minimized (a hint: some tools ignore it).
+    start_minimized: bool = False
 
 
 # =============================================================================
@@ -407,6 +409,8 @@ def _from_dict(raw: dict) -> Settings:
                           if isinstance(n, str)],
         check_for_updates=_as_bool(raw.get("check_for_updates"),
                                    d.check_for_updates, "check_for_updates"),
+        start_minimized=_as_bool(raw.get("start_minimized"),
+                                 d.start_minimized, "start_minimized"),
     )
 
 
@@ -490,6 +494,7 @@ def save_settings(s: Settings) -> bool:
         "theme": s.theme.value,
         "removed_defaults": s.removed_defaults,
         "check_for_updates": s.check_for_updates,
+        "start_minimized": s.start_minimized,
         "apps": [
             {"name": a.name, "process": a.process_name,
              "path": a.path, "enabled": a.enabled, "origin": a.origin}

@@ -108,6 +108,13 @@ LAUNCHER_WAIT = 30         # a tool's launcher (it may update the tool first) to
 ELEVATED_CLOSE_WAIT = CLOSE_GRACE + KILL_WAIT + 4   # the elevated close to finish
 CLOSE_ELEVATED_FLAG = "--close-elevated"   # see _close_elevated()
 
+# Settings.start_minimized: the show state a tool is started with -- minimized
+# on the taskbar without taking focus from the game. Only a hint: a tool that
+# picks its own window state (a launcher, a splash screen, a remembered
+# position) opens normally anyway. EDLS never minimizes a window afterwards.
+SW_SHOWNORMAL = 1
+SW_SHOWMINNOACTIVE = 7
+
 # The status watcher's scan interval. One scan is a single process-table pass
 # (~6-9 ms of CPU), so even the fast rate costs well under 1% of one core.
 WATCH_FAST = 2         # while something is in flight, or just after a click
@@ -362,8 +369,8 @@ class ProcessManager:
 
     def launch(self, descriptor: AppDescriptor,
                resolved_path: Optional[str] = None,
-               elevate: Optional[Callable[[], bool]] = None
-               ) -> Optional[psutil.Process]:
+               elevate: Optional[Callable[[], bool]] = None,
+               minimized: bool = False) -> Optional[psutil.Process]:
         """Launch the app if it isn't already up. Returns the process (existing
         or new) or None on failure. Records it as ours for scoped shutdown.
         `resolved_path`, if given, is used instead of re-resolving the
@@ -373,7 +380,10 @@ class ProcessManager:
 
         A tool that needs admin rights is only started if `elevate()` says
         Windows may ask (the UAC prompt, which blocks until it's answered);
-        otherwise, or on a No, this raises NeedsAdmin."""
+        otherwise, or on a No, this raises NeedsAdmin.
+
+        `minimized` asks Windows to start it minimized (SW_SHOWMINNOACTIVE);
+        a copy that's already running is left as it is."""
         existing = self.find(descriptor.process_name)
         if existing:
             with self._lock:
@@ -384,8 +394,13 @@ class ProcessManager:
         if not path or not os.path.exists(path):
             return None
         cwd = os.path.dirname(path) or None
+        extra = {}
+        if minimized and hasattr(subprocess, "STARTUPINFO"):
+            extra["startupinfo"] = subprocess.STARTUPINFO(
+                dwFlags=subprocess.STARTF_USESHOWWINDOW,
+                wShowWindow=SW_SHOWMINNOACTIVE)
         try:
-            popen = _popen_detached([path], cwd=cwd)
+            popen = _popen_detached([path], cwd=cwd, **extra)
             if _stem(os.path.basename(path)) != _stem(descriptor.process_name):
                 # A launcher (Odyssey Materials Helper's updates it, starts it
                 # and exits): the tool is the process to wait for and track.
@@ -398,7 +413,7 @@ class ProcessManager:
             if _winerror(exc) == ERROR_ELEVATION_REQUIRED:
                 if elevate is None or not elevate():
                     raise NeedsAdmin(declined=False) from None
-                return self._launch_elevated(descriptor, path, cwd)
+                return self._launch_elevated(descriptor, path, cwd, minimized)
             log.warning("Failed to launch %s: %s", descriptor.name, exc)
             return None
         except psutil.Error as exc:
@@ -406,10 +421,12 @@ class ProcessManager:
             return None
 
     def _launch_elevated(self, descriptor: AppDescriptor, path: str,
-                         cwd: Optional[str]) -> Optional[psutil.Process]:
+                         cwd: Optional[str], minimized: bool = False
+                         ) -> Optional[psutil.Process]:
         """launch()'s second try for a tool that needs admin rights."""
         try:
-            _run_as_admin(path, cwd=cwd)
+            _run_as_admin(path, cwd=cwd, show=(SW_SHOWMINNOACTIVE if minimized
+                                               else SW_SHOWNORMAL))
         except OSError as exc:
             if _winerror(exc) == ERROR_CANCELLED:
                 raise NeedsAdmin(declined=True) from None
@@ -850,7 +867,8 @@ class Engine:
             self._log(f"Starting {name}...")
             try:
                 proc = self.pm.launch(desc, resolved_path=path,
-                                      elevate=lambda: self._may_elevate(name))
+                                      elevate=lambda: self._may_elevate(name),
+                                      minimized=self.settings.start_minimized)
             except NeedsAdmin as exc:
                 self._report_needs_admin(name, exc)
                 return
@@ -1198,7 +1216,8 @@ class Engine:
             try:
                 proc = self.pm.launch(
                     app, resolved_path=path,
-                    elevate=lambda name=app.name: self._may_elevate(name))
+                    elevate=lambda name=app.name: self._may_elevate(name),
+                    minimized=self.settings.start_minimized)
             except NeedsAdmin as exc:
                 self._report_needs_admin(app.name, exc)
                 continue

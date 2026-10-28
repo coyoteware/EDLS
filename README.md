@@ -64,7 +64,7 @@ VirusTotal analysis: [https://www.virustotal.com/gui/file/a8224787b93396338ca297
 ### Updates
 
 Versions after 1.2.1 check GitHub for a new release at startup. If there is one,
-an **update** link appears next to the version number. Click it for the steps and a
+an **update** badge appears next to your CMDR name. Click it for the steps and a
 button to the release page: download the new installer there and run it. It installs
 over your current version and keeps your settings. Turn the check off in Settings.
 

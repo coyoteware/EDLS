@@ -93,7 +93,8 @@ def main():
     run("render every AppState on a card", all_states)
 
     def all_logs():
-        for lvl in ("success", "default", "warning", "error", "dim", "info"):
+        for lvl in ("success", "default", "warning", "error", "dim", "info",
+                    "update"):
             win._on_log(f"selftest {lvl} line", lvl)
     run("render every log level", all_logs)
 
@@ -638,6 +639,88 @@ def main():
                 os.environ["LOCALAPPDATA"] = real_env
     run("launcher tools: prefer the launcher, track the tool", launcher_tools)
 
+    def start_minimized():
+        # Settings.start_minimized asks Windows to start a tool minimized
+        # (SW_SHOWMINNOACTIVE), through Popen and through the UAC prompt alike,
+        # from LAUNCH and from a card's START. Fakes only: no real launch or
+        # prompt (P's PID is our own, and nothing here closes anything).
+        import subprocess
+        import tempfile
+        from dataclasses import replace as _replace
+        real = (eng._popen_detached, eng._run_as_admin)
+        popens, shows, found = [], [], []
+
+        class P:   # stands in for a psutil.Process
+            pid = os.getpid()
+
+        def popen(args, **kw):
+            popens.append(kw.get("startupinfo"))
+            return P()
+
+        def needs_admin(args, **kw):
+            exc = OSError("fake WinError 740")
+            exc.winerror = eng.ERROR_ELEVATION_REQUIRED
+            raise exc
+
+        def fake_runas(path, args="", cwd=None, show=1):
+            shows.append(show)
+            found.append(P())   # the elevated copy turns up at once
+
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as fh:
+            exe = fh.name
+        stem = os.path.splitext(os.path.basename(exe))[0]
+        tool = _replace(settings.apps[0], name="FakeTool", process_name=stem,
+                        path=exe, enabled=True, resolver=None)
+        try:
+            eng._popen_detached = popen
+            pm = eng.ProcessManager()
+            pm.find = lambda name: None
+            pm.launch(tool, resolved_path=exe, minimized=True)
+            pm.launch(tool, resolved_path=exe)
+            si, plain = popens
+            if hasattr(subprocess, "STARTUPINFO"):
+                assert si.wShowWindow == eng.SW_SHOWMINNOACTIVE, si.wShowWindow
+                assert si.dwFlags & subprocess.STARTF_USESHOWWINDOW
+            assert plain is None, "a normal start got a show state"
+
+            eng._popen_detached = needs_admin
+            eng._run_as_admin = fake_runas
+            pm.find = lambda name: found[-1] if found else None
+            for minimized in (True, False):
+                found.clear()
+                pm.launch(tool, resolved_path=exe, elevate=lambda: True,
+                          minimized=minimized)
+            assert shows == [eng.SW_SHOWMINNOACTIVE, eng.SW_SHOWNORMAL], shows
+
+            # The Engine hands the setting to both ways of starting a tool.
+            for on in (True, False):
+                w = eng.Engine(_replace(settings, apps=[tool],
+                                        start_minimized=on))
+                asked = []
+                w.pm.find = lambda name: None
+                w.pm.launch = lambda *a, **kw: asked.append(kw["minimized"])
+                w._start_one(tool)
+                w._launch_tools({tool.name: exe})
+                assert asked == [on, on], (on, asked)
+
+            # The setting round-trips (in a scratch dir, not the real one).
+            saved = config.DATA_DIR, config.SETTINGS_FILE
+            with tempfile.TemporaryDirectory() as tmp:
+                config.DATA_DIR = tmp
+                config.SETTINGS_FILE = os.path.join(tmp, "settings.json")
+                try:
+                    s = config.default_settings()
+                    assert not s.start_minimized, "on by default"
+                    s.start_minimized = True
+                    assert config.save_settings(s)
+                    assert config.load_settings().start_minimized
+                finally:
+                    config.DATA_DIR, config.SETTINGS_FILE = saved
+        finally:
+            eng._popen_detached, eng._run_as_admin = real
+            os.remove(exe)
+    run("tools can start minimized", start_minimized)
+
     def resolve_once():
         # LAUNCH finds each tool once: preflight hands its paths on, so a slow
         # resolver (SrvSurvey's directory walk) runs once, not twice. Fakes
@@ -658,8 +741,8 @@ def main():
                 resolver=lambda: calls.append(1) or (exe if found else exe + ".x"))
             w = eng.Engine(_replace(settings, apps=[tool]))
             w.pm.find = lambda name: None
-            w.pm.launch = lambda app, resolved_path=None, elevate=None: (
-                started.append(resolved_path) or P())
+            w.pm.launch = lambda app, resolved_path=None, elevate=None, \
+                minimized=False: (started.append(resolved_path) or P())
             return w
 
         try:
@@ -721,19 +804,25 @@ def main():
     def locked_settings():
         # R-15: during a session the app list can't change -- every edit path
         # is refused and reported (once) for the activity log.
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
         dlg = ui.SettingsDialog(settings, locked=True)
         reports, popups = [], []
         dlg.locked_attempt.connect(lambda: reports.append(1))
         real = ui.hud_notice
         ui.hud_notice = lambda *a, **k: popups.append(a)
         try:
-            rows = dlg.table.rowCount()
+            rows = dlg._rows()
             dlg._add_row(); dlg._edit_row(0); dlg._reset_defaults()
             dlg.table.selectRow(0); dlg._remove_row()
+            app.sendEvent(dlg.table, QKeyEvent(
+                QEvent.Type.KeyPress, Qt.Key.Key_Down,
+                Qt.KeyboardModifier.ControlModifier))
         finally:
             ui.hud_notice = real
-        assert dlg.table.rowCount() == rows, "locked list was changed"
-        assert len(popups) == 4 and reports == [1], (popups, reports)
+        assert dlg._rows() == rows, "locked list was changed"
+        assert len(popups) == 5 and reports == [1], (popups, reports)
+        assert not dlg.table.dragEnabled(), "locked list can be dragged"
         dlg.deleteLater()
     run("settings app list locked during a session", locked_settings)
 
@@ -833,11 +922,13 @@ def main():
         dlg.toggle_close_shutdown.setChecked(not settings.close_on_shutdown)
         dlg.toggle_admin.setChecked(not settings.allow_elevation)
         dlg.toggle_updates.setChecked(not settings.check_for_updates)
+        dlg.toggle_minimized.setChecked(not settings.start_minimized)
         dlg._save()   # exercises recompute_removed_defaults + replace path
         assert got and got[0].close_on_game_exit != settings.close_on_game_exit
         assert got[0].close_on_shutdown != settings.close_on_shutdown
         assert got[0].allow_elevation != settings.allow_elevation
         assert got[0].check_for_updates != settings.check_for_updates
+        assert got[0].start_minimized != settings.start_minimized
 
     run("settings dialog (normal) build + save",
         lambda: settings_dialog(False))
@@ -882,6 +973,60 @@ def main():
         for w in (sd, entry, quoted):
             w.deleteLater()
     run("settings: reserved names, quoted paths", settings_input_guards)
+
+    def settings_reorder():
+        # Rows move by drag or Ctrl+Up/Down, keeping their tick and origin,
+        # and SAVE writes the apps in the new order (the cards' and launch order).
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+
+        def ctrl(k):
+            app.sendEvent(dlg.table, QKeyEvent(
+                QEvent.Type.KeyPress, k, Qt.KeyboardModifier.ControlModifier))
+        dlg = ui.SettingsDialog(settings)
+        rows = dlg._rows()
+        assert len(rows) >= 3, rows
+        dlg._move_row(0, 2)
+        assert dlg._rows() == [rows[1], rows[2], rows[0]] + rows[3:], dlg._rows()
+        assert dlg.table.currentRow() == 2
+        dlg._fill(rows)
+        dlg.table.setCurrentCell(0, 1)
+        ctrl(Qt.Key.Key_Up)   # already at the top
+        assert dlg._rows() == rows, "Ctrl+Up moved the top row"
+        ctrl(Qt.Key.Key_Down)
+        assert dlg._rows() == [rows[1], rows[0]] + rows[2:], dlg._rows()
+        assert dlg.table.currentRow() == 1
+        got = []
+        dlg.saved.connect(got.append)
+        dlg._save()
+        want = [r[0] for r in dlg._rows() if r[0]]
+        assert [a.name for a in got[0].apps] == want, got[0].apps
+        # The drop gap under the cursor: a row's upper half is above it, its
+        # lower half below it, the space under the last row the end.
+        t = dlg.table
+        y1, h = t.rowViewportPosition(1), t.rowHeight(1)
+        assert t._gap_at(y1 + 2) == 1 and t._gap_at(y1 + h - 2) == 2
+        last = t.rowCount() - 1
+        assert t._gap_at(t.rowViewportPosition(last) + t.rowHeight(last) + 5) \
+            == t.rowCount()
+        # The drop line paints, mid-drag and with nothing being dragged.
+        t._src, t._drop_y = 0, y1 + h - 2
+        assert not t.grab().isNull()
+        t._src = None
+        assert not t.grab().isNull()
+        t._drop_y = None
+        dlg.deleteLater()
+    run("settings: reorder the app list", settings_reorder)
+
+    def settings_fits_small_screen():
+        # Landscape Settings must still fit 1024x768 with the taskbar.
+        for first_run in (False, True):
+            dlg = ui.SettingsDialog(settings, first_run=first_run)
+            dlg.layout().activate()
+            ms = dlg.minimumSize().expandedTo(dlg.layout().totalMinimumSize())
+            assert ms.width() <= 1004 and ms.height() <= 697, (first_run, ms)
+            dlg.deleteLater()
+    run("settings fits 1024x768", settings_fits_small_screen)
 
     def emptied_app_list_stays_empty():
         # R-06: an app list the CMDR emptied on purpose doesn't refill with the
@@ -1185,11 +1330,20 @@ def main():
         from types import SimpleNamespace
         from PySide6.QtCore import QTimer
         win._on_update("9.0.0")
-        assert win._btns.update_lbl.isVisibleTo(win), "no update link"
-        assert "9.0.0" in win._btns.update_lbl.text()
-        win._build_content()   # a theme rebuild keeps the link
-        assert win._btns.update_lbl.isVisibleTo(win), "link lost on rebuild"
-        # Both answers through the real popover; the browser is a stub.
+        badge = win._header.update_btn
+        assert badge.isVisibleTo(win), "no update badge"
+        assert "9.0.0" in badge.text(), badge.text()
+        # The badge's extra header row must still fit 1024x768.
+        hint = win.minimumSizeHint()
+        assert hint.width() <= 1004 and hint.height() <= 697, hint
+        win._header.show_update("9.0.0&x")   # & is text, not a shortcut key
+        assert "9.0.0&&x" in badge.text(), badge.text()
+        win._build_content()   # a theme rebuild keeps the badge
+        badge = win._header.update_btn
+        assert badge.isVisibleTo(win), "badge lost on rebuild"
+        assert badge.text() == "UPDATE 9.0.0 AVAILABLE", badge.text()
+        # Both answers through the real popover, the first from a click on the
+        # badge; the browser is a stub.
         opened = []
         real = ui.QDesktopServices
         ui.QDesktopServices = SimpleNamespace(
@@ -1197,7 +1351,7 @@ def main():
         try:
             QTimer.singleShot(0, lambda: QApplication.activeModalWidget()
                               .accept())
-            win._open_update()
+            badge.click()
             assert opened == [config.LATEST_RELEASE_URL], opened
             QTimer.singleShot(0, lambda: QApplication.activeModalWidget()
                               .reject())
@@ -1207,7 +1361,8 @@ def main():
             ui.QDesktopServices = real
             win._update = None
             win._show_update_link()
-    run("updates: link + release-page popover", update_ui)
+        assert not win._header.update_btn.isVisibleTo(win), "badge stayed"
+    run("updates: badge + release-page popover", update_ui)
 
     def theme_switch():
         from dataclasses import replace

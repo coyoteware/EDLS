@@ -43,17 +43,17 @@ from dataclasses import replace
 from typing import Optional
 
 from PySide6.QtCore import (
-    QByteArray, QEasingCurve, QEvent, QParallelAnimationGroup, QPoint, QPointF,
-    Property, QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl,
-    Signal, Slot,
+    QByteArray, QEasingCurve, QEvent, QMimeData, QParallelAnimationGroup,
+    QPoint, QPointF, Property, QPropertyAnimation, QRect, QRectF, QSize, Qt,
+    QTimer, QUrl, Signal, Slot,
 )
 from PySide6.QtGui import (
-    QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QIcon,
+    QBrush, QColor, QCursor, QDesktopServices, QDrag, QFont, QFontDatabase, QIcon,
     QLinearGradient, QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon,
     QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QGraphicsOpacityEffect,
+    QApplication, QFrame, QGraphicsOpacityEffect, QGridLayout,
     QHBoxLayout, QLabel, QMainWindow, QSizePolicy,
     QSpacerItem, QSplitter, QStyle, QStyleOptionButton, QStylePainter,
     QTextEdit, QVBoxLayout, QWidget, QPushButton,
@@ -750,9 +750,13 @@ class TitleBanner(QWidget):
 class HeaderPanel(ChamferedFrame):
     """The title banner and the CMDR nametag in one chamfered panel: a
     translucent BANNER_FILL strip with the accent line along its top edge, the
-    title mark spanning both rows at the left, the suite title, and the CMDR
-    row beneath it. The mark renders straight from its SVG so it stays crisp at
-    any size; if the file is missing the header just goes without it."""
+    title mark spanning the rows at the left, the suite title, and the CMDR row
+    beneath it, with the update badge at its right end once a newer release is
+    out.
+    The mark renders straight from its SVG so it stays crisp at any size; if
+    the file is missing the header just goes without it."""
+
+    update_clicked = Signal()
 
     def __init__(self, cmdr_name: str,
                  parent: Optional[QWidget] = None) -> None:
@@ -765,17 +769,45 @@ class HeaderPanel(ChamferedFrame):
         vbox.setContentsMargins(0, 0, 0, 10)
         vbox.addWidget(TitleBanner())
 
-        cmdr_row = QHBoxLayout()
-        cmdr_row.setSpacing(10)
-        cmdr_row.addStretch()
-        cmdr_row.addWidget(make_badge("CMDR", C_AMBER))
+        name = QHBoxLayout()
+        name.setSpacing(10)
+        name.addWidget(make_badge("CMDR", C_AMBER))
         self.cmdr_lbl = QLabel(cmdr_name.upper())
         self.cmdr_lbl.setTextFormat(Qt.TextFormat.PlainText)   # never markup
         self.cmdr_lbl.setFont(font_body(12, QFont.Weight.DemiBold))
         self.cmdr_lbl.setStyleSheet(
             f"color: {C_CMDR.name()}; letter-spacing: 4px;")
-        cmdr_row.addWidget(self.cmdr_lbl)
-        cmdr_row.addStretch()
+        name.addWidget(self.cmdr_lbl)
+
+        # The update badge, shown once the update check finds a newer release:
+        # filled with the online cards' green, so it's hard to miss.
+        green = QColor(PANE.C_GREEN)
+        self.update_btn = ChamferedButton(
+            chamfer=CHAMFER_CARD, bg=green, bg_h=green.lighter(115),
+            bg_p=green.darker(115), bd=green, bd_h=_BADGE_FILL_FG,
+            fg=_BADGE_FILL_FG, fg_h=_BADGE_FILL_FG)
+        f = font_display(9, QFont.Weight.DemiBold)
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 114)
+        self.update_btn.setFont(f)
+        self.update_btn.setFixedHeight(26)
+        self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_btn.setAutoDefault(True)   # Enter clicks it, as Space does
+        self.update_btn.clicked.connect(self.update_clicked)
+        self.update_btn.hide()
+
+        # Name in the middle column, badge at the right end. The empty left
+        # column stretches as much as the badge's, so the name stays centred
+        # under the title whether the badge shows or not. The gap to the badge
+        # is the name's own margin, on both sides: grid spacing would only
+        # land on the badge's side.
+        name.setContentsMargins(10, 0, 10, 0)
+        cmdr_row = QGridLayout()
+        cmdr_row.setContentsMargins(22, 0, 22, 0)   # 22: the mark's inset
+        cmdr_row.setHorizontalSpacing(0)
+        cmdr_row.addLayout(name, 0, 1)
+        cmdr_row.addWidget(self.update_btn, 0, 2, Qt.AlignmentFlag.AlignRight)
+        cmdr_row.setColumnStretch(0, 1)
+        cmdr_row.setColumnStretch(2, 1)
         vbox.addLayout(cmdr_row)
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -795,6 +827,19 @@ class HeaderPanel(ChamferedFrame):
 
     def set_cmdr(self, name: str) -> None:
         self.cmdr_lbl.setText(name.upper())
+
+    def show_update(self, version: Optional[str]) -> None:
+        """The update badge: "UPDATE x.y.z AVAILABLE", or hidden (version
+        None). The version comes from GitHub, so a stray & is doubled rather
+        than read as a shortcut key."""
+        btn = self.update_btn
+        if version is None:
+            btn.hide()
+            return
+        btn.setText(f"UPDATE {version.replace('&', '&&')} AVAILABLE")
+        btn.setMinimumWidth(0)
+        btn.setMinimumWidth(btn.sizeHint().width() + 24)
+        btn.show()
 
 
 # ── Status panel ──────────────────────────────────────────────────────────────
@@ -838,7 +883,6 @@ class StatusPanel(ChamferedFrame):
         host_box.setContentsMargins(0, 0, 0, 0)
 
         # card grid: 4 columns
-        from PySide6.QtWidgets import QGridLayout
         grid = QGridLayout()
         grid.setSpacing(8)
 
@@ -933,7 +977,6 @@ class ButtonBar(QWidget):
     autostart_toggled = Signal(bool)
     settings_clicked  = Signal()
     launch_clicked    = Signal()
-    update_clicked    = Signal()
 
     def __init__(self, version: str, auto_start: bool,
                  parent: Optional[QWidget] = None) -> None:
@@ -966,15 +1009,6 @@ class ButtonBar(QWidget):
         issue.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextBrowserInteraction)
         ver_row.addWidget(issue)
-        # "update x.y.z" link, shown once the update check finds a release.
-        self.update_lbl = QLabel()
-        self.update_lbl.setFont(font_mono(9))
-        self.update_lbl.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextBrowserInteraction)
-        self.update_lbl.linkActivated.connect(
-            lambda _href: self.update_clicked.emit())
-        self.update_lbl.hide()
-        ver_row.addWidget(self.update_lbl)
         ver_row.addStretch()
         cred_vbox.addLayout(ver_row)
         hbox.addLayout(cred_vbox)
@@ -1023,17 +1057,6 @@ class ButtonBar(QWidget):
         self.launch_btn.setEnabled(counting or not busy)
         self.launch_btn.setText("STAY OPEN" if counting
                                 else "RUNNING..." if busy else "LAUNCH")
-
-    def show_update(self, version: Optional[str]) -> None:
-        """The update link: "update x.y.z available" in the themed accent, or
-        hidden (version None)."""
-        lbl = self.update_lbl
-        if version is None:
-            lbl.hide()
-            return
-        lbl.setText(f"<a href='#update' style='color:{C_SUCCESS.name()};'>"
-                    f"update {_esc(version)} available</a>")
-        lbl.show()
 
 
 # ── Background widget (starfield + vignette) ──────────────────────────────────
@@ -1675,33 +1698,125 @@ class AppEntryDialog(HudPopover):
 # to hide a tip without losing its text.
 _TOGGLE_TIPS: dict[str, tuple[bool, str]] = {
     "toggle_inactive": (True,
-        "Disabled apps still get a card on the main window, so you can see "
-        "whether they're running. Off: only enabled apps get a card."),
+        "Disabled apps still get a card on the main window, mostly for debug."),
     "toggle_scope": (True,
-        "On: SHUTDOWN and the end-of-session teardown close every enabled app, "
-        "even ones you started yourself.\nOff: only apps EDLS started, or took "
-        "over because they were already running when you pressed LAUNCH (or "
-        "their START), are closed.\nSteam and Elite: Dangerous are never "
-        "closed."),
+        "Pressing [SHUTDOWN] or closing the game can close either all tracked apps or only the ones EDLS started this session."),
     "toggle_admin": (True,
-        "Some tools, like EDHM-UI, need administrator rights.\nOn: Windows "
-        "asks you (the UAC prompt) when EDLS starts one, and again if EDLS has "
-        "to close it.\nOff: EDLS never asks, so those tools aren't started, "
-        "and EDLS can't close one that's running as administrator."),
+        "MUST BE ON FOR EDHM-UI TO WORK! Programs requiring admin rights will be skipped otherwise."),
+    "toggle_minimized": (True,
+        "Try to start programs minimized. Won't have any effect on programs that have their own launcher, like the Odyssey Materials Helper launcher."),
     "toggle_close_exit": (True,
         "When Elite: Dangerous exits, EDLS closes your tools and then closes "
-        "itself after a short countdown. Off: the window stays open."),
+        "itself after a short countdown."),
     "toggle_close_shutdown": (True,
-        "After SHUTDOWN closes your tools, EDLS closes itself after a short "
-        "countdown. Off: the window stays open."),
+        "After pressing SHUTDOWN closes your tools, EDLS closes itself following a short "
+        "countdown."),
     "toggle_updates": (True,
-        "At startup EDLS asks GitHub whether a newer version is out and, if "
-        "so, shows an 'update' link next to the version. EDLS never downloads "
-        "or installs anything itself.\nOff: EDLS never checks."),
+        "Check for updates at startup and notify the user."),
     "toggle_light": (False,
         "Lightens the window, header and bottom bar. The status and log "
         "panes stay dark."),
 }
+
+
+class AppListTable(QTableWidget):
+    """The Settings app list, whose rows are reordered by dragging. It runs its
+    own small drag rather than Qt's item-view one: on a QTableWidget that
+    overwrites cells instead of inserting a row, leaves the cell widgets (the
+    ON checkbox) behind, and can delete the source row after the drop. The
+    move itself is the dialog's (row_moved), from the rows as they stand."""
+
+    row_moved = Signal(int, int)   # from row, to row
+    _MIME = "application/x-edls-app-row"
+
+    def __init__(self, accent: QColor, parent: Optional[QWidget] = None) -> None:
+        super().__init__(0, 4, parent)
+        self._accent = accent        # the drop line
+        self._src: Optional[int] = None      # the row being dragged
+        self._drop_y: Optional[int] = None   # the cursor, while over the list
+        self.setDropIndicatorShown(False)   # paintEvent draws our own
+        self.setAcceptDrops(True)
+
+    def _gap_at(self, y: int) -> int:
+        """The gap between rows (0..rowCount) nearest viewport y: above a row
+        in its upper half, below it in its lower half, the end under the last."""
+        row = self.rowAt(y)
+        if row < 0:
+            return 0 if y < 0 else self.rowCount()
+        mid = self.rowViewportPosition(row) + self.rowHeight(row) / 2
+        return row + 1 if y >= mid else row
+
+    def _show_drop(self, y: Optional[int]) -> None:
+        self._drop_y = y
+        self.viewport().update()
+
+    def startDrag(self, _actions) -> None:  # noqa: N802
+        src = self.currentRow()
+        if src < 0:
+            return
+        vp = self.viewport()
+        rect = QRect(0, self.rowViewportPosition(src), vp.width(),
+                     self.rowHeight(src))
+        mime = QMimeData()   # QDrag needs some; the row travels as self._src
+        mime.setData(self._MIME, QByteArray())
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        # The whole row, checkbox included, follows the cursor.
+        drag.setPixmap(vp.grab(rect))
+        drag.setHotSpot(vp.mapFromGlobal(QCursor.pos()) - rect.topLeft())
+        self._src = src
+        try:
+            drag.exec(Qt.DropAction.MoveAction)   # the result is ignored
+        finally:
+            self._src = None
+            self._show_drop(None)
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if event.source() is self:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        if event.source() is not self:
+            event.ignore()
+            return
+        super().dragMoveEvent(event)   # auto-scrolls near the top and bottom
+        event.acceptProposedAction()
+        self._show_drop(event.position().toPoint().y())
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802
+        super().dragLeaveEvent(event)
+        self._show_drop(None)
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        src, gap = self._src, self._gap_at(event.position().toPoint().y())
+        self._show_drop(None)
+        if event.source() is not self or src is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        dst = gap - 1 if gap > src else gap
+        if dst != src:
+            self.row_moved.emit(src, dst)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if self._drop_y is None or not self.rowCount():
+            return
+        gap = self._gap_at(self._drop_y)
+        if self._src is not None and gap in (self._src, self._src + 1):
+            return   # dropping here wouldn't move it
+        if gap < self.rowCount():
+            y = self.rowViewportPosition(gap)
+        else:
+            last = self.rowCount() - 1
+            y = self.rowViewportPosition(last) + self.rowHeight(last)
+        vp = self.viewport()
+        y = max(1, min(y, vp.height() - 1))
+        p = QPainter(vp)
+        p.fillRect(QRect(0, y - 1, vp.width(), 2), self._accent)
+        p.end()
 
 
 class SettingsDialog(QDialog):
@@ -1728,11 +1843,14 @@ class SettingsDialog(QDialog):
         self._first_run = first_run
         self.setWindowTitle("EDLS — First-Time Setup" if first_run else "EDLS — Settings")
         self.setModal(True)
-        self.setMinimumSize(640, 560)
-        # Open tall enough to show a good run of the app list (first run has
-        # the intro text too), but never taller than the screen.
-        avail = self.screen().availableGeometry().height() - 60
-        self.resize(660, min(780 if first_run else 700, avail))
+        # Landscape: the toggles beside the app list. The minimum height comes
+        # from the layout; it all fits a 1024x768 screen.
+        self.setMinimumWidth(940)
+        # Open roomy enough for a good run of the app list (first run has the
+        # intro text too), but never bigger than the screen.
+        avail = self.screen().availableGeometry()
+        self.resize(min(1040, avail.width() - 40),
+                    min(680 if first_run else 620, avail.height() - 60))
         self.setObjectName("settingsDialog")
         self._default_cmdr = config.Settings().cmdr_name
         # The Light mode toggle previews its theme live (see _preview_theme);
@@ -1779,19 +1897,36 @@ class SettingsDialog(QDialog):
         else:
             vbox.addWidget(_eyebrow("Settings", c["meta"]))
 
+        # Two columns: CMDR name and the toggles on the left (a fixed width,
+        # so a long label wraps rather than widening it), the app list filling
+        # the rest, so it gets the dialog's full height.
+        cols = QHBoxLayout()
+        cols.setSpacing(20)
+        vbox.addLayout(cols, 1)
+        left_col = QWidget()
+        left_col.setFixedWidth(460)
+        left = QVBoxLayout(left_col)
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(12)
+        cols.addWidget(left_col)
+        right = QVBoxLayout()
+        right.setSpacing(12)
+        cols.addLayout(right, 1)
+
         # CMDR name. The default name is ghost (placeholder) text, never real
         # text, so clearing the field and saving puts the default back.
         custom = state.cmdr_name != self._default_cmdr
         self.cmdr_edit = QLineEdit(state.cmdr_name if custom else "")
         self.cmdr_edit.setPlaceholderText(self._default_cmdr)
         self.cmdr_edit.setFont(font_mono(11))
-        vbox.addLayout(_stacked_field("CMDR NAME", self.cmdr_edit, c))
+        left.addLayout(_stacked_field("CMDR NAME", self.cmdr_edit, c))
 
         # Boolean options as HUD toggles (label left, switch right), each in
         # its own chamfered box with a gap between, so the rows read apart.
         toggles = QVBoxLayout()
         toggles.setSpacing(8)
-        vbox.addLayout(toggles)
+        left.addLayout(toggles)
+        left.addStretch()
 
         def _toggle_row(key: str, text: str, checked: bool,
                         kind: type = ToggleSwitch) -> ToggleSwitch:
@@ -1803,8 +1938,10 @@ class SettingsDialog(QDialog):
             row.setSpacing(10)
             lbl = QLabel(text)
             lbl.setFont(font_mono(10))
-            row.addWidget(lbl)
-            row.addStretch()
+            # Wraps to fit the column. It takes the row's spare width itself:
+            # beside a stretch, a wrapping label would wrap far too early.
+            lbl.setWordWrap(True)
+            row.addWidget(lbl, 1)
             shown, tip = _TOGGLE_TIPS.get(key, (False, ""))
             if shown and tip:
                 # On the row, so hovering anywhere on it shows the tip (children
@@ -1828,6 +1965,10 @@ class SettingsDialog(QDialog):
             "toggle_admin",
             "Ask for admin rights when a tool needs them",
             state.allow_elevation)
+        self.toggle_minimized = _toggle_row(
+            "toggle_minimized",
+            "Start tools minimized",
+            state.start_minimized)
         self.toggle_close_exit = _toggle_row(
             "toggle_close_exit",
             "Close EDLS when the game exits",
@@ -1848,21 +1989,22 @@ class SettingsDialog(QDialog):
 
         # Companion-app list. Styled as a flat HUD row-list rather than a grid:
         # no column headers, no gridlines, zebra rows, hairline container.
-        vbox.addSpacing(4)
-        apps_lbl = _eyebrow("Companion apps", c["meta"])
+        # Its order is the cards' order and the launch order.
+        apps_hdr = QHBoxLayout()
+        apps_hdr.addWidget(_eyebrow("Companion apps", c["meta"]))
+        apps_hdr.addStretch()
         if self._locked:
-            apps_hdr = QHBoxLayout()
-            apps_hdr.addWidget(apps_lbl)
-            apps_hdr.addStretch()
-            lock_lbl = QLabel("LOCKED WHILE A SESSION IS RUNNING")
-            lock_lbl.setFont(font_display(7))
-            lock_lbl.setStyleSheet(f"color: {c['check']}; letter-spacing:2px;")
-            apps_hdr.addWidget(lock_lbl)
-            vbox.addLayout(apps_hdr)
+            note = QLabel("LOCKED WHILE A SESSION IS RUNNING")
+            note_color = c["check"]
         else:
-            vbox.addWidget(apps_lbl)
+            note = QLabel("DRAG TO REORDER")
+            note_color = c["meta"]
+        note.setFont(font_display(7))
+        note.setStyleSheet(f"color: {note_color}; letter-spacing:2px;")
+        apps_hdr.addWidget(note)
+        right.addLayout(apps_hdr)
 
-        self.table = QTableWidget(0, 4)
+        self.table = AppListTable(QColor(c["check"]))
         self.table.setHorizontalHeaderLabels(["ON", "NAME", "PROCESS", "PATH"])
         hh = self.table.horizontalHeader()
         hh.setVisible(False)
@@ -1886,7 +2028,11 @@ class SettingsDialog(QDialog):
             QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.cellDoubleClicked.connect(
             lambda row, _col: self._edit_row(row))
-        # Keyboard: Space ticks ON, Enter edits, Delete removes (see eventFilter).
+        # Drag a row to move it. Not during a session: the list is locked.
+        self.table.setDragEnabled(not self._locked)
+        self.table.row_moved.connect(self._move_row)
+        # Keyboard: Space ticks ON, Enter edits, Delete removes, Ctrl+Up/Down
+        # moves (see eventFilter).
         self.table.installEventFilter(self)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(30)
@@ -1895,7 +2041,7 @@ class SettingsDialog(QDialog):
             self._populate_table(state.apps)
         else:
             self._fill(rows)
-        vbox.addWidget(self.table, 1)
+        right.addWidget(self.table, 1)
 
         # add / edit / remove keys
         tbl_btns = QHBoxLayout()
@@ -1916,7 +2062,7 @@ class SettingsDialog(QDialog):
         tbl_btns.addWidget(edit_btn)
         tbl_btns.addWidget(rem_btn)
         tbl_btns.addStretch()
-        vbox.addLayout(tbl_btns)
+        right.addLayout(tbl_btns)
 
         # Bottom bar: utility keys (reset + open log folder) on the left,
         # CANCEL / SAVE on the right. Reset/folder don't close the dialog.
@@ -2074,10 +2220,16 @@ class SettingsDialog(QDialog):
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         """Keyboard control of the app list: Space ticks the selected row's ON
-        box, Enter edits it, Delete removes it."""
+        box, Enter edits it, Delete removes it, Ctrl+Up/Down moves it."""
         if obj is self.table and event.type() == QEvent.Type.KeyPress:
             row = self.table.currentRow()
             key = event.key()
+            if (row >= 0 and key in (Qt.Key.Key_Up, Qt.Key.Key_Down)
+                    and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+                dst = row + (1 if key == Qt.Key.Key_Down else -1)
+                if not self._blocked() and 0 <= dst < self.table.rowCount():
+                    self._move_row(row, dst)
+                return True
             if row >= 0 and key == Qt.Key.Key_Space:
                 if not self._blocked():
                     cell = self.table.cellWidget(row, 0)
@@ -2151,6 +2303,16 @@ class SettingsDialog(QDialog):
         if rows and not self._blocked():
             self.table.removeRow(rows[0].row())
 
+    def _move_row(self, src: int, dst: int) -> None:
+        """Move row `src` to `dst` (a drag, or Ctrl+Up/Down). The list's order
+        is the cards' order and the launch order."""
+        rows = self._rows()
+        rows.insert(dst, rows.pop(src))
+        scroll = self.table.verticalScrollBar().value()
+        self._fill(rows)
+        self.table.verticalScrollBar().setValue(scroll)
+        self.table.setCurrentCell(dst, 1)
+
     def _reset_defaults(self) -> None:
         """Restore every field to factory defaults (CMDR name, toggles, and the
         full default app list). Nothing is written until the user hits Save, so
@@ -2168,6 +2330,7 @@ class SettingsDialog(QDialog):
         self.toggle_scope.setChecked(
             defaults.shutdown_scope is ShutdownScope.ALL_ENABLED)
         self.toggle_admin.setChecked(defaults.allow_elevation)
+        self.toggle_minimized.setChecked(defaults.start_minimized)
         self.toggle_close_exit.setChecked(defaults.close_on_game_exit)
         self.toggle_close_shutdown.setChecked(defaults.close_on_shutdown)
         self.toggle_updates.setChecked(defaults.check_for_updates)
@@ -2194,6 +2357,7 @@ class SettingsDialog(QDialog):
                             if self.toggle_scope.isChecked()
                             else ShutdownScope.LAUNCHED_ONLY),
             allow_elevation=self.toggle_admin.isChecked(),
+            start_minimized=self.toggle_minimized.isChecked(),
             close_on_game_exit=self.toggle_close_exit.isChecked(),
             close_on_shutdown=self.toggle_close_shutdown.isChecked(),
             check_for_updates=self.toggle_updates.isChecked(),
@@ -2308,6 +2472,7 @@ class MainWindow(QMainWindow):
 
         # Header
         self._header = HeaderPanel(self._settings.cmdr_name)
+        self._header.update_clicked.connect(self._open_update)
         root.addWidget(self._header)
 
         # Status + Log in a draggable splitter
@@ -2332,7 +2497,6 @@ class MainWindow(QMainWindow):
         self._btns.autostart_toggled.connect(self._on_autostart)
         self._btns.settings_clicked.connect(self._open_settings)
         self._btns.launch_clicked.connect(self._on_launch_clicked)
-        self._btns.update_clicked.connect(self._open_update)
         self._btns.set_busy(self._busy, self._counting)
         self._show_update_link()
         self._update_launch_mute()
@@ -2473,17 +2637,17 @@ class MainWindow(QMainWindow):
 
     # ---- updates ----
     def _show_update_link(self) -> None:
-        self._btns.show_update(self._update)
+        self._header.show_update(self._update)
 
     @Slot(str)
     def _on_update(self, version: str) -> None:
         self._update = version
         self._show_update_link()
-        self._log.append(f"EDLS {version} is available - click "
-                         "'update' next to the version below.", "success")
+        self._log.append(f"EDLS {version} is available - click the UPDATE "
+                         "badge next to your CMDR name.", "update")
 
     def _open_update(self) -> None:
-        """The update link: how to update, and the way to the release page.
+        """The update badge: how to update, and the way to the release page.
         EDLS doesn't download or install anything itself."""
         version = self._update
         if version and hud_confirm(

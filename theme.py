@@ -73,6 +73,7 @@ LOG_TIME   = C_TMID     # [HH:MM:SS]
 LOG_COLORS = {
     "success": C_SUCCESS, "default": C_AMBER, "info": C_AMBER,
     "warning": C_ORANGE, "error": C_RED, "dim": C_LOGDIM,
+    "update": C_GREEN,   # a newer EDLS is out: the online cards' green
 }
 
 # State-tinted card borders (the "glow" stand-in). Match StatusCard.update_state.
@@ -128,6 +129,7 @@ _LIGHT_PALETTE = {
         "success": QColor("#FFE08A"), "default": QColor("#F4F6F8"),
         "info": QColor("#F4F6F8"), "warning": QColor("#FFC489"),
         "error": QColor("#FFB8B0"), "dim": QColor("#C3C8CE"),
+        "update": QColor("#9FF2B8"),
     },
     "TOGGLE": {
         "off_bd": QColor("#9AA2AC"), "off_bg": QColor("#DDE1E6"),

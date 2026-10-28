@@ -90,6 +90,12 @@ a visual outcome you haven't confirmed with him.
   `_close_elevated`) that runs the same `ProcessManager.stop()`. Never add an
   elevated `taskkill`/kill around it. UAC prompts block their thread, so companion
   START runs on a worker.
+- **"Start tools minimized" is a hint, not enforcement.** `Settings.start_minimized`
+  (default off) makes `ProcessManager.launch(minimized=True)` pass
+  `SW_SHOWMINNOACTIVE`: through STARTUPINFO for Popen, through ShellExecute's show for
+  the UAC path. Tools may ignore it (launchers, splash screens, remembered window
+  positions). EDLS deliberately never minimizes a window after launch; Andrew chose
+  flag-only. A copy that's already running is never touched.
 - **A path whose exe isn't the watched process is a launcher.** `launch()` then waits
   (`LAUNCHER_WAIT`) for the tool itself and tracks that by name. Odyssey Materials
   Helper's resolver prefers its updating launcher over the helper exe; `_RETIRED_PATHS`
@@ -109,10 +115,11 @@ a visual outcome you haven't confirmed with him.
   stays the key for status routing + settings.
 - **`config.APP_VERSION`** is the single source of truth for the version string
   (`build.ps1` reads it for the exe's version resource and the installer).
-- **Updates are a check and a link, nothing more.** At startup
+- **Updates are a check and a badge, nothing more.** At startup
   `Engine.check_for_updates` asks GitHub's `releases/latest` (which skips drafts and
-  pre-releases); a newer version puts an "update x.y.z available" link by the version
-  badge, and its popover explains the steps and opens the release page. EDLS never
+  pre-releases); a newer version puts a green "UPDATE x.y.z AVAILABLE" badge at the
+  right end of the CMDR row (`HeaderPanel.show_update`) and a green `"update"`-level log line, and the
+  badge's popover explains the steps and opens the release page. EDLS never
   downloads or runs an installer. A release's tag must equal its `APP_VERSION`
   (`1.3.0`, no `v`).
 - **The panes are the dark HUD in both themes** (the "Full Daylight" look): day mode
