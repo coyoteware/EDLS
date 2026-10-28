@@ -532,7 +532,7 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify** or **Resolved*
 | FR-05 | P2 | A | In the setup window, type a name, clear it again → BEGIN | The default name is used. A blank name is never saved. |
 | FR-06 | P2 | A | In the setup window, turn Light mode on → Save | The whole window switches to light. |
 | FR-07 | P3 | R | Fresh start on a PC with only a few of the tools installed → BEGIN without changing the ticks → LAUNCH | Only the installed tools were ticked, so there's no pile of "… not found - will be skipped." lines (R-26 fix). A tool installed somewhere other than its default path starts unticked: tick it and set its path. |
-| FR-08 | P1 | A | **Upgrade:** start 1.3.0 on a 1.2.1 `settings.json` (or delete the Elite Studio and EDDI entries from `settings.json` first) | Elite Studio and EDDI join the end of the app list, each ticked only if it's installed. Every other tick is as you left it. An app you'd already added yourself as "EDDI" isn't added a second time. |
+| FR-08 | P1 | A | **Upgrade:** start 1.3.0 on a 1.2.1 `settings.json` (or delete the Elite Studio and EDDI entries from `settings.json` first) | Elite Studio and EDDI join the end of the app list, each ticked only if it's installed. Every other tick is as you left it. An app you'd already added yourself as "EDDI" isn't added a second time. A VoiceAttack still on the old default path now finds VoiceAttack 2 as well (CA-09). |
 
 ### 8.3 Layout and visuals (UI)
 
@@ -746,7 +746,7 @@ about every 5 s otherwise.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| SE-15 | P1 | A | Look at the list | "DRAG TO REORDER" in grey at the top right of the list. Columns: ON tick box, NAME, PATH (no process column). Default paths show placeholders like `%ProgramFiles(x86)%\…`. The paths of SrvSurvey, OdysseyMaterials and EDDI are blank because EDLS finds them by itself. |
+| SE-15 | P1 | A | Look at the list | "DRAG TO REORDER" in grey at the top right of the list. Columns: ON tick box, NAME, PATH (no process column). Default paths show placeholders like `%ProgramFiles(x86)%\…`. The paths of SrvSurvey, OdysseyMaterials, VoiceAttack and EDDI are blank because EDLS finds them by itself. |
 | SE-55 | P1 | A | Drag a row (by its name or path) up the list, then down, then to above the first row and below the last. Start one more drag and drop it back where it was. Do it in both themes. | While you drag, an orange line shows where the row will land, and there's no line when it would land where it already is. The row moves there, keeps its tick and path, and stays selected. The list doesn't jump. Save: the cards and LAUNCH follow the new order (UI-11), and it's kept after a restart. Cancel: the old order. Record whether the drag feels obvious. |
 | SE-56 | P2 | A | Select a row → Ctrl+Down, Ctrl+Up, including at the top and bottom of the list | The row moves one place and stays selected. At the ends nothing happens. Save keeps the order. |
 | SE-16 | P1 | A | Untick an app → Save → LAUNCH | It stays unticked after a restart and LAUNCH doesn't start it. |
@@ -905,7 +905,7 @@ rest.
 | CA-06 | opentrack | `%ProgramFiles(x86)%\opentrack\opentrack.exe` | opentrack.exe | After a forced close, the camera/tracker works again on the next start. |
 | CA-07 | ICARUS Terminal | `%ProgramFiles(x86)%\ICARUS Terminal\ICARUS Terminal.exe` | ICARUS Terminal.exe | Probably runs several processes. Check they all close. |
 | CA-08 | EDDiscovery | `%ProgramFiles%\EDDiscovery\EDDiscovery.exe` | EDDiscovery.exe | It has a local database. After a forced close it must open normally, with no repair or "database locked" messages and with recent data present. |
-| CA-09 | VoiceAttack | `%ProgramFiles%\VoiceAttack\VoiceAttack.exe` | VoiceAttack.exe | Often run as administrator: see SC-16 and SC-21. Profiles and settings intact. |
+| CA-09 | VoiceAttack | The first one that's there: v2 `%ProgramFiles%\VoiceAttack2\VoiceAttack.exe`, v2 in Steam `%ProgramFiles(x86)%\Steam\steamapps\common\VoiceAttack2\VoiceAttack.exe`, v1 64-bit `%ProgramFiles%\VoiceAttack\VoiceAttack.exe`, v1 32-bit `%ProgramFiles(x86)%\VoiceAttack\VoiceAttack.exe`, v1 in Steam `...\steamapps\common\VoiceAttack\VoiceAttack.exe` | VoiceAttack.exe | Record which version you have (1.x or 2.x) and where it's installed. With both installed, v2 is the one that starts. A `settings.json` still holding the old default path (`%ProgramFiles%\VoiceAttack\VoiceAttack.exe`) moves to the search by itself; a path you set yourself is kept. Often run as administrator: see SC-16 and SC-21. Profiles and settings intact. |
 | CA-10 | EDCoPTER | `%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe` | EDCoPTER.exe | General checks a–g. |
 | CA-11 | Elite Observatory | `%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe` | ObservatoryCore.exe | General checks a–g. |
 | CA-18 | Elite Studio | `%ProgramFiles%\Elite Studio\EliteStudio.exe` | EliteStudio.exe | It uses WebView2, so it runs several `msedgewebview2.exe` processes under it. After teardown and after STOP, none of those are left (other apps such as Edge run their own, so count `msedgewebview2.exe` in Task Manager → Details before starting it and after closing it). If `launcher.log` says "Elite Studio didn't close when asked", check whether it hides to the tray when you close its window. |

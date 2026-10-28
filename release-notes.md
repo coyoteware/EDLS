@@ -26,6 +26,7 @@ Tools that need admin rights, an update check, and a round of fixes from QA.
 ## Other fixes
 
 - Odyssey Materials Helper now starts through its own launcher, which updates it first.
+- VoiceAttack 2 is found now, and so are VoiceAttack 1's 32-bit and Steam installs. With both versions installed, EDLS starts VoiceAttack 2 (set its path in Settings to use 1). If you'd unticked VoiceAttack because EDLS couldn't find it, tick it again.
 - Tools that run as several processes (EDHM-UI and other Electron apps) now close properly, instead of staying open while their card flips back to Online.
 - If the game exits while Settings or another EDLS window is open, EDLS no longer closes itself behind it.
 - The activity log stays put while you're scrolled up reading it.

@@ -639,29 +639,43 @@ def main():
                 os.environ["LOCALAPPDATA"] = real_env
     run("launcher tools: prefer the launcher, track the tool", launcher_tools)
 
-    def eddi_install_modes():
-        # EDDI installs for this account only (its installer's default) or for
-        # all users: either is found, this account's first. Temp files only.
+    def install_search():
+        # EDDI (this account's install, then all users') and VoiceAttack (v2,
+        # then v1) are found where their installers put them, the best one
+        # first. A VoiceAttack still on 1.2.1's default path moves to that
+        # search; a path the CMDR set is kept. Temp files only.
         import tempfile
-        real_env = {k: os.environ.get(k) for k in ("LOCALAPPDATA", "ProgramFiles")}
+        keys = ("LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)")
+        real_env = {k: os.environ.get(k) for k in keys}
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                os.environ["LOCALAPPDATA"] = os.path.join(tmp, "Local")
-                os.environ["ProgramFiles"] = os.path.join(tmp, "Program Files")
-                eddi = config.REGISTRY_BY_NAME["EDDI"]
-                assert eddi.resolve_path() is None, eddi.resolve_path()
-                mine, everyone = map(config._expand_env, config._EDDI_PATHS)
-                for exe in (everyone, mine):   # this account's wins once it's there
-                    os.makedirs(os.path.dirname(exe), exist_ok=True)
-                    open(exe, "w").close()
-                    assert eddi.resolve_path() == exe, eddi.resolve_path()
+                for key in keys:
+                    os.environ[key] = os.path.join(tmp, key)
+                for name, templates in (("EDDI", config._EDDI_PATHS),
+                                        ("VoiceAttack", config._VOICEATTACK_PATHS)):
+                    app = config.REGISTRY_BY_NAME[name]
+                    assert app.resolve_path() is None, (name, app.resolve_path())
+                    # Least wanted first: each new one should win.
+                    for exe in reversed([config._expand_env(t) for t in templates]):
+                        os.makedirs(os.path.dirname(exe), exist_ok=True)
+                        open(exe, "w").close()
+                        assert app.resolve_path() == exe, (name, app.resolve_path())
+
+                va2 = config._expand_env(config._VOICEATTACK_PATHS[0])
+                old = config._app_from_dict({
+                    "name": "VoiceAttack", "process": "VoiceAttack",
+                    "path": config._RETIRED_PATHS["VoiceAttack"]})
+                assert old.path == "" and old.resolve_path() == va2, old
+                mine = config._app_from_dict({
+                    "name": "VoiceAttack", "path": r"D:\VA\VoiceAttack.exe"})
+                assert mine.path == r"D:\VA\VoiceAttack.exe", mine
         finally:
             for key, value in real_env.items():
                 if value is None:
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
-    run("EDDI: found for this account or all users", eddi_install_modes)
+    run("install search: EDDI and VoiceAttack, best match first", install_search)
 
     def start_minimized():
         # Settings.start_minimized asks Windows to start a tool minimized

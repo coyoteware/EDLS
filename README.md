@@ -81,7 +81,7 @@ disabled, or have its path edited). The ones it finds on your PC start out enabl
 | --- | --- | --- |
 | EDMarketConnector | SrvSurvey | Odyssey Materials Helper |
 | EDCoPilot | EDHM-UI | opentrack |
-| ICARUS Terminal | EDDiscovery | VoiceAttack |
+| ICARUS Terminal | EDDiscovery | VoiceAttack (1 or 2) |
 | EDCoPTER | Elite Observatory | Elite Studio |
 | EDDI | | |
 

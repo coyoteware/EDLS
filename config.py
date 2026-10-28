@@ -179,6 +179,15 @@ def _find_odyssey_materials() -> Optional[str]:
     return launcher if os.path.exists(launcher) else _expand_env(_ODYSSEY_HELPER)
 
 
+def _first_found(templates: tuple[str, ...]) -> Optional[str]:
+    """The first of these %ENV% path templates that's on this PC, if any."""
+    for template in templates:
+        path = _expand_env(template)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 # Where EDDI's installer puts it: for this account only (its default), or for
 # all users.
 _EDDI_PATHS = (r"%LOCALAPPDATA%\EDDI\Application\EDDI.exe",
@@ -188,11 +197,24 @@ _EDDI_PATHS = (r"%LOCALAPPDATA%\EDDI\Application\EDDI.exe",
 def _find_eddi() -> Optional[str]:
     """EDDI installs for this account only (the installer's default) or for
     all users -- whichever is on this PC, this account's first."""
-    for template in _EDDI_PATHS:
-        path = _expand_env(template)
-        if os.path.exists(path):
-            return path
-    return None
+    return _first_found(_EDDI_PATHS)
+
+
+# Where VoiceAttack 2, then VoiceAttack 1, install by default: each version's
+# own installer (v1 as 64-bit, then 32-bit), then its copy in Steam's default
+# library. Both versions run as VoiceAttack.exe, so one card serves either.
+_VOICEATTACK_PATHS = (
+    r"%ProgramFiles%\VoiceAttack2\VoiceAttack.exe",
+    r"%ProgramFiles(x86)%\Steam\steamapps\common\VoiceAttack2\VoiceAttack.exe",
+    r"%ProgramFiles%\VoiceAttack\VoiceAttack.exe",
+    r"%ProgramFiles(x86)%\VoiceAttack\VoiceAttack.exe",
+    r"%ProgramFiles(x86)%\Steam\steamapps\common\VoiceAttack\VoiceAttack.exe",
+)
+
+
+def _find_voiceattack() -> Optional[str]:
+    """VoiceAttack 2 if it's on this PC, else VoiceAttack 1."""
+    return _first_found(_VOICEATTACK_PATHS)
 
 
 # =============================================================================
@@ -216,7 +238,7 @@ REGISTRY: list[AppDescriptor] = [
     AppDescriptor("EDDiscovery", "EDDiscovery",
                   r"%ProgramFiles%\EDDiscovery\EDDiscovery.exe"),
     AppDescriptor("VoiceAttack", "VoiceAttack",
-                  r"%ProgramFiles%\VoiceAttack\VoiceAttack.exe"),
+                  resolver=_find_voiceattack),
     AppDescriptor("EDCoPTER", "EDCoPTER",
                   r"%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe"),
     AppDescriptor("Elite Observatory", "ObservatoryCore",
@@ -234,6 +256,7 @@ REGISTRY_BY_NAME = {a.name: a for a in REGISTRY}
 # set themselves is kept.
 _RETIRED_PATHS = {
     "OdysseyMaterials": _ODYSSEY_HELPER,
+    "VoiceAttack": r"%ProgramFiles%\VoiceAttack\VoiceAttack.exe",   # v1, 64-bit only
 }
 
 # The two non-companion rows: Steam and the game itself. They aren't in REGISTRY
