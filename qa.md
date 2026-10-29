@@ -469,7 +469,7 @@ About 30 minutes. Run it first on every new build, before anything else.
 
 These cover recent changes. Each one needs a person to look at it. RG-01 to RG-08 cover
 the first round (layout, background, the ToS fix). RG-09 onwards cover the fixes for the
-risks in [§12](#12-known-risk-areas) marked **Fixed — verify** or **Resolved**.
+risks from [§12](#12-known-risk-areas).
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
@@ -1101,45 +1101,26 @@ These come from reading the code. Each row has a **Status**:
   **Still broken**.
 - **Open**: a suspicion, not a confirmed bug. Report **Confirmed**, **Not reproduced**
   or **Not tested**, with the test ID you used.
-- **Resolved**: verified fixed. Nothing to report; kept for reference.
+
+A risk leaves this table once its fix is verified. The "(R-xx fix)" notes in the tests
+mark where each one was checked.
 
 | ID | What may be wrong | Status | Check with | Severity if confirmed |
 | --- | --- | --- | --- | --- |
-| R-04 | Some bad values in `settings.json` crash EDLS at startup instead of falling back to defaults. Also `"enabled": "false"` (as text) counts as enabled. | Resolved | PS-04 to PS-09 | Major |
-| R-05 | A `settings.json` saved as "UTF-8 with BOM" is treated as corrupt, and all settings are silently reset. | Resolved | PS-03 | Major |
 | R-07 | A renamed SrvSurvey works until restart, then shows "Not found". | Fixed — verify (the default it came from is saved) | SE-38 | Minor |
-| R-09 | LAUNCH is allowed while the Elite card's game-only START is still waiting, so two launch flows run at once. | Resolved | CC-15, CC-19, SQ-22 | Major |
-| R-10 | LAUNCH waits for the game forever. If the game never starts, LAUNCH stays "RUNNING..." and the only way out is closing EDLS. | Resolved (now 60 s) | LS-13, LS-30, JR-07 | Major |
-| R-11 | When EDLS can't close an app (e.g. it runs as administrator), the card still says "Stopped", or teardown still says "Third-party tools shut down.". The failure only appears in `launcher.log`. | Resolved (ERROR state) | SC-16, CC-18, PR-09 | Major |
-| R-12 | Card START/STOP write nothing to the activity log, so a "Failed" card has no explanation. | Resolved | CC-01 to CC-04 | Minor |
-| R-13 | Outside a LAUNCH session, cards never update on their own. For example, Elite stays "Running" after a game-only session ends. | Resolved (live status) | RF-01, CC-10, SQ-25 | Minor |
-| R-15 | Removing or renaming an app mid-session after EDLS launched it means it may not be closed at the end. | Resolved (list locked) | SC-08, SC-09, SE-51 | Minor |
-| R-16 | An app restarted from its card mid-session isn't watched again. If it then closes, its card may stay "Online". | Resolved | CC-16, SQ-13 | Minor |
-| R-17 | Companion apps are always force-closed, never asked to close nicely, so tools may lose data or settings. | Resolved: each tool is asked to close first; only what's still running 3 s later is forced | §8.15 check e, SC-20, SC-16 | **Critical** if data is lost |
-| R-18 | The window can't be smaller than 900×800, and grows further with many apps or a very long CMDR name. It may not fit 1366×768 or 150%-scaled laptop screens. | Resolved (900×640, cards scroll). A very long CMDR name can still widen it (UI-10). | UI-03, UI-04, UI-10, UI-12, JR-08 | Major |
 | R-19 | CMDR names and app names that look like HTML (`<b>…</b>`) may be shown as formatting instead of text. | Fixed — verify (shown as plain text) | SE-10 | Cosmetic |
 | R-20 | Settings toggles may not work from the keyboard, and keyboard focus may be invisible on the main buttons. | Fixed — verify | AX-01, AX-02, SE-13, SE-53 | Minor |
-| R-21 | Resizing or maximising during the startup animation may leave panels misaligned. | Resolved (window locked meanwhile) | UI-24 | Minor |
 | R-22 | If the game exits while Settings or a file picker is open, EDLS tries to close itself behind the open window (now after the 5 s countdown). | Fixed — verify (EDLS stays open) | SE-46, SQ-18, SQ-19, SQ-38 | Minor to Major |
-| R-23 | Nothing stops two EDLS windows running at once, and both can act. | Resolved | ST-15, SM-12 | Minor |
-| R-24 | If `settings.json` can't be written, changes look saved but are gone after a restart, with no message. | Resolved | PS-12 | Minor |
 | R-25 | The activity log may jump to the bottom on every new line, even while you're scrolled up reading. | Fixed — verify | LG-04 | Cosmetic |
 | R-26 | First-run ticks all 12 default apps, so new users with few tools get a pile of "not found" warnings. | Fixed — verify (only installed apps are ticked) | FR-01, FR-07, FR-08 | Minor |
-| R-27 | Paths pasted with quotes (Explorer's "Copy as path") keep the quotes, so the app is "Not found". | Resolved | SE-20 | Minor |
-| R-28 | Elite card START gives up after 5 minutes and stays "Failed" even if the game appears later. | Resolved (60 s; card follows the game) | CC-11 | Cosmetic |
-| R-29 | After SHUTDOWN mid-session, cards show "Closed" and then switch to "Offline" about 2 s later. | Resolved ("Closed" removed) | SC-12 | Cosmetic |
 | R-30 | Any exit of the game ends the session. If the game is restarted (relog or min-ed-launcher restart), the tools are already closed. | Open (design question; the "Close EDLS when the game exits" toggle softens it) | LS-20, SQ-20, JR-11 | Design question |
 | R-31 | EDLS can see other Windows users' programs, so cards may show someone else's game or tools as running. | Open | RF-07 | Minor |
-| R-32 | Unticking an app mid-session: "launched only" still closes it at the end, "all enabled" doesn't. | Resolved (can't untick mid-session) | SC-10 | Design question |
-| R-33 | Light theme: success and warning log lines are nearly the same orange. | Resolved: the light log uses pale gold (success) vs pale orange (warning). | LG-01 | Cosmetic |
 | R-34 | With AUTO START on but setup unfinished, the log may say "Auto-start enabled — launching..." although nothing launches. | Fixed — verify | FR-04, AS-04 | Cosmetic |
 | R-35 | The 60 s limit on the game appearing may be too short on a slow PC's cold start (Steam starting, updates, min-ed-launcher login). | Open (new) | LS-31, LS-02, AS-03 | Minor (press LAUNCH again) |
 | R-36 | The 5 s close countdown can't be cancelled, except by closing EDLS yourself. If you change your mind, you have to reopen EDLS. | Fixed — verify (STAY OPEN) | LS-35, SC-22, SQ-37 | Design question |
 | R-37 | The "X is now running." / "X stopped running." lines may get noisy for tools that restart themselves (updaters, launcher stubs). | Open (new) | RF-01, CA-13, CA-15 | Cosmetic |
-| R-38 | A tool that needs admin rights (EDHM-UI) couldn't be started from EDLS: the card showed Failed with no UAC prompt. | Resolved | LS-11, LS-32, LS-33, CC-20, CA-05 | Major |
 | R-39 | The UAC prompt for an admin tool appears just as the game starts, and may take a fullscreen game out of focus. | Open (new) | LS-34 | Minor |
 | R-40 | After you answer Yes, an admin tool may take longer than 3 s to appear. If it does, its card shows Failed until the status check finds it (within about 5 s). | Open (new) | LS-11, CC-20 | Cosmetic |
-| R-41 | For a tool that runs as several same-name processes (EDHM-UI, Electron), EDLS could pick a helper instead of the main process: the close request did nothing, the helper was force-closed after 3 s, and the tool stayed open while its card flipped back to Online. | Resolved | CA-05, SC-17 | Major |
 
 ---
 
