@@ -36,6 +36,9 @@ keep:
 `main()` (this avoids an import cycle). Adding a companion app = one entry in
 `config.REGISTRY`, nowhere else.
 
+`README.md`'s Architecture section charts all this in Mermaid (GitHub renders it with
+Mermaid 11). Update it when a module's job or the engine↔view seam changes.
+
 ## Commands
 ```powershell
 pip install -r requirements.txt   # PySide6-Essentials + psutil (pinned)

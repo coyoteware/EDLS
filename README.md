@@ -108,6 +108,83 @@ Settings and the activity log are stored under:
 
 ---
 
+## Architecture
+
+Three Python modules plus `theme.py`, and one hard rule: only the view imports Qt.
+The view drives the engine with plain method calls; the engine answers with signals
+that `engine.dispatch` hands to the GUI thread.
+
+```mermaid
+flowchart TD
+    subgraph VIEW ["ui.py + theme.py — Qt view"]
+        Bar["Button bar<br/>LAUNCH · SHUTDOWN<br/>SETTINGS"]
+        Cards["Status cards<br/>START / STOP per app"]
+        Log["Activity log"]
+        Badge["UPDATE badge"]
+        Dlg["Settings window"]
+    end
+
+    subgraph ENGINE ["main.py — engine, no Qt"]
+        API["Engine API<br/>launch() · stay_open()<br/>manual_shutdown()<br/>start_app() · stop_app()"]
+        Seq["Launch sequence<br/>preflight → Steam → game<br/>→ tools → monitor<br/>→ teardown"]
+        Watch["Status watcher<br/>one process scan per tick<br/>2 s busy · 5 s idle"]
+        PM["ProcessManager<br/>find · launch · stop<br/>tracks what EDLS launched"]
+        Upd["Update check<br/>once, after boot"]
+    end
+
+    subgraph CONFIG ["config.py — pure data, stdlib only"]
+        Reg["REGISTRY<br/>default companion apps"]
+        Set["Settings<br/>load · save"]
+    end
+
+    subgraph WIN ["Windows"]
+        Steam["Steam<br/>never killed"]
+        MinEd["min-ed-launcher<br/>Epic login via Legendary"]
+        Elite["Elite: Dangerous<br/>never closed by EDLS"]
+        Tools["Companion apps<br/>EDMC · SrvSurvey · …"]
+    end
+
+    subgraph DATA ["%LOCALAPPDATA%\EDLS"]
+        Json[("settings.json")]
+        LogF[("launcher.log")]
+    end
+    GH["GitHub Releases"]
+
+    VIEW ==>|"method calls"| API
+    ENGINE ==>|"signals via engine.dispatch"| VIEW
+    API -->|"LAUNCH"| Seq
+    Seq --> PM
+    Watch --> PM
+    API -->|"SHUTDOWN<br/>card START / STOP"| PM
+    Seq --->|"steam:// URIs"| Steam
+    Steam -->|"launch options"| MinEd
+    MinEd -->|"skips Frontier's launcher"| Elite
+    PM -->|"start · close<br/>asks first, kills after 3 s<br/>UAC if it needs admin"| Tools
+    Upd -->|"releases/latest"| GH
+    Reg -->|"defaults"| Set
+    Set <--> Json
+    Dlg -->|"save"| Set
+    Set --> API
+    ENGINE -.-> LogF
+
+    %% The EDLS HUD palette (theme.py)
+    classDef edls fill:#0D0B07,stroke:#FF8C1A,color:#FFB700
+    classDef ext fill:#141414,stroke:#8A8A8A,color:#E6E6E6
+    classDef keep fill:#141414,stroke:#CC3D3D,stroke-width:2px,stroke-dasharray:5 3,color:#E6E6E6
+    classDef store fill:#0D0B07,stroke:#A07A3A,color:#E0B060
+    class Bar,Cards,Log,Badge,Dlg,API,Seq,Watch,PM,Upd,Reg,Set edls
+    class MinEd,Tools,GH ext
+    class Steam,Elite keep
+    class Json,LogF store
+    style VIEW fill:#FF8C1A,fill-opacity:0.06,stroke:#FF8C1A,stroke-dasharray:6 4
+    style ENGINE fill:#FF8C1A,fill-opacity:0.06,stroke:#FF8C1A,stroke-dasharray:6 4
+    style CONFIG fill:#FF8C1A,fill-opacity:0.06,stroke:#FF8C1A,stroke-dasharray:6 4
+    style WIN fill:#8A8A8A,fill-opacity:0.06,stroke:#8A8A8A,stroke-dasharray:6 4
+    style DATA fill:#A07A3A,fill-opacity:0.06,stroke:#A07A3A,stroke-dasharray:6 4
+```
+
+---
+
 ## Credits
 
 - CMDR Coyote Bongwater
