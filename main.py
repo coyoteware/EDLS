@@ -367,6 +367,15 @@ class ProcessManager:
                 matches.setdefault(original, []).append(proc)
         return {original: _root(procs) for original, procs in matches.items()}
 
+    def adopt(self, descriptor: AppDescriptor) -> Optional[psutil.Process]:
+        """Take the tool over if it's already running: it's recorded as ours,
+        so scoped shutdown closes it. None if it isn't running."""
+        existing = self.find(descriptor.process_name)
+        if existing:
+            with self._lock:
+                self.launched[descriptor.name] = existing.pid
+        return existing
+
     def launch(self, descriptor: AppDescriptor,
                resolved_path: Optional[str] = None,
                elevate: Optional[Callable[[], bool]] = None,
@@ -384,10 +393,8 @@ class ProcessManager:
 
         `minimized` asks Windows to start it minimized (SW_SHOWMINNOACTIVE);
         a copy that's already running is left as it is."""
-        existing = self.find(descriptor.process_name)
+        existing = self.adopt(descriptor)
         if existing:
-            with self._lock:
-                self.launched[descriptor.name] = existing.pid
             return existing
 
         path = resolved_path if resolved_path is not None else descriptor.resolve_path()
@@ -852,9 +859,9 @@ class Engine:
     def _start_one(self, desc: AppDescriptor) -> None:
         name = desc.name
         try:
-            if self.pm.find(desc.process_name):
-                proc = self.pm.launch(desc)   # adopts the running copy
-                self._status(name, AppState.ONLINE, proc.pid if proc else None)
+            proc = self.pm.adopt(desc)
+            if proc:
+                self._status(name, AppState.ONLINE, proc.pid)
                 self._log(f"{name} is already running.", "dim")
                 return
             path = desc.resolve_path()
@@ -1205,10 +1212,10 @@ class Engine:
             path = paths.get(app.name)
             if path is None:
                 continue  # already reported NOT_FOUND in preflight
-            if self.pm.find(app.process_name):
+            proc = self.pm.adopt(app)
+            if proc:
                 self._log(f"{app.name} already running - skipping.", "dim")
-                proc = self.pm.launch(app, resolved_path=path)   # records the existing process
-                self._status(app.name, AppState.ONLINE, proc.pid if proc else None)
+                self._status(app.name, AppState.ONLINE, proc.pid)
                 launched.append(app)
                 continue
             self._log(f"Launching {app.name}...")

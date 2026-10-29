@@ -74,7 +74,14 @@ def main():
     run("assets decode", assets_decode)
 
     ctx = {}
-    run("load settings", lambda: ctx.update(settings=config.load_settings()))
+
+    def load():
+        # The CMDR's own settings, but the registry's app list: the stages
+        # below need a few apps to work on, and the CMDR's list may be empty.
+        from dataclasses import replace as _replace
+        ctx.update(settings=_replace(config.load_settings(),
+                                     apps=config.default_settings().apps))
+    run("load settings", load)
     run("build engine",  lambda: ctx.update(engine=eng.Engine(ctx["settings"])))
     run("build window",  lambda: ctx.update(
         win=ui.MainWindow(ctx["engine"], ctx["settings"])))
@@ -996,6 +1003,30 @@ def main():
         assert saved_name("Jameson", "   ")[1] == default, "blank didn't reset"
     run("settings: ghost-text CMDR name", ghost_cmdr_name)
 
+    def cmdr_name_cap():
+        # A CMDR name stops at CMDR_NAME_MAX, typed or hand-edited into
+        # settings.json, so it fits the CMDR row beside the update badge.
+        # Temp settings dir only.
+        import json
+        import tempfile
+        cap = config.CMDR_NAME_MAX
+        dlg = ui.SettingsDialog(settings)
+        dlg.cmdr_edit.setText("X" * (cap + 10))
+        assert dlg.cmdr_edit.text() == "X" * cap, len(dlg.cmdr_edit.text())
+        dlg.deleteLater()
+        saved = config.DATA_DIR, config.SETTINGS_FILE
+        with tempfile.TemporaryDirectory() as tmp:
+            config.DATA_DIR = tmp
+            config.SETTINGS_FILE = os.path.join(tmp, "settings.json")
+            try:
+                with open(config.SETTINGS_FILE, "w", encoding="utf-8") as fh:
+                    json.dump({"cmdr_name": "Y" * (cap + 10)}, fh)
+                assert config.load_settings().cmdr_name == "Y" * cap
+                assert any("cmdr_name" in w for w in config.LOAD_WARNINGS)
+            finally:
+                config.DATA_DIR, config.SETTINGS_FILE = saved
+    run("settings: CMDR name capped", cmdr_name_cap)
+
     def settings_input_guards():
         # R-08: Steam and Elite are the built-in cards' keys, so a custom app
         # can't take either name. R-27: a path pasted in quotes (Explorer's
@@ -1090,24 +1121,29 @@ def main():
     def defaults_ticked_when_found():
         # R-26 and upgrades: a default joins the list ticked only if its
         # program is on this PC -- first run, RESTORE DEFAULTS, or a default
-        # that's new in this version (Elite Studio, for 1.2.1 users). A tick
-        # the CMDR set is never changed. Temp files only.
+        # that's new in this version (Elite Studio, for 1.2.1 users) -- and
+        # never if its entry is enabled=False (EDDI). A tick the CMDR set is
+        # never changed. Temp files only.
         import tempfile
         from dataclasses import replace as _replace
 
         def found(app):
             path = app.resolve_path()
-            return bool(path and os.path.exists(path))
+            return (config.REGISTRY_BY_NAME[app.origin].enabled
+                    and bool(path and os.path.exists(path)))
 
         with tempfile.TemporaryDirectory() as tmp:
             exe = os.path.join(tmp, "Tool.exe")
             open(exe, "w").close()
-            here = config.AppDescriptor("Here", "Tool", exe, enabled=False)
+            here = config.AppDescriptor("Here", "Tool", exe)
+            off = config.AppDescriptor("Off", "Tool", exe, enabled=False)
             gone = config.AppDescriptor("Gone", "Gone",
                                         os.path.join(tmp, "Gone.exe"))
             fresh = config._fresh_default(here)
             assert fresh.enabled and fresh.origin == "Here", fresh
+            assert not config._fresh_default(off).enabled, "enabled=False ticked"
             assert not config._fresh_default(gone).enabled, "missing one ticked"
+        assert not config.REGISTRY_BY_NAME["EDDI"].enabled, "EDDI ticked"
         for app in config.default_settings().apps:
             assert app.enabled == found(app), app.name
             assert app.origin == app.name, app
@@ -1398,7 +1434,7 @@ def main():
         finally:
             ui.QDesktopServices = real
             win._update = None
-            win._show_update_link()
+            win._show_update_badge()
         assert not win._header.update_btn.isVisibleTo(win), "badge stayed"
     run("updates: badge + release-page popover", update_ui)
 

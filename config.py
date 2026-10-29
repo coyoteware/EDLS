@@ -245,8 +245,10 @@ REGISTRY: list[AppDescriptor] = [
                   r"%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe"),
     AppDescriptor("Elite Studio", "EliteStudio",
                   r"%ProgramFiles%\Elite Studio\EliteStudio.exe"),
+    # Unticked even when installed: VoiceAttack's EDDI plugin usually runs it,
+    # and EDLS starting a second copy clashes with that one.
     AppDescriptor("EDDI", "EDDI",
-                  resolver=_find_eddi),
+                  resolver=_find_eddi, enabled=False),
 ]
 
 REGISTRY_BY_NAME = {a.name: a for a in REGISTRY}
@@ -273,6 +275,11 @@ SYSTEM_APPS: dict[str, AppDescriptor] = {
 # =============================================================================
 # Settings
 # =============================================================================
+# Keeps an ordinary name from widening the window when the update badge shows
+# beside it on the CMDR row.
+CMDR_NAME_MAX = 42
+
+
 @dataclass
 class Settings:
     cmdr_name: str = "Epstein Didn't Kill Himself"
@@ -318,11 +325,12 @@ def _fresh_default(reg: AppDescriptor) -> AppDescriptor:
     """A REGISTRY default as it joins the CMDR's list (first run, RESTORE
     DEFAULTS, or a default added in a later version): ticked only if its
     program is on this PC, so a tool they don't have doesn't greet every
-    LAUNCH with "not found". A copy, so user edits never mutate REGISTRY
-    (resolvers are shared callables, which is fine)."""
+    LAUNCH with "not found" -- and never if its entry is enabled=False. A
+    copy, so user edits never mutate REGISTRY (resolvers are shared
+    callables, which is fine)."""
     path = reg.resolve_path()
     return replace(reg, origin=reg.name,
-                   enabled=bool(path and os.path.exists(path)))
+                   enabled=reg.enabled and bool(path and os.path.exists(path)))
 
 
 def default_settings() -> Settings:
@@ -424,6 +432,10 @@ def _app_from_dict(d) -> Optional[AppDescriptor]:
 def _from_dict(raw: dict) -> Settings:
     d = Settings()   # field defaults
     cmdr = _as_str(raw.get("cmdr_name"), d.cmdr_name, "cmdr_name").strip()
+    if len(cmdr) > CMDR_NAME_MAX:
+        _warn(f"settings.json: 'cmdr_name' is longer than {CMDR_NAME_MAX} "
+              "characters - shortened.")
+        cmdr = cmdr[:CMDR_NAME_MAX].rstrip()
     apps = [_app_from_dict(e) for e in _as_list(raw.get("apps"), "apps")]
     return Settings(
         cmdr_name=cmdr or d.cmdr_name,

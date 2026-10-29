@@ -247,7 +247,9 @@ min-ed-launcher or real tools behave. Those tests are marked **R**.
 1. **Header.** One panel with cut corners. "ELITE : DANGEROUS · LAUNCH SUITE" on top,
    and the `CMDR` tag with your commander name in capitals underneath. The ringed-planet
    title mark spans both rows on the left. A gold line runs along the top edge (orange
-   in light mode) and stops at the cut corner. The panel is about 45% see-through.
+   in light mode) and stops at the cut corner. The panel is about 45% see-through. When a
+   newer EDLS is out, a green "UPDATE x.y.z AVAILABLE" badge sits at the right end of the
+   CMDR row (§8.20).
 2. *(The CMDR row is now part of the header, item 1.)*
 3. **SYSTEM STATUS.** One card per app, four per row. The order is Steam, Elite, then
    your companion apps in the order Settings lists them.
@@ -255,8 +257,7 @@ min-ed-launcher or real tools behave. Those tests are marked **R**.
    `launcher.log`. You can drag the gap between SYSTEM STATUS and the log to resize them.
 5. **Bottom bar.** Credits, the version badge and a "report issue" link on the left. The
    buttons **SHUTDOWN**, **AUTO START**, **SETTINGS**, **LAUNCH** on the right. (There's
-   no REFRESH any more: cards update by themselves.) When a newer EDLS is out, an
-   "update x.y.z available" link appears after "report issue" (§8.20).
+   no REFRESH any more: cards update by themselves.)
 
 The window can't be made smaller than 900×640. With many apps, the cards scroll inside
 SYSTEM STATUS instead of making the window taller.
@@ -525,14 +526,14 @@ risks from [§12](#12-known-risk-areas).
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "WELCOME TO EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is empty, with the default name as grey ghost text and the caret in the field. Toggles: show cards **on**, shutdown-all **off**, ask for admin rights **on**, start tools minimized **off**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, check for updates **on**, light mode **off**. The app list sits to the right of the toggles. All 13 default apps are listed, all visible without scrolling; only the ones installed on this PC are ticked (R-26 fix). Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, CANCEL, BEGIN. |
+| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "WELCOME TO EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is empty, with the default name as grey ghost text and the caret in the field. Toggles: show cards **on**, shutdown-all **off**, ask for admin rights **on**, start tools minimized **off**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, check for updates **on**, light mode **off**. The app list sits to the right of the toggles. All 13 default apps are listed, all visible without scrolling; only the ones installed on this PC are ticked (R-26 fix), and EDDI never is. Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, CANCEL, BEGIN. |
 | FR-02 | P1 | A | Enter a name → untick tools you don't have → Save → restart EDLS | The CMDR row shows the name in capitals. Unticked apps appear as dimmed DISABLED cards. After restart there's no setup window and everything is kept. |
 | FR-03 | P1 | A | Fresh start → close the setup window with Cancel, then repeat with Esc, then with X | The window closes and the main window works with defaults. SETTINGS opens the first-run version again. On the next start the setup window reappears. |
 | FR-04 | P2 | A | Turn AUTO START on → close EDLS → set `"setup_complete": false` in settings.json → start EDLS | The setup window opens and **no launch starts**. The log says "Auto-start skipped - finish first-time setup first." and never "Auto-start enabled — launching..." (R-34 fix). |
 | FR-05 | P2 | A | In the setup window, type a name, clear it again → BEGIN | The default name is used. A blank name is never saved. |
 | FR-06 | P2 | A | In the setup window, turn Light mode on → Save | The whole window switches to light. |
 | FR-07 | P3 | R | Fresh start on a PC with only a few of the tools installed → BEGIN without changing the ticks → LAUNCH | Only the installed tools were ticked, so there's no pile of "… not found - will be skipped." lines (R-26 fix). A tool installed somewhere other than its default path starts unticked: tick it and set its path. |
-| FR-08 | P1 | A | **Upgrade:** start 1.3.0 on a 1.2.1 `settings.json` (or delete the Elite Studio and EDDI entries from `settings.json` first) | Elite Studio and EDDI join the end of the app list, each ticked only if it's installed. Every other tick is as you left it. An app you'd already added yourself as "EDDI" isn't added a second time. A VoiceAttack still on the old default path now finds VoiceAttack 2 as well (CA-09). |
+| FR-08 | P1 | A | **Upgrade:** start 1.3.0 on a 1.2.1 `settings.json` (or delete the Elite Studio and EDDI entries from `settings.json` first) | Elite Studio and EDDI join the end of the app list: Elite Studio ticked only if it's installed, EDDI unticked even if it is. Every other tick is as you left it. An app you'd already added yourself as "EDDI" isn't added a second time. A VoiceAttack still on the old default path now finds VoiceAttack 2 as well (CA-09). |
 
 ### 8.3 Layout and visuals (UI)
 
@@ -549,7 +550,7 @@ Do this section in **both** themes.
 | UI-07 | P2 | A | Ultrawide (e.g. 3440×1440), maximized | The banner stops growing taller (about 88 px). The background covers the window, cropped but not stretched. Cards are wide but readable. |
 | UI-08 | P2 | A | Two monitors with different scaling: drag the window between them | It re-renders at the right size on each, with no blurry text and no broken layout. |
 | UI-09 | P1 | A | Header at minimum width and maximized | The title and CMDR name are centred and never overlap the title mark, which spans both rows on the left. Gold top line (orange in light mode). |
-| UI-10 | P2 | A | Set a 60-character CMDR name | Record: is it cut off? Does it widen the window or push things off-screen? |
+| UI-10 | P2 | A | Paste a 60-character CMDR name into Settings → Save. Then put a 60-character `"cmdr_name"` straight into `settings.json` → start EDLS. | Settings stops taking characters at 42. From `settings.json`: the log says "settings.json: 'cmdr_name' is longer than 42 characters - shortened." and the CMDR row shows the first 42. With ordinary names the window doesn't get wider. |
 | UI-11 | P1 | A | Card grid | Four per row. Order: Steam, Elite, then the enabled apps in Settings order, then the disabled ones in Settings order. All cards the same height. With few cards they sit at the top with empty space below. |
 | UI-12 | P1 | H | Add 20+ dummy apps (copies with different names) | The window doesn't grow. The cards scroll inside SYSTEM STATUS with a thin scrollbar, and the background still shows behind them (no dark box). The mouse wheel scrolls the cards (R-18 fix). |
 | UI-13 | P2 | H | Add an app with a 40-character name | The card name is cut short with "…". The state text stays readable. Settings shows the full name. |
@@ -768,7 +769,7 @@ about every 5 s otherwise.
 | SE-32 | P2 | A | EDIT and — REMOVE with no row selected | Nothing happens and there's no error. |
 | SE-33 | P1 | A | Remove a custom app → Save | Gone from the list and from the cards. |
 | SE-34 | P1 | A | Remove a default app (e.g. EDCoPilot) → Save → restart EDLS | It stays removed and doesn't come back. |
-| SE-35 | P2 | A | Remove **every** app → Save → restart EDLS | The list stays empty: only the Steam and Elite cards are left. RESTORE DEFAULTS → Save brings the 13 back, ticked only if installed (R-06 fix). |
+| SE-35 | P2 | A | Remove **every** app → Save → restart EDLS | The list stays empty: only the Steam and Elite cards are left. RESTORE DEFAULTS → Save brings the 13 back, ticked only if installed (EDDI never) (R-06 fix). |
 | SE-36 | P2 | A | After SE-34, add an app with the removed default's exact name and path | Works and launches. |
 | SE-37 | P2 | A | Rename EDMarketConnector to "EDMC" → Save → restart → LAUNCH | Still launches. The original "EDMarketConnector" row doesn't reappear. |
 | SE-38 | P2 | A | Rename SrvSurvey (path blank) → Save → LAUNCH → restart EDLS → LAUNCH | Found both times: the renamed app keeps its auto-find after the restart (R-07 fix). |
@@ -797,7 +798,7 @@ Close EDLS before each edit. Keep a backup.
 | PS-02 | P1 | A | Replace the contents with `hello` → start. Repeat with `[1, 2]`. | No crash. Settings reset to defaults and the setup window appears. The activity log shows an orange "settings.json couldn't be read (…) - settings were reset to defaults. The old file was kept as settings.json.bad.", and `settings.json.bad` holds what you wrote. |
 | PS-03 | P1 | A | Open `settings.json` in Notepad → Save As → Encoding: **UTF-8 with BOM** (change nothing else) → start | Settings kept exactly; no warnings (R-05 fix). |
 | PS-04 | P1 | A | `"elite_app_id": "abc"` → start | No crash. The activity log shows "settings.json: 'elite_app_id' has an invalid value - using 359320."; everything else is kept (R-04 fix). |
-| PS-05 | P2 | A | `"apps": null` → start | No crash. The 13 default apps are restored, ticked only if installed. |
+| PS-05 | P2 | A | `"apps": null` → start | No crash. The 13 default apps are restored, ticked only if installed (EDDI never). |
 | PS-06 | P2 | A | Make one entry in `apps` a plain string, e.g. `"EDMC"` → start | No crash. That entry is skipped with a warning ("skipped an app entry with no valid name"); the other apps load. |
 | PS-07 | P2 | A | `"removed_defaults": null` → start | No crash. |
 | PS-08 | P2 | A | `"cmdr_name": 123` (a number, no quotes) → start | No crash. Warning, and the default name is used. |
@@ -909,7 +910,7 @@ rest.
 | CA-10 | EDCoPTER | `%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe` | EDCoPTER.exe | General checks a–g. |
 | CA-11 | Elite Observatory | `%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe` | ObservatoryCore.exe | General checks a–g. |
 | CA-18 | Elite Studio | `%ProgramFiles%\Elite Studio\EliteStudio.exe` | EliteStudio.exe | It uses WebView2, so it runs several `msedgewebview2.exe` processes under it. After teardown and after STOP, none of those are left (other apps such as Edge run their own, so count `msedgewebview2.exe` in Task Manager → Details before starting it and after closing it). If `launcher.log` says "Elite Studio didn't close when asked", check whether it hides to the tray when you close its window. |
-| CA-20 | EDDI | `%LOCALAPPDATA%\EDDI\Application\EDDI.exe` (installed for you only, the installer's default); if that's missing, `%ProgramFiles%\EDDI\EDDI.exe` (installed for all users) | EDDI.exe | Settings shows its path blank: EDLS finds it by itself. It shows a splash screen first, so check g may not hold. **With VoiceAttack 2** (EDDI's plugin starts EDDI itself, with its window hidden): 1) VoiceAttack ticked, EDDI unticked → LAUNCH → exit the game: EDDI starts with VoiceAttack and is gone after teardown. 2) Both ticked → LAUNCH a few times: record any "EDDI is already running" message, and whether VoiceAttack's EDDI commands work. 3) Both ticked, but start VoiceAttack yourself and wait for EDDI to appear before LAUNCH: EDDI's hidden window ignores a close request, so `launcher.log` may say "EDDI didn't close when asked - killing it.": do check e. |
+| CA-20 | EDDI | `%LOCALAPPDATA%\EDDI\Application\EDDI.exe` (installed for you only, the installer's default); if that's missing, `%ProgramFiles%\EDDI\EDDI.exe` (installed for all users) | EDDI.exe | Settings shows its path blank: EDLS finds it by itself. It's added unticked even when installed: tick it to test. It shows a splash screen first, so check g may not hold. **With VoiceAttack 2** (EDDI's plugin starts EDDI itself, with its window hidden): 1) VoiceAttack ticked, EDDI unticked → LAUNCH → exit the game: EDDI starts with VoiceAttack and is gone after teardown. 2) Both ticked → LAUNCH a few times: record any "EDDI is already running" message, and whether VoiceAttack's EDDI commands work. 3) Both ticked, but start VoiceAttack yourself and wait for EDDI to appear before LAUNCH: EDDI's hidden window ignores a close request, so `launcher.log` may say "EDDI didn't close when asked - killing it.": do check e. |
 
 More:
 
@@ -983,7 +984,7 @@ afterwards.
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
 | UP-01 | P1 | A | Run the latest version → start EDLS | No update badge and nothing about updates in the activity log. `launcher.log` has "Update check: EDLS &lt;version&gt; is the latest." |
-| UP-02 | P1 | A | Run an older version → start EDLS. Repeat in light mode. | About a second after the panels appear, a green "UPDATE x.y.z AVAILABLE" badge shows at the right end of the CMDR name's row (green in both themes). The CMDR name stays centred under the title and the header grows only a few pixels. Repeat with a long CMDR name (40+ characters): the name moves left rather than run into the badge. The log says "EDLS x.y.z is available - click the UPDATE badge next to your CMDR name." in green (pale green in light mode). |
+| UP-02 | P1 | A | Run an older version → start EDLS. Repeat in light mode. | About a second after the panels appear, a green "UPDATE x.y.z AVAILABLE" badge shows at the right end of the CMDR name's row (green in both themes). The CMDR name stays centred under the title and the header grows only a few pixels. Repeat with a 42-character CMDR name (the most Settings takes): the name moves left rather than run into the badge. Record whether it reaches the ringed-planet mark. The log says "EDLS x.y.z is available - click the UPDATE badge next to your CMDR name." in green (pale green in light mode). |
 | UP-03 | P1 | A | Click the update badge. Repeat in light mode, and reach the badge with Tab → Enter. | A popover: "U P D A T E   A V A I L A B L E", "EDLS x.y.z is out - you have …", then how to update (download `EDLS-Setup-x.y.z.exe` from the release page and run it). Two buttons: LATER and RELEASE PAGE. Enter and Esc both mean LATER: nothing happens and the badge stays. Record anything in the text that's unclear. |
 | UP-04 | P1 | A | Update popover → RELEASE PAGE | Your browser opens the latest release's GitHub page, showing that version with its installer under Assets. The badge stays. |
 | UP-05 | P1 | A | With EDLS open, follow the popover's steps: download the installer and run it. Needs a published release newer than the installed EDLS. | Same as IN-02: setup closes EDLS, and Steam, the game and the tools stay open. Let setup start EDLS at the end: the version chip shows the new version, there's no update badge, and your settings and app list are unchanged. |

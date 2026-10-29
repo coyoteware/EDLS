@@ -1700,7 +1700,7 @@ _TOGGLE_TIPS: dict[str, tuple[bool, str]] = {
     "toggle_inactive": (True,
         "Disabled apps still get a card on the main window, mostly for debug."),
     "toggle_scope": (True,
-        "Pressing [SHUTDOWN] or closing the game can close either all tracked apps or only the ones EDLS started this session."),
+        "Pressing [SHUTDOWN] or closing the game can close either all enabled apps or only the ones EDLS started this session."),
     "toggle_admin": (True,
         "MUST BE ON FOR EDHM-UI TO WORK! Programs requiring admin rights will be skipped otherwise."),
     "toggle_minimized": (True,
@@ -1918,6 +1918,7 @@ class SettingsDialog(QDialog):
         custom = state.cmdr_name != self._default_cmdr
         self.cmdr_edit = QLineEdit(state.cmdr_name if custom else "")
         self.cmdr_edit.setPlaceholderText(self._default_cmdr)
+        self.cmdr_edit.setMaxLength(config.CMDR_NAME_MAX)
         self.cmdr_edit.setFont(font_mono(11))
         left.addLayout(_stacked_field("CMDR NAME", self.cmdr_edit, c))
 
@@ -2424,7 +2425,7 @@ class MainWindow(QMainWindow):
         # re-applies these, so "Waiting..." or ERROR survive the rebuild.
         self._card_states: dict[str, tuple[AppState, Optional[int]]] = {}
         # The newer version the update check found -- kept here so a theme
-        # rebuild restores the link.
+        # rebuild restores the badge.
         self._update: Optional[str] = None
 
         # Background persists across theme switches (it repaints from the themed
@@ -2498,7 +2499,7 @@ class MainWindow(QMainWindow):
         self._btns.settings_clicked.connect(self._open_settings)
         self._btns.launch_clicked.connect(self._on_launch_clicked)
         self._btns.set_busy(self._busy, self._counting)
-        self._show_update_link()
+        self._show_update_badge()
         self._update_launch_mute()
         root.addWidget(self._btns)
 
@@ -2636,13 +2637,13 @@ class MainWindow(QMainWindow):
         self.close()
 
     # ---- updates ----
-    def _show_update_link(self) -> None:
+    def _show_update_badge(self) -> None:
         self._header.show_update(self._update)
 
     @Slot(str)
     def _on_update(self, version: str) -> None:
         self._update = version
-        self._show_update_link()
+        self._show_update_badge()
         self._log.append(f"EDLS {version} is available - click the UPDATE "
                          "badge next to your CMDR name.", "update")
 

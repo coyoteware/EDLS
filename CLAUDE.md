@@ -69,7 +69,7 @@ a visual outcome you haven't confirmed with him.
 - **`ShutdownScope` is a user setting** (`LAUNCHED_ONLY` | `ALL_ENABLED`); both the
   SHUTDOWN button and the on-exit teardown honor it. Don't hardcode one behavior.
   "Launched" includes what EDLS took over: a tool already running when LAUNCH or its
-  card's START reached it (`ProcessManager.launch()` records it), which is what lets a
+  card's START reached it (`ProcessManager.adopt()` records it), which is what lets a
   re-attach after reopening EDLS clean up.
 - **EDLS never closes Steam or the game** (force-closing Elite breaks Frontier's
   ToS). `ProcessManager.stop()` refuses `PROTECTED_PROCESSES`; never add a kill
@@ -101,8 +101,9 @@ a visual outcome you haven't confirmed with him.
   Helper's resolver prefers its updating launcher over the helper exe; `_RETIRED_PATHS`
   moves a saved old default path over on load.
 - **A default starts ticked only if it's installed** (`config._fresh_default`): first
-  run, RESTORE DEFAULTS, and a default that's new to an existing settings.json. Ticks
-  the CMDR set are never changed. Each saved app keeps its `origin` (the REGISTRY
+  run, RESTORE DEFAULTS, and a default that's new to an existing settings.json. A
+  REGISTRY entry with `enabled=False` never starts ticked (EDDI: VoiceAttack's plugin
+  usually runs it). Ticks the CMDR set are never changed. Each saved app keeps its `origin` (the REGISTRY
   name), so a renamed default keeps its resolver after a restart.
 - **The close countdown can be cancelled.** While `Engine._close_countdown` runs,
   `on_countdown(True)` turns LAUNCH into STAY OPEN (`Engine.stay_open()`). If the

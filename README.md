@@ -89,7 +89,7 @@ disabled, or have its path edited). The ones it finds on your PC start out enabl
 
 >>*NOTE* on admin rights: some tools (EDHM-UI, on most accounts) ask Windows for administrator rights. EDLS itself never runs as administrator, so when it starts one of these, Windows shows its usual UAC prompt. If EDLS has to close one later, Windows asks once more (one prompt covers every such tool). Don't want the prompts? Turn off **Ask for admin rights when a tool needs them** in SETTINGS: EDLS then leaves those tools to you.
 
->>*NOTE* on EDDI: if you use EDDI through VoiceAttack (its EDDI plugin), leave EDDI unticked in SETTINGS and VoiceAttack ticked. The plugin starts EDDI for you and closes it with VoiceAttack. With both ticked, EDLS and the plugin can both try to start EDDI at once.
+>>*NOTE* on EDDI: if you use EDDI through VoiceAttack (its EDDI plugin), leave EDDI unticked in SETTINGS and VoiceAttack ticked. The plugin starts EDDI for you and closes it with VoiceAttack. With both ticked, EDLS and the plugin can both try to start EDDI at once. That's why EDLS adds EDDI unticked, even when it's installed: tick it only if you run EDDI on its own.
 
 
 
