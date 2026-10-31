@@ -1,0 +1,133 @@
+/* ============================================================================
+   EDLS — COLOR TOKENS
+   Lifted verbatim from EDLS-py/ui.py (the dark "HUD" palette is canonical;
+   the light "day mode" palette ships as a [data-theme="light"] scope).
+   Naming: --ed-* are raw brand values; semantic aliases sit below them.
+   ============================================================================ */
+
+:root {
+  /* ---- Raw palette (dark HUD — the default) ---------------------------- */
+  --ed-gold:        #FFB700;  /* fixed accent — title banner, gold highlights */
+  --ed-dark:        #090905;  /* window base — near-black warm */
+  --ed-panel:       #0D0B07;  /* opaque panel fill */
+  --ed-border:      #1C1208;  /* hairline panel border */
+  --ed-amber:       #C8760A;  /* PRIMARY text / amber accent */
+  --ed-orange:      #FF8C1A;  /* active / launching accent */
+  --ed-dim:         #4A3A20;  /* dim amber (scrollbars, faint rules) */
+  --ed-text-mid:    #A07A3A;  /* secondary text */
+  --ed-text-dim:    #6A5030;  /* tertiary text */
+  --ed-green:       #3DCC6A;  /* online / running */
+  --ed-red:         #CC3D3D;  /* failed / danger */
+  --ed-inactive:    #454545;  /* offline grey */
+  --ed-name:        #C8860A;  /* app-name labels */
+  --ed-cmdr:        #FF8C1A;  /* CMDR identity name */
+  --ed-success:     #FFB700;  /* success log lines */
+  --ed-log-dim:     #5A4A2A;  /* dim log lines */
+
+  /* Translucent surfaces (window art shows through) */
+  --ed-panel-translucent: rgba(13, 11, 7, 0.45);   /* status / log panels */
+  --ed-card-bg:           rgba(10, 8, 4, 0.74);     /* status cards */
+  --ed-card-border:       #1A1208;
+  --ed-card-border-off:   #181818;
+
+  /* State-tinted card borders (glow stand-ins) */
+  --ed-border-online:    rgba(61, 204, 106, 0.28);
+  --ed-border-launching: rgba(200, 118, 10, 0.30);
+  --ed-border-failed:    rgba(204, 61, 61, 0.30);
+
+  /* Toggle track */
+  --ed-toggle-off: #8A929C;
+  --ed-toggle-on:  #C25E0A;
+
+  /* HUD toggles (ToggleSwitch, ThemeToggle) */
+  --tg-off-bd:   #3A2E18;  /* track hairline, off */
+  --tg-off-bg:   #120F0A;  /* track fill, off */
+  --tg-off-knob: #6A5030;
+  --tg-off-txt:  #6A5030;  /* OFF micro-label */
+  --tg-on-bd:    #FF8C1A;
+  --tg-on-bg:    #2A1804;
+  --tg-on-knob:  #FFB700;
+  --tg-on-txt:   #FFB700;
+  --tg-glow:     0 0 8px rgba(255, 183, 0, 0.55);  /* @kind shadow */ /* drop-shadow() args */
+  --tg-icon:     #A07A3A;  /* idle icons in ThemeToggle track */
+
+  /* ---- Semantic aliases ------------------------------------------------- */
+  --surface-base:       var(--ed-dark);
+  --surface-panel:      var(--ed-panel-translucent);
+  --surface-panel-solid:var(--ed-panel);
+  --surface-card:       var(--ed-card-bg);
+
+  --border-default:     var(--ed-border);
+  --border-card:        var(--ed-card-border);
+
+  --text-primary:       var(--ed-amber);
+  --text-secondary:     var(--ed-text-mid);
+  --text-tertiary:      var(--ed-text-dim);
+  --text-accent:        var(--ed-gold);
+  --text-active:        var(--ed-orange);
+
+  --status-online:      var(--ed-green);
+  --status-active:      var(--ed-orange);
+  --status-offline:     var(--ed-inactive);
+  --status-failed:      var(--ed-red);
+
+  --accent:             var(--ed-gold);
+  --accent-amber:       var(--ed-amber);
+}
+
+/* ---- Light "day mode" — for washed-out monitors ------------------------- */
+[data-theme="light"] {
+  --ed-dark:        #D7DBE0;
+  --ed-panel:       #C8CDD4;
+  --ed-border:      #A6AEB9;
+  --ed-amber:       #252C36;  /* primary text -> dark slate */
+  --ed-orange:      #C25E0A;
+  --ed-dim:         #AEB6C0;
+  --ed-text-mid:    #586573;
+  --ed-text-dim:    #7E8893;
+  --ed-green:       #1E9E4C;
+  --ed-red:         #C0322B;
+  --ed-inactive:    #9AA2AC;
+  --ed-name:        #2A313B;
+  --ed-cmdr:        #243042;
+  --ed-success:     #B5560C;
+  --ed-log-dim:     #98A0A8;
+
+  --ed-panel-translucent: rgba(255, 255, 255, 0.38);
+  --ed-card-bg:           rgba(255, 255, 255, 0.59);
+  --ed-card-border:       #B4BCC6;
+  --ed-card-border-off:   #C6CCD4;
+
+  --tg-off-bd:   #9AA2AC;
+  --tg-off-bg:   #DDE1E6;
+  --tg-off-knob: #7E8893;
+  --tg-off-txt:  #586573;
+  --tg-on-bd:    #C25E0A;
+  --tg-on-bg:    #F6DEC6;
+  --tg-on-knob:  #C25E0A;
+  --tg-on-txt:   #A84F08;
+  --tg-glow:     0 0 0 transparent;  /* @kind shadow */
+  --tg-icon:     #586573;
+
+  /* Semantic aliases re-declared so a nested [data-theme="light"] element
+     re-resolves them (custom properties inherit already-resolved values). */
+  --surface-base:       var(--ed-dark);
+  --surface-panel:      var(--ed-panel-translucent);
+  --surface-panel-solid:var(--ed-panel);
+  --surface-card:       var(--ed-card-bg);
+  --border-default:     var(--ed-border);
+  --border-card:        var(--ed-card-border);
+  --text-primary:       var(--ed-amber);
+  --text-secondary:     var(--ed-text-mid);
+  --text-tertiary:      var(--ed-text-dim);
+  --text-active:        var(--ed-orange);
+  --status-online:      var(--ed-green);
+  --status-active:      var(--ed-orange);
+  --status-offline:     var(--ed-inactive);
+  --status-failed:      var(--ed-red);
+  --accent-amber:       var(--ed-amber);
+
+  /* Gold accent stays gold only on dark surfaces; in day mode it reads as orange */
+  --accent:        #C25E0A;
+  --text-accent:   #C25E0A;
+}

@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EDLS · Elite: Dangerous Launch Suite</title>
+<meta name="description" content="EDLS starts Steam, Elite: Dangerous and up to a dozen companion tools in one click, shows a live status board while you fly, and closes the tools when the game exits. Free, open source, Windows 10/11.">
+<meta name="theme-color" content="#090905">
+<link rel="canonical" href="https://coyoteware.github.io/EDLS/">
+<link rel="icon" href="img/icon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="img/icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="EDLS">
+<meta property="og:title" content="EDLS · Elite: Dangerous Launch Suite">
+<meta property="og:description" content="Steam, Elite: Dangerous and your companion tools in one click. Torn down when the game closes. o7">
+<meta property="og:url" content="https://coyoteware.github.io/EDLS/">
+<meta property="og:image" content="https://coyoteware.github.io/EDLS/img/screenshots/midsession.png">
+<meta property="og:image:alt" content="The EDLS window mid-session: status cards for Steam, Elite and companion tools, with the activity log below.">
+<meta name="twitter:card" content="summary_large_image">
+<script>
+  (function () {
+    var t;
+    try { t = localStorage.getItem("edls-theme"); } catch (e) {}
+    if (t !== "light" && t !== "dark") {
+      t = window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    }
+    document.documentElement.setAttribute("data-theme", t);
+  })();
+</script>
+<link rel="preload" href="ds/assets/EUROCAPS.TTF" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="ds/styles.css">
+<link rel="stylesheet" href="css/site.css">
+<script src="js/site.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-play" viewBox="0 0 10 12"><path d="M0 0 10 6 0 12Z" fill="currentColor"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 12 12"><path d="M3 9 9 3M4 3h5v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M15.5 3.5a8.5 8.5 0 1 0 5 15 7 7 0 0 1-5-15z" fill="currentColor"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="EDLS home">
+      <img src="img/icon.svg" alt="" width="30" height="30">EDLS
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#features">Features</a>
+      <a class="nav-extra" href="#tools">Tools</a>
+      <a href="#setup">Setup</a>
+      <a href="#download">Download</a>
+      <a class="nav-extra" href="#faq">FAQ</a>
+      <a href="https://github.com/coyoteware/EDLS">GitHub</a>
+    </nav>
+    <button class="ed-theme-toggle" type="button" role="switch" aria-checked="false" aria-label="Day mode" hidden>
+      <span class="tt-track" aria-hidden="true"></span>
+      <svg class="tt-icon tt-moon-bg" aria-hidden="true"><use href="#i-moon"/></svg>
+      <svg class="tt-icon tt-sun-bg" aria-hidden="true"><use href="#i-sun"/></svg>
+      <span class="tt-knob" aria-hidden="true">
+        <svg class="k-moon"><use href="#i-moon"/></svg>
+        <svg class="k-sun"><use href="#i-sun"/></svg>
+      </span>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ═══ HERO ═══════════════════════════════════════════════════════════ -->
+<section class="hero" id="top">
+  <div class="wrap">
+    <div class="ed-header boot" style="--i:0">
+      <img class="ed-header-mark only-dark" src="img/title-mark.svg" alt="" width="132" height="110">
+      <img class="ed-header-mark only-light" src="img/title-mark-light.svg" alt="" width="132" height="110">
+      <h1><span class="seg">Elite : Dangerous</span><span class="sep" aria-hidden="true">·</span><span class="seg">Launch Suite</span></h1>
+      <div class="ed-cmdr"><span class="ed-badge">CMDR</span><span class="o7">o7</span></div>
+    </div>
+
+    <div class="hero-grid">
+      <div class="hero-copy boot" style="--i:1">
+        <p class="ed-eyebrow">One-click launcher for Elite: Dangerous</p>
+        <p class="hero-pitch">Steam, the game and up to a dozen companion tools, started in one click. A live status board while you fly. When the game closes, your tools close with it.</p>
+        <div class="keys">
+          <a class="ed-btn ed-btn--launch ed-btn--lg" href="#download"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Download</a>
+          <a class="ed-btn ed-btn--secondary ed-btn--lg" href="https://github.com/coyoteware/EDLS">Source code</a>
+        </div>
+        <div class="chips">
+          <span class="ed-badge ed-badge--gold ed-badge--filled" data-release-version hidden></span>
+          <span class="ed-badge">Free · MIT</span>
+          <span class="ed-badge">Windows 10 / 11</span>
+          <span class="ed-badge">Open source</span>
+          <span class="ed-badge ed-badge--dim">Fan-made</span>
+        </div>
+      </div>
+      <figure class="ed-panel hud shot boot" style="--i:2">
+        <a href="img/screenshots/midsession.png"><img src="img/screenshots/midsession.png" width="1501" height="1366" alt="The EDLS window mid-session: Steam, Elite and three companion tools online, the rest disabled, and the activity log reporting all systems nominal."></a>
+        <figcaption><span>EDLS · mid-session</span><span>launcher.log</span></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ FEATURES ═══════════════════════════════════════════════════════ -->
+<section class="section" id="features" aria-labelledby="features-h">
+  <div class="wrap">
+    <header class="section-head">
+      <p class="ed-eyebrow">01 · Features</p>
+      <h2 id="features-h">One click. Whole flight deck.</h2>
+      <p class="lede">EDLS does the boring part of every session: open Steam, start the game, start your tools, close them all afterwards.</p>
+    </header>
+
+    <article class="feature">
+      <figure class="ed-panel hud shot">
+        <a href="img/screenshots/mainmenu.png"><img src="img/screenshots/mainmenu.png" width="1507" height="1369" loading="lazy" alt="The EDLS main window before launch: Steam online, every other card offline, and the LAUNCH key at the bottom right."></a>
+        <figcaption><span>Standing by</span><span>LAUNCH ready</span></figcaption>
+      </figure>
+      <div class="feature-copy">
+        <span class="ed-badge ed-badge--orange">Launch</span>
+        <h3>Steam. Elite. Your tools. One key.</h3>
+        <p>Press LAUNCH and EDLS starts Steam, boots Elite: Dangerous through min-ed-launcher, waits for the game, then brings up every companion tool you've ticked, in the order you set. Frontier's launcher never gets in the way.</p>
+        <ul class="ticks">
+          <li>Game already running? LAUNCH attaches to it instead of starting a second copy.</li>
+          <li>Tools you already had open are picked up, not restarted.</li>
+          <li>AUTO START launches the moment EDLS opens. One click becomes none.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="ed-panel hud shot">
+        <a href="img/screenshots/booting.png"><img src="img/screenshots/booting.png" width="1504" height="1368" loading="lazy" alt="EDLS mid-launch: Steam online, Elite waiting, and the activity log stepping through the launch sequence."></a>
+        <figcaption><span>Launch sequence</span><span>Waiting...</span></figcaption>
+      </figure>
+      <div class="feature-copy">
+        <span class="ed-badge ed-badge--orange">Status</span>
+        <h3>Every system at a glance.</h3>
+        <p>A card for every app: Offline, Launching, Online. START or STOP any single tool from its card. The activity log records each step, PIDs included, and keeps a copy in <code>launcher.log</code>.</p>
+        <ul class="ticks">
+          <li>Cards follow tools you open or close yourself.</li>
+          <li>Drag the tool list in Settings to set the card order and the start order.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="feature">
+      <div class="ed-panel hud feature-visual">
+        <div class="ed-panel-head"><p class="ed-eyebrow">Activity log</p><span class="ed-panel-meta">launcher.log</span></div>
+        <ul class="ed-log" aria-label="Example activity log at the end of a session">
+          <li class="dim"><span class="ts">[21:47:02]</span> Monitoring Elite: Dangerous...</li>
+          <li><span class="ts">[23:12:40]</span> Elite: Dangerous offline.</li>
+          <li><span class="ts">[23:12:40]</span> Closing third-party tools...</li>
+          <li><span class="ts">[23:12:40]</span> Stopping EDMarketConnector...</li>
+          <li><span class="ts">[23:12:40]</span> Stopping SrvSurvey...</li>
+          <li><span class="ts">[23:12:41]</span> Stopping OdysseyMaterials...</li>
+          <li class="success"><span class="ts">[23:12:43]</span> Third-party tools shut down.</li>
+          <li><span class="ts">[23:12:43]</span> EDLS will close in 5 seconds.</li>
+          <li class="success"><span class="ts">[23:12:47]</span> Farewell, CMDR. o7</li>
+        </ul>
+      </div>
+      <div class="feature-copy">
+        <span class="ed-badge ed-badge--orange">Teardown</span>
+        <h3>Game closed. Tools closed.</h3>
+        <p>When Elite exits, EDLS asks each tool to close, gives it three seconds, and only then forces the stragglers. Then it counts down five seconds and closes itself.</p>
+        <ul class="ticks">
+          <li>Changed your mind? LAUNCH turns into STAY OPEN during the countdown.</li>
+          <li>Close only what EDLS launched, or every enabled tool. Your call, in Settings.</li>
+          <li>SHUTDOWN does the same teardown on demand.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="ed-panel hud shot">
+        <a href="img/screenshots/addapp.png"><img src="img/screenshots/addapp.png" width="1501" height="1366" loading="lazy" alt="The EDLS first-time setup dialog with the Add App popover open over the list of companion apps and their paths."></a>
+        <figcaption><span>Settings · Add app</span><span>%LOCALAPPDATA%\EDLS</span></figcaption>
+      </figure>
+      <div class="feature-copy">
+        <span class="ed-badge ed-badge--orange">Loadout</span>
+        <h3>Your tools. Your order.</h3>
+        <p>Add any program, untick what you don't use, edit paths with <code>%ENV%</code> variables like <code>%ProgramFiles%</code>. On first run, only the tools EDLS finds on your PC start ticked.</p>
+        <ul class="ticks">
+          <li>Set your CMDR name for the header.</li>
+          <li>Optional: start tools minimized, so they stay out of the game's way.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="ed-panel hud shot">
+        <a href="img/screenshots/lightmode.png"><img src="img/screenshots/lightmode.png" width="1500" height="1366" loading="lazy" alt="EDLS in day mode: a light grey window and header around the dark status cards, with an orange LAUNCH key."></a>
+        <figcaption><span>Day mode</span><span>Full Daylight</span></figcaption>
+      </figure>
+      <div class="feature-copy">
+        <span class="ed-badge ed-badge--orange">Day mode</span>
+        <h3>Full Daylight.</h3>
+        <p>A light theme for bright rooms and washed-out monitors. The window around the status board lightens; the board itself stays a dark HUD. The toggle in Settings previews it live. This page has one too, top right.</p>
+      </div>
+    </article>
+
+    <div class="aboard">
+      <div class="ed-panel hud">
+        <p class="ed-eyebrow">Hands off</p>
+        <h3>Never closes the game</h3>
+        <p>EDLS never closes Steam or Elite: Dangerous. Force-closing the game breaks Frontier's terms. The Elite card has no STOP.</p>
+      </div>
+      <div class="ed-panel hud">
+        <p class="ed-eyebrow">Admin</p>
+        <h3>Elevation on request</h3>
+        <p>EDLS never runs as administrator. A tool that asks for admin rights gets Windows' usual prompt, or you can turn that off.</p>
+      </div>
+      <div class="ed-panel hud">
+        <p class="ed-eyebrow">Updates</p>
+        <h3>A check and a badge</h3>
+        <p>At startup EDLS asks GitHub for a newer release and shows a green UPDATE badge. It never downloads or installs anything itself.</p>
+      </div>
+      <div class="ed-panel hud">
+        <p class="ed-eyebrow">Polite</p>
+        <h3>Asks before it forces</h3>
+        <p>Tools get a normal close request first. Only what's still running three seconds later is shut down.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ TOOLS ══════════════════════════════════════════════════════════ -->
+<section class="section" id="tools" aria-labelledby="tools-h">
+  <div class="wrap">
+    <header class="section-head">
+      <p class="ed-eyebrow">02 · Tools</p>
+      <h2 id="tools-h">Thirteen tools aboard. Room for more.</h2>
+      <p class="lede">EDLS knows where these usually live and finds them for you. Anything else is one ADD away.</p>
+    </header>
+
+    <div class="ed-panel hud">
+      <div class="ed-panel-head"><p class="ed-eyebrow">System status</p><span class="ed-panel-meta">13 defaults + yours</span></div>
+      <ul class="tool-grid" role="list" style="list-style:none;margin:0;padding:0">
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:0ms"></span><span class="ed-card-name">EDMarketConnector</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://github.com/EDCD/EDMarketConnector">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: EDMarketConnector</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-300ms"></span><span class="ed-card-name">SrvSurvey</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://github.com/njthomson/SrvSurvey">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: SrvSurvey</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-600ms"></span><span class="ed-card-name">Odyssey Mats Helper</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://github.com/jixxed/ed-odyssey-materials-helper">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: Odyssey Materials Helper</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-900ms"></span><span class="ed-card-name">EDCoPilot</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://www.razzafrag.com/">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: EDCoPilot</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-1200ms"></span><span class="ed-card-name">EDHM-UI</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://github.com/BlueMystical/EDHM_UI">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: EDHM-UI</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-1500ms"></span><span class="ed-card-name">opentrack</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://github.com/opentrack/opentrack">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: opentrack</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-150ms"></span><span class="ed-card-name">ICARUS Terminal</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://github.com/iaincollins/icarus">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: ICARUS Terminal</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-450ms"></span><span class="ed-card-name">EDDiscovery</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://github.com/EDDiscovery/EDDiscovery">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: EDDiscovery</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-750ms"></span><span class="ed-card-name">VoiceAttack 1 / 2</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://voiceattack.com/">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: VoiceAttack</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-1050ms"></span><span class="ed-card-name">EDCoPTER</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://edcopter.net/">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: EDCoPTER</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-1350ms"></span><span class="ed-card-name">Elite Observatory</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://github.com/Xjph/ObservatoryCore">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: Elite Observatory</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-1650ms"></span><span class="ed-card-name">Elite Studio</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://elite-studio-app.github.io/">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: Elite Studio</span></a></li>
+        <li class="ed-card ed-card--online"><div class="ed-card-row"><span class="ed-dot ed-dot--online" style="--pulse-delay:-500ms"></span><span class="ed-card-name">EDDI</span><span class="ed-card-state">Online</span></div><a class="ed-btn ed-btn--secondary ed-btn--sm" href="https://github.com/EDCD/EDDI">Project<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg><span class="sr-only">: EDDI</span></a></li>
+        <li class="ed-card"><div class="ed-card-row"><span class="ed-dot"></span><span class="ed-card-name">Your own .exe</span><span class="ed-card-state">Offline</span></div><a class="ed-btn ed-btn--on ed-btn--sm" href="https://github.com/coyoteware/EDLS#configuration">+ Add</a></li>
+      </ul>
+      <p class="tool-note">A default starts ticked only if EDLS finds it on your PC. EDDI starts unticked: VoiceAttack's EDDI plugin usually runs it.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ SETUP ══════════════════════════════════════════════════════════ -->
+<section class="section" id="setup" aria-labelledby="setup-h">
+  <div class="wrap">
+    <header class="section-head">
+      <p class="ed-eyebrow">03 · Setup</p>
+      <h2 id="setup-h">Preflight checks.</h2>
+      <p class="lede">EDLS stands on two other projects. Set them up first, once, and confirm the game starts through them on its own.</p>
+    </header>
+
+    <ol class="steps" role="list" style="list-style:none;margin:0;padding:0">
+      <li class="ed-panel hud step">
+        <span class="step-num">01</span>
+        <h3>min-ed-launcher</h3>
+        <p>A minimal replacement for Frontier's launcher: the game just starts. Install it and follow its setup guide so Steam starts Elite through it.</p>
+        <div class="keys"><a class="ed-btn ed-btn--secondary" href="https://github.com/rfvgyhn/min-ed-launcher#setup">Setup guide<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg></a></div>
+      </li>
+      <li class="ed-panel hud step">
+        <span class="step-num">02</span>
+        <h3>Legendary</h3>
+        <p>A command-line Epic Games client. min-ed-launcher signs in through it, with an Epic account; that's what lets it skip Frontier's launcher. Install it, run <code>legendary auth</code> once, then point min-ed-launcher at it.</p>
+        <div class="keys"><a class="ed-btn ed-btn--secondary" href="https://github.com/derrod/legendary#installation">Install Legendary<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg></a></div>
+      </li>
+      <li class="ed-panel hud step">
+        <span class="step-num">03</span>
+        <h3>EDLS</h3>
+        <p>Run the installer. On first run, tick your tools and check their paths. Once it works the way you like, turn on AUTO START.</p>
+        <div class="keys"><a class="ed-btn ed-btn--launch" href="#download"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Download</a></div>
+      </li>
+    </ol>
+    <p class="callout hud"><strong>NOTE</strong> Skip steps 1 and 2 and EDLS still starts your tools, but Frontier's launcher stays in the way, and you save very little time.</p>
+  </div>
+</section>
+
+<!-- ═══ DOWNLOAD ═══════════════════════════════════════════════════════ -->
+<section class="section" id="download" aria-labelledby="download-h">
+  <div class="wrap">
+    <header class="section-head">
+      <p class="ed-eyebrow">04 · Download</p>
+      <h2 id="download-h">Cleared for launch.</h2>
+    </header>
+
+    <div class="ed-panel hud download">
+      <div>
+        <p class="ed-eyebrow">Latest release</p>
+        <p class="dl-file" data-release-file>EDLS installer</p>
+        <div class="keys">
+          <a class="ed-btn ed-btn--launch ed-btn--lg" href="https://github.com/coyoteware/EDLS/releases/latest" data-release-download><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Download</a>
+          <a class="ed-btn ed-btn--secondary ed-btn--lg" href="https://github.com/coyoteware/EDLS/releases/latest" data-release-notes>Release notes</a>
+        </div>
+        <p>Installs over an older version and keeps your settings. From 1.3.0 on, EDLS checks GitHub at startup and shows an UPDATE badge when there's a newer version: download it here and run it over the old one. The check can be turned off in Settings.</p>
+      </div>
+      <dl class="specs">
+        <dt>System</dt><dd>Windows 10 / 11</dd>
+        <dt>Needs</dt><dd>Steam, Elite: Dangerous, min-ed-launcher and Legendary (see <a href="#setup">Setup</a>)</dd>
+        <dt>Licence</dt><dd>MIT, free</dd>
+        <dt>Settings</dt><dd><code>%LOCALAPPDATA%\EDLS</code></dd>
+        <dt>Source</dt><dd><a href="https://github.com/coyoteware/EDLS">coyoteware/EDLS</a></dd>
+      </dl>
+    </div>
+    <p class="callout hud"><strong>UNSIGNED</strong> The installer isn't code-signed, and some antivirus tools distrust unsigned apps that start and close other programs. If yours complains, each release's notes link a VirusTotal analysis, and the full source is on <a href="https://github.com/coyoteware/EDLS">GitHub</a>.</p>
+  </div>
+</section>
+
+<!-- ═══ FAQ ════════════════════════════════════════════════════════════ -->
+<section class="section" id="faq" aria-labelledby="faq-h">
+  <div class="wrap">
+    <header class="section-head section-head--center">
+      <p class="ed-eyebrow">05 · FAQ</p>
+      <h2 id="faq-h">Comms log.</h2>
+    </header>
+    <div class="faq">
+      <details class="ed-faq hud">
+        <summary>Will EDLS close my game?</summary>
+        <div class="answer"><p>No. EDLS never closes Steam or Elite: Dangerous: force-closing the game breaks Frontier's terms of service. Quit from the game's own menu. EDLS only closes your companion tools.</p></div>
+      </details>
+      <details class="ed-faq hud">
+        <summary>Why did Windows ask for admin rights?</summary>
+        <div class="answer"><p>Some tools (EDHM-UI, on most accounts) ask Windows for administrator rights. EDLS itself never runs as administrator, so when it starts one of these, Windows shows its usual UAC prompt. If EDLS has to close one later, Windows asks once more, one prompt for all of them.</p><p>Don't want the prompts? Turn off <strong>Ask for admin rights when a tool needs them</strong> in Settings, and EDLS leaves those tools to you.</p></div>
+      </details>
+      <details class="ed-faq hud">
+        <summary>My antivirus flagged it.</summary>
+        <div class="answer"><p>The installer is unsigned, and EDLS starts and closes other programs: some antivirus tools distrust that combination. Each release's notes link a VirusTotal analysis, and the source is all on GitHub.</p></div>
+      </details>
+      <details class="ed-faq hud">
+        <summary>Does it update itself?</summary>
+        <div class="answer"><p>No. From 1.3.0 on, EDLS asks GitHub for a newer release at startup and shows a green UPDATE badge next to your CMDR name. Click it for the steps and a link to the release page. Download the installer there and run it: it installs over your current version and keeps your settings. EDLS never downloads or runs an installer itself.</p></div>
+      </details>
+      <details class="ed-faq hud">
+        <summary>EDDI or VoiceAttack?</summary>
+        <div class="answer"><p>If you use EDDI through VoiceAttack's EDDI plugin, leave EDDI unticked and VoiceAttack ticked. The plugin starts EDDI and closes it with VoiceAttack. With both ticked, EDLS and the plugin can both try to start EDDI at once. Tick EDDI only if you run it on its own.</p></div>
+      </details>
+      <details class="ed-faq hud">
+        <summary>EDLS can't find one of my tools.</summary>
+        <div class="answer"><p>Open SETTINGS and set its path. Paths take environment variables, e.g. <code>%ProgramFiles%</code>. SrvSurvey's install path is hard to enter by hand: if EDLS can't find it, please report it on the <a href="https://github.com/coyoteware/EDLS/issues">issues page</a>.</p></div>
+      </details>
+      <details class="ed-faq hud">
+        <summary>The game restarted and my tools closed.</summary>
+        <div class="answer"><p>A relog, or min-ed-launcher restarting the game, looks to EDLS like the end of the session. Press STAY OPEN during the countdown, then LAUNCH: EDLS attaches to the running game and starts your tools again.</p></div>
+      </details>
+      <details class="ed-faq hud">
+        <summary>Where are my settings and logs?</summary>
+        <div class="answer"><p><code>%LOCALAPPDATA%\EDLS\settings.json</code> and <code>%LOCALAPPDATA%\EDLS\launcher.log</code>. Found a bug? Open an <a href="https://github.com/coyoteware/EDLS/issues">issue</a> and attach <code>launcher.log</code> (Settings → OPEN LOG FOLDER), with your OS and hardware.</p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div>
+        <h4>EDLS</h4>
+        <p>Elite: Dangerous Launch Suite. A Windows launcher for Steam, Elite: Dangerous and your companion tools. Free and open source under the MIT licence.</p>
+      </div>
+      <div>
+        <h4>Links</h4>
+        <ul>
+          <li><a href="https://github.com/coyoteware/EDLS">Source code</a></li>
+          <li><a href="https://github.com/coyoteware/EDLS/releases">Releases</a></li>
+          <li><a href="https://github.com/coyoteware/EDLS/issues">Report an issue</a></li>
+          <li><a href="https://github.com/coyoteware/EDLS/blob/main/LICENSE">Licence</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Credits</h4>
+        <ul>
+          <li>CMDR Coyote Bongwater</li>
+          <li><a href="https://github.com/rfvgyhn/min-ed-launcher">min-ed-launcher</a> by rfvgyhn</li>
+          <li><a href="https://github.com/derrod/legendary">Legendary</a> by derrod</li>
+          <li>The Elite: Dangerous community</li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <span>Elite: Dangerous is © Frontier Developments plc. EDLS is a fan-made tool, not affiliated with or endorsed by Frontier Developments.</span>
+      <span class="salute">Fly safe, CMDR. <span class="o7">o7</span></span>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

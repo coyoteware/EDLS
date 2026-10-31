@@ -1,0 +1,19 @@
+/* EDLS webfonts — pulled verbatim from the EDLS-py repo (assets/).
+   Euro Caps  = the all-caps ED-style display face (UI labels, titles).
+   Share Tech Mono = the terminal/log monospace face. */
+
+@font-face {
+  font-family: "Euro Caps";
+  src: url("../assets/EUROCAPS.TTF") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Share Tech Mono";
+  src: url("../assets/ShareTechMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

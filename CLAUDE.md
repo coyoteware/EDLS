@@ -146,6 +146,12 @@ a visual outcome you haven't confirmed with him.
   chamfered, centred on the parent); notices/confirms go through `hud_notice()` /
   `hud_confirm()`, never `QMessageBox`. Settings (a normal window) and the popovers
   take their colours from `_dialog_colors()` and buttons from `_key()`.
+- **`docs/` is the GitHub Pages site, not app code** (static HTML/CSS + one small JS
+  file, no build step; Pages deploys from `/docs`). `docs/ds/` is a verbatim copy of
+  the EDLS Design System's `styles.css` + `tokens/*.css`: change tokens in the DS, then
+  re-copy. `docs/css/site.css` ports the DS components to plain CSS classes. Its
+  fonts, SVGs and screenshots are copies of `assets/`, so re-copy them when those
+  change. Day mode keeps panes/cards dark HUD (`.hud`), same rule as the app.
 - Assets are loaded by relative path from `assets/` and must degrade gracefully if
   missing (the app should always run). Art is SVG, rendered directly with
   `QSvgRenderer` — there are no PNGs (`icon.ico` is the only raster asset).

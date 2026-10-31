@@ -1,0 +1,25 @@
+/* ============================================================================
+   EDLS — SPACING & SIZING TOKENS
+   The source UI is built on tight ~8px layout spacing with compact paddings.
+   ============================================================================ */
+
+:root {
+  /* Spacing scale (layout gaps, paddings) */
+  --space-1:  4px;
+  --space-2:  6px;
+  --space-3:  8px;   /* the dominant grid gap in the source */
+  --space-4:  10px;
+  --space-5:  12px;
+  --space-6:  14px;  /* panel inner padding */
+  --space-7:  20px;
+  --space-8:  28px;
+  --space-9:  40px;
+
+  /* Control heights */
+  --control-h-sm:  20px;  /* card START/STOP */
+  --control-h-md:  26px;  /* toggle switch */
+  --control-h-lg:  38px;  /* bottom-bar buttons */
+
+  /* Hit target floor */
+  --tap-min: 44px;
+}

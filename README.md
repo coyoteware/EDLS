@@ -1,4 +1,6 @@
 # EDLS — Elite: Dangerous Launch Suite
+**Website: [coyoteware.github.io/EDLS](https://coyoteware.github.io/EDLS/)**
+
 <p align="center">
   <img src="assets/screenshots/booting.png">
 </p>
