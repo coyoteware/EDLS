@@ -275,9 +275,9 @@ SYSTEM_APPS: dict[str, AppDescriptor] = {
 # =============================================================================
 # Settings
 # =============================================================================
-# Keeps an ordinary name from widening the window when the update badge shows
-# beside it on the CMDR row.
-CMDR_NAME_MAX = 42
+# Keeps an ordinary name from widening the window, and mostly clear of the title
+# mark, when the update badge shows beside it on the CMDR row.
+CMDR_NAME_MAX = 38
 
 
 @dataclass
