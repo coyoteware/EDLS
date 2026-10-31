@@ -32,6 +32,9 @@ Tools that need admin rights, an update check, and a round of fixes from QA.
 - The activity log stays put while you're scrolled up reading it.
 - A renamed SrvSurvey is still found after restarting EDLS.
 - CMDR and tool names show exactly as typed, even ones that look like HTML.
+- Closing EDLS right after SHUTDOWN (or a card's STOP) no longer leaves a stubborn tool running: EDLS finishes closing it out of sight first, for at most a few seconds.
+- Clicking STOP twice, or STOP during SHUTDOWN, closes a tool once. For a tool that needs admin rights, that means one UAC prompt, not two.
+- SHUTDOWN while LAUNCH is still starting your tools now stops it starting the rest.
 
 ## Known issues
 

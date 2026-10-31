@@ -1292,6 +1292,288 @@ def main():
             eng.CLOSE_DELAY = real
     run("close countdown: STAY OPEN, run out, window closed", close_countdown)
 
+    # ---- threads ----------------------------------------------------------
+    # Headless engines, fake tools: every process call below is faked, so no
+    # real PID, taskkill, UAC prompt or steam:// URI is ever reached.
+    import threading
+    import time as _time
+    from dataclasses import replace as _replace
+    S = config.AppState
+    ALL = config.ShutdownScope.ALL_ENABLED
+
+    class FakeProc:   # stands in for a psutil.Process
+        pid = 990401
+
+    def fake_tools(*names):
+        return [_replace(settings.apps[0], name=n, process_name=n, path=None,
+                         enabled=True, resolver=None) for n in names]
+
+    def wait_for(cond, timeout=5.0):
+        end = _time.monotonic() + timeout
+        while not cond():
+            assert _time.monotonic() < end, "timed out waiting"
+            _time.sleep(0.01)
+
+    def one_op_per_tool():
+        # A double-click on STOP (or START while it's closing) must not run a
+        # second stop: on an admin tool that was a second UAC prompt.
+        tools = fake_tools("ToolA", "ToolB")
+        w = eng.Engine(_replace(settings, apps=tools, allow_elevation=False))
+        logs, stops, gate = [], [], threading.Event()
+        w.on_log.connect(lambda m, lvl: logs.append(m))
+
+        def slow_stop(desc, **kw):
+            stops.append(desc.name)
+            gate.wait(5)
+            return eng.StopResult.STOPPED
+
+        w.pm.stop = slow_stop
+        w.pm.adopt = lambda desc: FakeProc()   # START: "already running"
+        try:
+            w.stop_app("ToolA")
+            wait_for(lambda: stops == ["ToolA"])
+            w.stop_app("ToolA")
+            w.start_app("ToolA")
+            busy = "ToolA is busy - wait for it to finish."
+            assert stops == ["ToolA"] and logs.count(busy) == 2, (stops, logs)
+            w.stop_app("ToolB")                 # other tools aren't held up
+            wait_for(lambda: "ToolB" in stops)
+            gate.set()
+            wait_for(lambda: not w._claimed)
+            w.start_app("ToolA")
+            wait_for(lambda: "ToolA is already running." in logs)
+        finally:
+            gate.set()
+            w.close()
+    run("threads: one start or stop per tool at a time", one_op_per_tool)
+
+    def teardown_coordination():
+        # SHUTDOWN while a card's STOP is closing a tool waits for that STOP,
+        # and two teardowns at once (SHUTDOWN as the game exits) close each
+        # tool once.
+        tools = fake_tools("ToolA", "ToolB")
+        w = eng.Engine(_replace(settings, apps=tools, allow_elevation=False))
+        logs, asked, stops = [], [], []
+        w.on_log.connect(lambda m, lvl: logs.append(m))
+        running = {"ToolA": FakeProc(), "ToolB": FakeProc()}
+        gate = threading.Event()
+        w.pm.find = running.get
+        w.pm.find_many = lambda names: {n: running[n] for n in names
+                                        if n in running}
+        w.pm.ask_to_close = lambda desc: asked.append(desc.name)
+
+        def stop(desc, deadline=None, asked=False):
+            stops.append(desc.name)
+            if asked:
+                _time.sleep(0.2)   # a teardown's stop: slow enough to overlap
+            else:
+                gate.wait(5)       # the card's STOP: held until released
+            running.pop(desc.name, None)
+            return eng.StopResult.STOPPED
+
+        w.pm.stop = stop
+        try:
+            w.stop_app("ToolA")
+            wait_for(lambda: stops == ["ToolA"])
+            t = threading.Thread(target=w._teardown, args=(ALL,))
+            t.start()
+            _time.sleep(0.2)
+            assert not asked, f"teardown didn't wait for the card: {asked}"
+            gate.set()
+            t.join(5)
+            assert asked == ["ToolB"] and stops == ["ToolA", "ToolB"], \
+                (asked, stops)
+
+            running.update(ToolA=FakeProc(), ToolB=FakeProc())
+            stops.clear()
+            pair = [threading.Thread(target=w._teardown, args=(ALL,))
+                    for _ in range(2)]
+            for t in pair:
+                t.start()
+            for t in pair:
+                t.join(5)
+            assert sorted(stops) == ["ToolA", "ToolB"], stops
+
+            # SHUTDOWN during a teardown says so instead of starting another.
+            with w._teardown_lock:
+                w.manual_shutdown()
+            assert logs[-1] == "Already closing the tools.", logs[-1]
+            assert w._shutdown_thread is None
+        finally:
+            gate.set()
+            w.close()
+    run("threads: teardowns wait for cards and never overlap",
+        teardown_coordination)
+
+    def one_countdown():
+        # SHUTDOWN's countdown and the session's can coincide: the second
+        # leaves it to the first instead of sharing its STAY OPEN.
+        real = eng.CLOSE_DELAY
+        w = eng.Engine(settings)
+        counts, results = [], []
+        w.on_countdown.connect(counts.append)
+        try:
+            eng.CLOSE_DELAY = 3
+            t = threading.Thread(
+                target=lambda: results.append(w._close_countdown()))
+            t.start()
+            wait_for(lambda: counts == [True])
+            began = _time.monotonic()
+            assert w._close_countdown() is False
+            assert _time.monotonic() - began < 0.5, "the second one counted"
+            w.stay_open()
+            t.join(5)
+            assert results == [False] and counts == [True, False], \
+                (results, counts)
+        finally:
+            eng.CLOSE_DELAY = real
+            w.close()
+    run("threads: one close countdown at a time", one_countdown)
+
+    def status_order():
+        # A card status is recorded and sent in one step: whatever arrives at
+        # the view is what the watcher believes the card shows. Two threads
+        # hammer one card; at every send the record must match.
+        w = eng.Engine(settings)
+        bad = []
+        w.on_status.connect(
+            lambda k, s, p: bad.append(s) if w._believed[k] is not s.is_running
+            else None)
+        switch = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            pair = [threading.Thread(
+                target=lambda st=st: [w._status("ToolA", st)
+                                      for _ in range(2000)])
+                for st in (S.ONLINE, S.OFFLINE)]
+            for t in pair:
+                t.start()
+            for t in pair:
+                t.join(30)
+        finally:
+            sys.setswitchinterval(switch)
+            w.close()
+        assert not bad, f"{len(bad)} statuses sent out of order"
+    run("threads: statuses arrive in the order they're recorded", status_order)
+
+    def closing_the_window():
+        # The window closing: nothing more goes to the view, no new worker or
+        # UAC prompt starts, and a close already under way is waited for.
+        import shiboken6
+        tools = fake_tools("ToolA")
+        w = eng.Engine(_replace(settings, apps=tools, allow_elevation=True))
+        seen, prompts, gate = [], [], threading.Event()
+        w.on_log.connect(lambda m, lvl: seen.append(m))
+        w.on_status.connect(lambda *a: seen.append(a))
+
+        def closing():
+            with w._closing_work():
+                gate.wait(5)
+
+        t = threading.Thread(target=closing)
+        t.start()
+        wait_for(lambda: w._closing == 1)
+        threading.Timer(0.3, gate.set).start()
+        began = _time.monotonic()
+        assert w.wait_for_closes(3) and _time.monotonic() - began >= 0.25
+        t.join(5)
+        gate.clear()
+        t = threading.Thread(target=closing)
+        t.start()
+        wait_for(lambda: w._closing == 1)
+        assert w.wait_for_closes(0.2) is False, "didn't time out"
+        gate.set()
+        t.join(5)
+
+        w.close()
+        w._log("after close")
+        w._status("ToolA", S.ONLINE)
+        assert not seen, seen
+        assert w._spawn("late", lambda: None) is None
+        running = {"ToolA": FakeProc()}
+        w.pm.find = running.get
+        w.pm.find_many = lambda names: {n: running[n] for n in names
+                                        if n in running}
+        w.pm.ask_to_close = lambda desc: None
+        w.pm.stop = lambda *a, **k: eng.StopResult.FAILED
+        real = eng._run_as_admin
+        eng._run_as_admin = lambda *a, **k: prompts.append(a)
+        try:
+            w._teardown(ALL)
+            w._stop_one(tools[0])
+        finally:
+            eng._run_as_admin = real
+        assert not prompts, "UAC prompt after the window closed"
+        # The view's invoker shrugs off a send after Qt deleted it.
+        inv = ui._Invoker()
+        shiboken6.delete(inv)
+        inv.invoke(lambda: None)
+    run("threads: closing the window", closing_the_window)
+
+    def shutdown_cancels_tools():
+        # SHUTDOWN while LAUNCH is starting tools: the rest stay unstarted.
+        tools = fake_tools("ToolA", "ToolB", "ToolC")
+        w = eng.Engine(_replace(settings, apps=tools, close_on_shutdown=False))
+        logs, started = [], []
+        w.on_log.connect(lambda m, lvl: logs.append(m))
+        w.pm.adopt = lambda desc: None
+
+        def launch(app, resolved_path=None, elevate=None, minimized=False):
+            started.append(app.name)
+            w._tools_cancelled.set()   # SHUTDOWN, pressed as this one starts
+            return FakeProc()
+
+        w.pm.launch = launch
+        try:
+            w._launch_tools({t.name: "x.exe" for t in tools})
+            assert started == ["ToolA"], started
+            assert ("SHUTDOWN pressed - no more tools will be started this "
+                    "session.") in logs, logs
+            # SHUTDOWN sets it. One pressed before the tools start (while
+            # waiting for the game) doesn't stop them starting (SC-15).
+            w.pm.find = lambda name: None
+            w.pm.find_many = lambda names: {}
+            w._tools_cancelled.clear()
+            w.manual_shutdown()
+            w._shutdown_thread.join(5)
+            assert w._tools_cancelled.is_set()
+            w.pm.launch = lambda app, **kw: started.append(app.name) or FakeProc()
+            started.clear()
+            w._launch_tools({t.name: "x.exe" for t in tools})
+            assert started == ["ToolA", "ToolB", "ToolC"], started
+        finally:
+            w.close()
+    run("threads: SHUTDOWN stops LAUNCH starting the rest",
+        shutdown_cancels_tools)
+
+    def worker_crash():
+        # A worker that crashes says so in the activity log, and a card whose
+        # START crashed doesn't sit on Launching... forever.
+        import logging
+        quiet = logging.NullHandler()
+        eng.log.addHandler(quiet)
+        logs, states = [], []
+
+        def broken():
+            raise OSError("selftest resolver")
+
+        tools = [_replace(fake_tools("ToolA")[0], resolver=broken)]
+        w = eng.Engine(_replace(settings, apps=tools))
+        w.on_log.connect(lambda m, lvl: logs.append((lvl, m)))
+        w.on_status.connect(lambda k, s, p: states.append(s))
+        w.pm.adopt = lambda desc: None
+        try:
+            w._spawn("selftest-crash", lambda: 1 / 0).join(5)
+            assert ("error", "Unexpected error: division by zero") in logs, logs
+            w.start_app("ToolA")
+            wait_for(lambda: not w._claimed
+                     and ("error", "Unexpected error: selftest resolver") in logs)
+            assert states[-1] is S.FAILED, states
+        finally:
+            eng.log.removeHandler(quiet)
+            w.close()
+    run("threads: a crashed worker says so", worker_crash)
+
     def stay_open_key():
         # The view side of STAY OPEN, and R-22: when the countdown runs out
         # with a dialog open, EDLS stays open instead of closing behind it.

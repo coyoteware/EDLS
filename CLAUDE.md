@@ -111,7 +111,20 @@ a visual outcome you haven't confirmed with him.
   behind it.
 - **Every card status goes out through `Engine._status()`.** The status watcher
   (which replaced REFRESH) compares each scan with what `_status()` recorded and only
-  emits differences — emitting any other way makes cards stale or flicker.
+  emits differences — emitting any other way makes cards stale or flicker. `_status()`
+  records and sends under one lock (`_watch_lock`, an RLock), and the watcher checks,
+  decides and sets inside it, so the view gets statuses in the order they're recorded.
+- **Threads.** Every worker starts through `Engine._spawn()` (never `threading.Thread`
+  directly): nothing starts after close, threads are named, and a crash reaches the
+  activity log. A companion app has one start/stop in flight at a time: card clicks
+  `_try_claim` (busy → a dim "X is busy" line), `_launch_tools` and `_teardown` wait
+  in `_claim`. Teardowns (`_teardown_lock`) and close countdowns (`_countdown_lock`)
+  never overlap. SHUTDOWN while LAUNCH is starting the tools sets `_tools_cancelled`:
+  the rest stay unstarted (one pressed earlier, while waiting for the game, doesn't
+  stop them: `_launch_tools` clears it). After `close()` nothing goes to the view
+  (`_emit`), and `main()`
+  waits up to `EXIT_WAIT` for a close under way (`_closing_work`) without a new UAC
+  prompt.
 - **Display names are a UI concern** (`_DISPLAY_NAMES` in `ui.py`); `descriptor.name`
   stays the key for status routing + settings.
 - **`config.APP_VERSION`** is the single source of truth for the version string

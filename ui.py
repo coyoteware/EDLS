@@ -43,9 +43,9 @@ from dataclasses import replace
 from typing import Optional
 
 from PySide6.QtCore import (
-    QByteArray, QEasingCurve, QEvent, QMimeData, QParallelAnimationGroup,
-    QPoint, QPointF, Property, QPropertyAnimation, QRect, QRectF, QSize, Qt,
-    QTimer, QUrl, Signal, Slot,
+    QByteArray, QEasingCurve, QEvent, QMimeData, QObject,
+    QParallelAnimationGroup, QPoint, QPointF, Property, QPropertyAnimation,
+    QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal, Slot,
 )
 from PySide6.QtGui import (
     QBrush, QColor, QCursor, QDesktopServices, QDrag, QFont, QFontDatabase, QIcon,
@@ -2756,7 +2756,7 @@ class MainWindow(QMainWindow):
 
 
 # ── Thread-safe dispatch invoker ──────────────────────────────────────────────
-class _Invoker(QWidget):
+class _Invoker(QObject):
     """Receives callables from worker threads and runs them on the GUI thread
     via Qt's signal/slot cross-thread mechanism."""
     _sig = Signal(object)
@@ -2766,7 +2766,13 @@ class _Invoker(QWidget):
         self._sig.connect(self._run, Qt.ConnectionType.QueuedConnection)
 
     def invoke(self, fn) -> None:
-        self._sig.emit(fn)
+        try:
+            self._sig.emit(fn)
+        except RuntimeError:
+            # Qt already deleted it: EDLS is exiting and there's no view left
+            # to update. (The engine stops sending once the window closes;
+            # this covers a worker caught mid-send.)
+            pass
 
     @Slot(object)
     def _run(self, fn) -> None:
@@ -2870,4 +2876,10 @@ def run(engine, settings: Settings) -> int:
     # After boot, so the request never competes with the window appearing.
     QTimer.singleShot(follow_delay + 1000, engine.check_for_updates)
 
-    return app.exec()
+    code = app.exec()
+    # EDLS may stay a few seconds more, out of sight, finishing a close
+    # (main.main). Stop answering as "the running copy" now, so starting EDLS
+    # again in that time opens a window instead of signalling this one.
+    if _instance_server is not None:
+        _instance_server.close()
+    return code

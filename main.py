@@ -34,6 +34,7 @@ import sys
 import threading
 import time
 import urllib.request
+from contextlib import contextmanager
 from enum import Enum
 from typing import Callable, Optional
 
@@ -97,6 +98,10 @@ ELITE_WAIT = 60        # the game to appear after steam://run (LAUNCH and card)
 KILL_WAIT = 3          # a killed tool to actually be gone
 CLOSE_GRACE = 3        # a tool asked to close gets this long before it's killed
 CLOSE_DELAY = 5        # countdown before EDLS closes itself after a session
+# The window closed while tools were still being closed (SHUTDOWN, a card's
+# STOP, the end of a session): EDLS stays, invisibly, until that's finished --
+# normally CLOSE_GRACE -- but no longer than this.
+EXIT_WAIT = 10
 
 # Tools that need admin rights (EDHM-UI's manifest asks for them). Popen can't
 # elevate -- CreateProcess just fails with 740 -- so those go through the
@@ -632,7 +637,12 @@ def check_for_update(current: str = config.APP_VERSION) -> Optional[str]:
 # =============================================================================
 class Engine:
     """Runs the long sequence on a daemon worker thread and talks outward only
-    through Signals. Also exposes single-app start/stop for the status cards."""
+    through Signals. Also exposes single-app start/stop for the status cards.
+
+    Threads: every worker starts through _spawn(). A companion app has one
+    start or stop in flight at a time (_try_claim for card clicks, _claim for
+    the session and the teardown), teardowns and close countdowns never
+    overlap, and a card status is recorded and sent in one step (_status)."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -656,10 +666,6 @@ class Engine:
         # run here, one at a time, never on the GUI thread.
         self._system_thread: Optional[threading.Thread] = None
         self._watch_thread: Optional[threading.Thread] = None
-        # Companion apps being started from their cards, so a double-click
-        # (or one sitting on the UAC prompt) doesn't start a second copy.
-        self._starting: set[str] = set()
-        self._start_lock = threading.Lock()
         self._stop = threading.Event()     # interrupts the current waits
         self._closed = threading.Event()   # window closed: start nothing new
         self._wake = threading.Event()     # asks the watcher to scan right away
@@ -667,35 +673,137 @@ class Engine:
         self._countdown_cut = threading.Event()
         self._last_action = 0.0
 
+        # Companion apps with a start or stop in flight. One at a time per
+        # app, whoever asks -- a card, the session, the teardown -- so a
+        # double-click, or STOP during SHUTDOWN, can't start a second copy,
+        # close it twice, or show the UAC prompt twice.
+        self._claimed: set[str] = set()
+        self._claim_cv = threading.Condition()
+        # One teardown at a time (SHUTDOWN and the game exiting can coincide),
+        # and one close countdown.
+        self._teardown_lock = threading.Lock()
+        self._countdown_lock = threading.Lock()
+        # SHUTDOWN while LAUNCH is starting the tools: the ones it hasn't
+        # started yet stay unstarted. Cleared as LAUNCH begins starting them,
+        # so a SHUTDOWN pressed earlier (while waiting for the game) only
+        # closes what was running then.
+        self._tools_cancelled = threading.Event()
+        # Tools being closed right now. Closing the window waits for these
+        # (wait_for_closes) so one that ignored the ask still gets closed.
+        self._closing = 0
+        self._closing_cv = threading.Condition()
+
         # What each card currently claims, so the watcher only speaks up when
         # reality differs: True = running, False = not running, None = pending
         # (Launching/Waiting -- only the process appearing may change it). Kept
-        # by _status(), the single place statuses go out.
+        # by _status(), the single place statuses go out. Re-entrant: an inline
+        # dispatch (headless) runs the handlers while _status holds it.
         self._believed: dict[str, Optional[bool]] = {}
         self._set_at: dict[str, float] = {}
-        self._watch_lock = threading.Lock()
+        self._watch_lock = threading.RLock()
 
-    # ---- signal helpers (everything outbound goes through dispatch) ----
+    # ---- signal helpers (everything outbound goes through _emit) ----
+    def _emit(self, fn: Callable[[], None]) -> None:
+        """Hand `fn` to the view. Once the window has closed there's no view
+        to tell -- and at exit Qt may already be gone -- so it's dropped."""
+        if not self._closed.is_set():
+            self.dispatch(fn)
+
     def _log(self, message: str, level: str = "info") -> None:
         log_level = level if level in ("info", "warning", "error") else "info"
         getattr(log, log_level)(message)
-        self.dispatch(lambda: self.on_log.emit(message, level))
+        self._emit(lambda: self.on_log.emit(message, level))
 
     def _status(self, key: str, state: AppState, pid: Optional[int] = None) -> None:
+        # Recorded and sent under one lock, so the view receives statuses in
+        # the order they were recorded: what a card shows is always what the
+        # watcher believes it shows. (Sending only queues it for the GUI
+        # thread, so holding the lock costs nothing.)
         with self._watch_lock:
             self._believed[key] = (None if state in _PENDING_STATES
                                    else state.is_running)
             self._set_at[key] = time.monotonic()
-        self.dispatch(lambda: self.on_status.emit(key, state, pid))
+            self._emit(lambda: self.on_status.emit(key, state, pid))
 
     def _busy(self, busy: bool) -> None:
-        self.dispatch(lambda: self.on_busy.emit(busy))
+        self._emit(lambda: self.on_busy.emit(busy))
 
     def _quit(self) -> None:
-        self.dispatch(lambda: self.on_quit.emit())
+        self._emit(lambda: self.on_quit.emit())
 
     def _countdown(self, counting: bool) -> None:
-        self.dispatch(lambda: self.on_countdown.emit(counting))
+        self._emit(lambda: self.on_countdown.emit(counting))
+
+    # ---- workers ----
+    def _spawn(self, name: str, target: Callable, *args
+               ) -> Optional[threading.Thread]:
+        """Start a worker -- the only way EDLS starts one. Nothing starts once
+        the window has closed (returns None). A crash is logged to
+        launcher.log and the activity log, never swallowed."""
+        if self._closed.is_set():
+            return None
+
+        def body() -> None:
+            try:
+                target(*args)
+            except Exception as exc:
+                log.exception("Worker %s crashed", name)
+                self._log(f"Unexpected error: {exc}", "error")
+
+        thread = threading.Thread(target=body, name=f"edls-{name}", daemon=True)
+        thread.start()
+        return thread
+
+    def _try_claim(self, name: str) -> bool:
+        """Claim `name` for a card's START or STOP, unless something else is
+        already starting or stopping it. GUI thread: never waits."""
+        with self._claim_cv:
+            if name in self._claimed:
+                return False
+            self._claimed.add(name)
+            return True
+
+    def _release(self, name: str) -> None:
+        with self._claim_cv:
+            self._claimed.discard(name)
+            self._claim_cv.notify_all()
+
+    @contextmanager
+    def _claim(self, names):
+        """Claim every app in `names`, waiting out a START or STOP already in
+        flight on any of them (the session and the teardown, never a card).
+        Sorted, so two multi-claims can't deadlock -- though teardowns, the
+        only ones, never overlap anyway."""
+        held: list[str] = []
+        try:
+            for name in sorted(set(names)):
+                with self._claim_cv:
+                    self._claim_cv.wait_for(lambda n=name: n not in self._claimed)
+                    self._claimed.add(name)
+                held.append(name)
+            yield
+        finally:
+            for name in held:
+                self._release(name)
+
+    @contextmanager
+    def _closing_work(self):
+        """Marks tools being closed, so closing the window waits for them."""
+        with self._closing_cv:
+            self._closing += 1
+        try:
+            yield
+        finally:
+            with self._closing_cv:
+                self._closing -= 1
+                self._closing_cv.notify_all()
+
+    def wait_for_closes(self, timeout: float) -> bool:
+        """After the window has closed: wait until no tool is still being
+        closed, or `timeout` passes. True if none is."""
+        with self._closing_cv:
+            return self._closing_cv.wait_for(lambda: self._closing == 0,
+                                             timeout)
 
     @property
     def enabled_apps(self) -> list[AppDescriptor]:
@@ -736,8 +844,7 @@ class Engine:
         replaced the REFRESH button. Call once, after the view is wired up."""
         if self._watch_thread and self._watch_thread.is_alive():
             return
-        self._watch_thread = threading.Thread(target=self._watch, daemon=True)
-        self._watch_thread.start()
+        self._watch_thread = self._spawn("watcher", self._watch)
 
     def request_scan(self) -> None:
         """The view's card list changed (e.g. Settings saved): scan right away
@@ -781,23 +888,28 @@ class Engine:
         session = self.session_active
         for app in apps:
             proc = found.get(app.process_name)
+            label = "Elite: Dangerous" if app.name == KEY_ELITE else app.name
+            line = None
+            # Check, decide and set in one go: an action can't slip a status
+            # in between what the watcher read and what it sends.
             with self._watch_lock:
                 # >=, not >: monotonic() only ticks every ~16 ms on Windows.
                 if self._set_at.get(app.name, 0.0) >= scan_started:
                     continue   # an action changed this card after we scanned
                 believed = self._believed.get(app.name, _UNSEEN)
-            label = "Elite: Dangerous" if app.name == KEY_ELITE else app.name
-            # The session reports the game's comings and goings itself.
-            speak = (not quiet and believed is not _UNSEEN
-                     and not (session and app.name == KEY_ELITE))
-            if proc and believed is not True:
-                self._status(app.name, self._live_state(app.name), proc.pid)
-                if speak and believed is False:
-                    self._log(f"{label} is now running.", "dim")
-            elif not proc and (believed is True or believed is _UNSEEN):
-                self._status(app.name, AppState.OFFLINE)
-                if speak:
-                    self._log(f"{label} stopped running.", "dim")
+                # The session reports the game's comings and goings itself.
+                speak = (not quiet and believed is not _UNSEEN
+                         and not (session and app.name == KEY_ELITE))
+                if proc and believed is not True:
+                    self._status(app.name, self._live_state(app.name), proc.pid)
+                    if speak and believed is False:
+                        line = f"{label} is now running."
+                elif not proc and (believed is True or believed is _UNSEEN):
+                    self._status(app.name, AppState.OFFLINE)
+                    if speak:
+                        line = f"{label} stopped running."
+            if line:
+                self._log(line, "dim")
 
     # ---- public API (called by the view) ----
     def launch(self) -> None:
@@ -811,17 +923,21 @@ class Engine:
         self._kick()
         self._busy(True)
         self._log("Launch sequence initiated.", "success")
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._thread = self._spawn("session", self._run)
 
     def manual_shutdown(self) -> None:
-        """SHUTDOWN button. Honors the user's shutdown_scope setting."""
-        if self._shutdown_thread and self._shutdown_thread.is_alive():
-            return   # already tearing down -- ignore a double-click
+        """SHUTDOWN button. Honors the user's shutdown_scope setting. While
+        LAUNCH is starting the tools, it also cancels the ones not started
+        yet."""
+        if self._closed.is_set():
+            return
+        if ((self._shutdown_thread and self._shutdown_thread.is_alive())
+                or self._teardown_lock.locked()):
+            self._log("Already closing the tools.", "dim")
+            return
+        self._tools_cancelled.set()
         self._kick()
-        self._shutdown_thread = threading.Thread(
-            target=self._manual_shutdown, daemon=True)
-        self._shutdown_thread.start()
+        self._shutdown_thread = self._spawn("shutdown", self._manual_shutdown)
 
     def _manual_shutdown(self) -> None:
         self._teardown(self.settings.shutdown_scope)
@@ -847,47 +963,63 @@ class Engine:
             return
 
         desc = self._find_descriptor(name)
-        if not desc:
+        if not desc or not self._claim_for_card(name):
             return
-        with self._start_lock:
-            if name in self._starting:
-                return
-            self._starting.add(name)
         self._kick()
-        threading.Thread(target=self._start_one, args=(desc,), daemon=True).start()
+        if not self._spawn(f"start-{name}", self._start_one, desc):
+            self._release(name)
+
+    def _claim_for_card(self, name: str) -> bool:
+        """A card's START/STOP: claim the app, or say why the click does
+        nothing (a double-click, or LAUNCH/SHUTDOWN is on it)."""
+        if self._closed.is_set():
+            return False
+        if self._try_claim(name):
+            return True
+        self._log(f"{name} is busy - wait for it to finish.", "dim")
+        return False
 
     def _start_one(self, desc: AppDescriptor) -> None:
+        """A card's START. The caller has claimed the app; this releases it."""
         name = desc.name
         try:
-            proc = self.pm.adopt(desc)
-            if proc:
-                self._status(name, AppState.ONLINE, proc.pid)
-                self._log(f"{name} is already running.", "dim")
-                return
-            path = desc.resolve_path()
-            if not path or not os.path.exists(path):
-                self._status(name, AppState.NOT_FOUND)
-                self._log(f"{name} not found - check its path in Settings.",
-                          "warning")
-                return
-            self._status(name, AppState.LAUNCHING)
-            self._log(f"Starting {name}...")
-            try:
-                proc = self.pm.launch(desc, resolved_path=path,
-                                      elevate=lambda: self._may_elevate(name),
-                                      minimized=self.settings.start_minimized)
-            except NeedsAdmin as exc:
-                self._report_needs_admin(name, exc)
-                return
-            if proc:
-                self._status(name, AppState.ONLINE, proc.pid)
-                self._log(f"{name} online. (PID {proc.pid})", "success")
-            else:
-                self._status(name, AppState.FAILED)
-                self._log(f"Couldn't start {name} (see launcher.log).", "error")
+            self._start_claimed(desc)
+        except Exception:
+            # Don't leave the card on Launching...: the watcher never touches
+            # a pending card until the process shows up. _spawn reports it.
+            self._status(name, AppState.FAILED)
+            raise
         finally:
-            with self._start_lock:
-                self._starting.discard(name)
+            self._release(name)
+
+    def _start_claimed(self, desc: AppDescriptor) -> None:
+        name = desc.name
+        proc = self.pm.adopt(desc)
+        if proc:
+            self._status(name, AppState.ONLINE, proc.pid)
+            self._log(f"{name} is already running.", "dim")
+            return
+        path = desc.resolve_path()
+        if not path or not os.path.exists(path):
+            self._status(name, AppState.NOT_FOUND)
+            self._log(f"{name} not found - check its path in Settings.",
+                      "warning")
+            return
+        self._status(name, AppState.LAUNCHING)
+        self._log(f"Starting {name}...")
+        try:
+            proc = self.pm.launch(desc, resolved_path=path,
+                                  elevate=lambda: self._may_elevate(name),
+                                  minimized=self.settings.start_minimized)
+        except NeedsAdmin as exc:
+            self._report_needs_admin(name, exc)
+            return
+        if proc:
+            self._status(name, AppState.ONLINE, proc.pid)
+            self._log(f"{name} online. (PID {proc.pid})", "success")
+        else:
+            self._status(name, AppState.FAILED)
+            self._log(f"Couldn't start {name} (see launcher.log).", "error")
 
     def _may_elevate(self, name: str) -> bool:
         """launch() found that `name` needs admin rights: may Windows ask?"""
@@ -920,17 +1052,26 @@ class Engine:
             return
 
         desc = self._find_descriptor(name)
-        if not desc:
+        if not desc or not self._claim_for_card(name):
             return
         self._kick()
         # Threaded: stop() waits for the process to really exit, which mustn't
         # freeze the window.
-        threading.Thread(target=self._stop_one, args=(desc,), daemon=True).start()
+        if not self._spawn(f"stop-{name}", self._stop_one, desc):
+            self._release(name)
 
     def _stop_one(self, desc: AppDescriptor) -> None:
+        """A card's STOP. The caller has claimed the app; this releases it."""
+        try:
+            with self._closing_work():
+                self._stop_claimed(desc)
+        finally:
+            self._release(desc.name)
+
+    def _stop_claimed(self, desc: AppDescriptor) -> None:
         self._log(f"Stopping {desc.name}...")
         result = self.pm.stop(desc)
-        if (result is StopResult.FAILED and self.settings.allow_elevation
+        if (result is StopResult.FAILED and self._may_close_as_admin()
                 and not self._close_as_admin([desc])):
             result = StopResult.STOPPED
         if result is StopResult.STOPPED:
@@ -957,6 +1098,11 @@ class Engine:
         self._log(f"Couldn't close {desc.name} - it may be running as "
                   f"administrator.{hint}", "error")
 
+    def _may_close_as_admin(self) -> bool:
+        """May a tool EDLS couldn't close go to the UAC prompt? Not once the
+        window has closed: a prompt with no EDLS on screen would be a mystery."""
+        return self.settings.allow_elevation and not self._closed.is_set()
+
     def _close_as_admin(self, descs: list[AppDescriptor]) -> list[AppDescriptor]:
         """Close tools EDLS has no rights to (see ProcessManager.stop_elevated),
         one UAC prompt for all of them. Returns the ones still running."""
@@ -978,8 +1124,7 @@ class Engine:
         if self._system_thread and self._system_thread.is_alive():
             return
         self._kick()
-        self._system_thread = threading.Thread(target=fn, daemon=True)
-        self._system_thread.start()
+        self._system_thread = self._spawn(fn.__name__.lstrip("_"), fn)
 
     def _card_start_steam(self) -> None:
         existing = self.pm.find(STEAM_PROCESS)
@@ -1042,9 +1187,9 @@ class Engine:
         """Look for a newer release once, in the background (if the CMDR allows
         it). Quiet unless one is found: a failed check only goes to the log
         file -- being offline is no reason to nag."""
-        if not self.settings.check_for_updates or self._closed.is_set():
+        if not self.settings.check_for_updates:
             return
-        threading.Thread(target=self._check_for_updates, daemon=True).start()
+        self._spawn("update-check", self._check_for_updates)
 
     def _check_for_updates(self) -> None:
         try:
@@ -1056,7 +1201,7 @@ class Engine:
             log.info("Update check: EDLS %s is the latest.", config.APP_VERSION)
             return
         log.info("Update check: EDLS %s is available.", version)
-        self.dispatch(lambda: self.on_update.emit(version))
+        self._emit(lambda: self.on_update.emit(version))
 
     def stay_open(self) -> None:
         """STAY OPEN, clicked during the close countdown: EDLS doesn't close
@@ -1066,7 +1211,10 @@ class Engine:
     def close(self) -> None:
         """Window is closing: stop the workers, but leave the game and tools
         running -- closing the launcher should not close everything. Also
-        blocks anything queued (e.g. a late auto-start) from starting."""
+        blocks anything queued (e.g. a late auto-start) from starting, and
+        stops anything more reaching the view. A close already under way
+        (SHUTDOWN, a card's STOP, the end of a session) still finishes:
+        main() waits for it (wait_for_closes), with no new UAC prompt."""
         self._closed.set()
         self._stop.set()
         self._wake.set()
@@ -1077,10 +1225,13 @@ class Engine:
         log.info("=== Session started ===")
         close_after = False
         try:
+            # The window closing stops the sequence between steps: EDLS may
+            # outlive its window briefly (main's wait_for_closes), and must
+            # not open Steam or the game in that time.
             paths = self._preflight()
-            if paths is None:
+            if paths is None or self._stop.is_set():
                 return
-            if not self._start_steam():
+            if not self._start_steam() or self._stop.is_set():
                 return
             elite = self._launch_elite(timeout=ELITE_WAIT)
             if not elite:
@@ -1115,7 +1266,17 @@ class Engine:
         """Close EDLS after a short, logged countdown, while LAUNCH offers
         STAY OPEN (stay_open()). True if EDLS is going -- the countdown ran
         out, or the window closed -- and False if the CMDR chose to stay. The
-        game and Steam are never touched."""
+        game and Steam are never touched. Only one runs at a time (SHUTDOWN's
+        and the session's can coincide): a second returns False at once and
+        leaves it to the first."""
+        if not self._countdown_lock.acquire(blocking=False):
+            return False
+        try:
+            return self._count_down()
+        finally:
+            self._countdown_lock.release()
+
+    def _count_down(self) -> bool:
         self._countdown_cut.clear()
         if self._closed.is_set():
             return True
@@ -1206,36 +1367,50 @@ class Engine:
         return proc
 
     def _launch_tools(self, paths: dict[str, str]) -> list[AppDescriptor]:
-        """Start each enabled tool preflight found (`paths`, by name)."""
+        """Start each enabled tool preflight found (`paths`, by name). Each
+        waits out a START or STOP its card has in flight. Stops early if the
+        window closes, or SHUTDOWN is pressed."""
         launched: list[AppDescriptor] = []
+        self._tools_cancelled.clear()
         for app in self.enabled_apps:
             path = paths.get(app.name)
             if path is None:
                 continue  # already reported NOT_FOUND in preflight
-            proc = self.pm.adopt(app)
-            if proc:
-                self._log(f"{app.name} already running - skipping.", "dim")
-                self._status(app.name, AppState.ONLINE, proc.pid)
-                launched.append(app)
-                continue
-            self._log(f"Launching {app.name}...")
-            self._status(app.name, AppState.LAUNCHING)
-            try:
-                proc = self.pm.launch(
-                    app, resolved_path=path,
-                    elevate=lambda name=app.name: self._may_elevate(name),
-                    minimized=self.settings.start_minimized)
-            except NeedsAdmin as exc:
-                self._report_needs_admin(app.name, exc)
-                continue
-            if proc:
-                self._status(app.name, AppState.ONLINE, proc.pid)
-                self._log(f"{app.name} online. (PID {proc.pid})", "success")
-                launched.append(app)
-            else:
-                self._log(f"Failed to launch {app.name}.", "warning")
-                self._status(app.name, AppState.FAILED)
+            with self._claim([app.name]):
+                if self._stop.is_set():
+                    break             # the window closed: start nothing new
+                if self._tools_cancelled.is_set():
+                    self._log("SHUTDOWN pressed - no more tools will be "
+                              "started this session.")
+                    break
+                if self._launch_tool(app, path):
+                    launched.append(app)
         return launched
+
+    def _launch_tool(self, app: AppDescriptor, path: str) -> bool:
+        """One tool for _launch_tools. True if it's running now."""
+        proc = self.pm.adopt(app)
+        if proc:
+            self._log(f"{app.name} already running - skipping.", "dim")
+            self._status(app.name, AppState.ONLINE, proc.pid)
+            return True
+        self._log(f"Launching {app.name}...")
+        self._status(app.name, AppState.LAUNCHING)
+        try:
+            proc = self.pm.launch(
+                app, resolved_path=path,
+                elevate=lambda: self._may_elevate(app.name),
+                minimized=self.settings.start_minimized)
+        except NeedsAdmin as exc:
+            self._report_needs_admin(app.name, exc)
+            return False
+        if proc:
+            self._status(app.name, AppState.ONLINE, proc.pid)
+            self._log(f"{app.name} online. (PID {proc.pid})", "success")
+            return True
+        self._log(f"Failed to launch {app.name}.", "warning")
+        self._status(app.name, AppState.FAILED)
+        return False
 
     def _monitor(self, elite: psutil.Process) -> bool:
         """Watches Elite until it exits. Returns False (without touching status/
@@ -1251,13 +1426,22 @@ class Engine:
         return True
 
     def _teardown(self, scope: ShutdownScope) -> None:
-        """Close the companion apps the scope covers (SHUTDOWN and game exit)."""
-        if scope is ShutdownScope.LAUNCHED_ONLY:
-            launched_names = self.pm.launched_names()
-            targets = [a for a in self.settings.apps if a.name in launched_names]
-        else:  # ALL_ENABLED
-            targets = self.enabled_apps
+        """Close the companion apps the scope covers (SHUTDOWN and game exit).
+        One teardown at a time: a second waits for the first, then finds
+        little or nothing left. It claims every app before it looks, so a
+        START or STOP a card (or LAUNCH) has in flight finishes first and the
+        teardown sees what that left running."""
+        settings = self.settings
+        with (self._teardown_lock, self._closing_work(),
+              self._claim(a.name for a in settings.apps)):
+            if scope is ShutdownScope.LAUNCHED_ONLY:
+                launched_names = self.pm.launched_names()
+                targets = [a for a in settings.apps if a.name in launched_names]
+            else:  # ALL_ENABLED
+                targets = [a for a in settings.apps if a.enabled]
+            self._close_tools(targets)
 
+    def _close_tools(self, targets: list[AppDescriptor]) -> None:
         found = self.pm.find_many(a.process_name for a in targets)
         running = [a for a in targets if a.process_name in found]
         if not running:
@@ -1281,7 +1465,7 @@ class Engine:
                 self._report_unstoppable(app, result)
         # What wouldn't close probably runs as administrator: one UAC prompt
         # covers the lot, after everything else is already closed.
-        if failed and self.settings.allow_elevation:
+        if failed and self._may_close_as_admin():
             left = self._close_as_admin(failed)
             for app in failed:
                 if app not in left:
@@ -1384,7 +1568,14 @@ def main() -> int:
         return 0
     settings = config.load_settings()
     engine = Engine(settings)
-    return ui.run(engine, settings)
+    code = ui.run(engine, settings)
+    # The window is gone, but a tool may still be being closed (SHUTDOWN, a
+    # card's STOP, the end of a session): every worker is a daemon, so
+    # returning now would end that mid-way, and a tool that ignored the ask
+    # would never be closed. Finish it first -- briefly, and out of sight.
+    if not engine.wait_for_closes(EXIT_WAIT):
+        log.warning("Exiting with tools still being closed.")
+    return code
 
 
 if __name__ == "__main__":
