@@ -77,7 +77,9 @@ What's new: [release-notes.md](release-notes.md).
 ## Configuration
 
 EDLS ships with default registry entries for these tools (each can be enabled,
-disabled, or have its path edited). The ones it finds on your PC start out enabled:
+disabled, or have its path edited). EDMarketConnector, SrvSurvey and Odyssey Materials
+Helper start out enabled if EDLS finds them on your PC; tick any of the others you use in
+SETTINGS:
 
 |     |     |     |
 | --- | --- | --- |
@@ -85,7 +87,7 @@ disabled, or have its path edited). The ones it finds on your PC start out enabl
 | EDCoPilot | EDHM-UI | opentrack |
 | ICARUS Terminal | EDDiscovery | VoiceAttack (1 or 2) |
 | EDCoPTER | Elite Observatory | Elite Studio |
-| EDDI | | |
+| EDDI | ED Galactic Memoir | |
 
 >>*NOTE* on filepaths: The filepath for SrvSurvey is a diabolical beast. You are unlikely to be successful in entering it manually. If for whatever reason EDLS is unable to find its install automatically, please report it at the issues page.
 

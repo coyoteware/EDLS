@@ -76,12 +76,17 @@ a visual outcome you haven't confirmed with him.
   path around it, and the Elite card has no STOP. The Steam card's STOP is refused
   while the game runs, and LAUNCH attaches to an already-running game instead of
   sending Steam a second `steam://run`.
-- **Closing a tool is polite first.** `ProcessManager.stop()` asks (WM_CLOSE via
-  `taskkill` without /F) and kills only what's still running after `CLOSE_GRACE`
-  (3 s); `_teardown` asks every target up front so the waits overlap. Keep all of it
-  inside `ProcessManager`. A tool can run as several same-name processes (Electron:
-  EDHM-UI): `find_many` returns the main one (`_root`, whose parent isn't one of
-  them), and `stop()` then sees off its same-name helpers, nothing else it started.
+- **Closing a tool is polite first.** `ProcessManager.stop()` asks and kills only
+  what's still running after `CLOSE_GRACE` (3 s); `_teardown` asks every target up
+  front so the waits overlap. Keep all of it inside `ProcessManager`. The ask
+  (`_ask_to_close`) posts WM_CLOSE to the *visible* windows of the process and its
+  same-name children, like an X click; `taskkill` without /F (which also hits hidden
+  internal windows) is only the fallback for a tool showing none (tray). A tool can
+  run as several same-name processes: `find_many` returns the root one (`_root`, whose
+  parent isn't one of them), and `stop()` then sees off its same-name helpers, nothing
+  else it started. The root isn't always the one with the window: EDHM-UI's
+  (Electron) is, Odyssey Materials Helper's (jpackage) is a windowless parent of the
+  JVM that owns it.
 - **Admin rights only on request.** EDLS never runs elevated (nor do Steam or the game).
   A tool whose manifest asks for admin rights (EDHM-UI-V3: `highestAvailable`) makes
   Popen fail with WinError 740. Only then, and only if `Settings.allow_elevation` is
@@ -100,10 +105,12 @@ a visual outcome you haven't confirmed with him.
   (`LAUNCHER_WAIT`) for the tool itself and tracks that by name. Odyssey Materials
   Helper's resolver prefers its updating launcher over the helper exe; `_RETIRED_PATHS`
   moves a saved old default path over on load.
-- **A default starts ticked only if it's installed** (`config._fresh_default`): first
-  run, RESTORE DEFAULTS, and a default that's new to an existing settings.json. A
-  REGISTRY entry with `enabled=False` never starts ticked (EDDI: VoiceAttack's plugin
-  usually runs it). Ticks the CMDR set are never changed. Each saved app keeps its `origin` (the REGISTRY
+- **Only EDMarketConnector, SrvSurvey and Odyssey Materials Helper start ticked, and
+  only if installed** (`config._fresh_default`): first run, RESTORE DEFAULTS, and a
+  default that's new to an existing settings.json. Every other REGISTRY entry has
+  `enabled=False`, so it never starts ticked (Andrew: fewer cards for tools a new CMDR
+  may not use; EDDI also clashes with VoiceAttack's plugin). A new default gets
+  `enabled=False` too unless Andrew says otherwise. Ticks the CMDR set are never changed. Each saved app keeps its `origin` (the REGISTRY
   name), so a renamed default keeps its resolver after a restart.
 - **The close countdown can be cancelled.** While `Engine._close_countdown` runs,
   `on_countdown(True)` turns LAUNCH into STAY OPEN (`Engine.stay_open()`). If the

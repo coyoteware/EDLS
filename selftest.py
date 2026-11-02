@@ -417,6 +417,53 @@ def main():
             eng._ask_to_close = real_ask
     run("tools are asked to close before they're killed", polite_close)
 
+    def ask_reaches_the_window():
+        # Odyssey Materials Helper: its window belongs to a same-name child,
+        # its parent has none. The ask goes to the visible windows of both;
+        # taskkill is only for a tool that shows none. Fakes only: nothing is
+        # posted to a real window, and taskkill never runs.
+        import os
+        assert isinstance(eng._visible_windows({os.getpid()}), list)  # read-only
+        real = (eng.psutil.Process, eng._visible_windows, eng._user32,
+                eng.subprocess.run)
+        posted, ran = [], []
+
+        class Fake:
+            def __init__(self, pid, kids=()):
+                self.pid, self.kids = pid, list(kids)
+
+            def name(self):
+                return "Helper.exe"
+
+            def children(self, recursive=False):
+                return self.kids
+
+        class User32:
+            @staticmethod
+            def PostMessageW(hwnd, msg, wparam, lparam):
+                posted.append((hwnd, msg))
+
+        child = Fake(990021)
+        parent = Fake(990020, [child])
+        shown = {child.pid: [0xA1]}
+        eng.psutil.Process = lambda pid: parent
+        eng._visible_windows = lambda pids: [h for p in pids
+                                             for h in shown.get(p, [])]
+        eng._user32 = User32
+        eng.subprocess.run = lambda args, **kw: ran.append(args)
+        try:
+            eng._ask_to_close(parent.pid)
+            assert posted == [(0xA1, eng.WM_CLOSE)] and not ran, (posted, ran)
+            shown.clear()   # hidden in the tray
+            posted.clear()
+            eng._ask_to_close(parent.pid)
+            assert not posted and ran == [["taskkill", "/PID", str(parent.pid)]], ran
+        finally:
+            (eng.psutil.Process, eng._visible_windows, eng._user32,
+             eng.subprocess.run) = real
+    run("the ask to close reaches a child's visible window",
+        ask_reaches_the_window)
+
     def multi_process_tools():
         # CA-05: an Electron app (EDHM-UI) is a main process that owns the
         # window plus same-name helpers. EDLS must find the main one wherever
@@ -1122,8 +1169,8 @@ def main():
         # R-26 and upgrades: a default joins the list ticked only if its
         # program is on this PC -- first run, RESTORE DEFAULTS, or a default
         # that's new in this version (Elite Studio, for 1.2.1 users) -- and
-        # never if its entry is enabled=False (EDDI). A tick the CMDR set is
-        # never changed. Temp files only.
+        # never if its entry is enabled=False (all but the three most used).
+        # A tick the CMDR set is never changed. Temp files only.
         import tempfile
         from dataclasses import replace as _replace
 
@@ -1143,7 +1190,9 @@ def main():
             assert fresh.enabled and fresh.origin == "Here", fresh
             assert not config._fresh_default(off).enabled, "enabled=False ticked"
             assert not config._fresh_default(gone).enabled, "missing one ticked"
-        assert not config.REGISTRY_BY_NAME["EDDI"].enabled, "EDDI ticked"
+        ticked = {a.name for a in config.REGISTRY if a.enabled}
+        assert ticked == {"EDMarketConnector", "SrvSurvey",
+                          "OdysseyMaterials"}, ticked
         for app in config.default_settings().apps:
             assert app.enabled == found(app), app.name
             assert app.origin == app.name, app

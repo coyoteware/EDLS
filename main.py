@@ -24,6 +24,7 @@ Targets Windows 10/11 + Steam, matching the original.
 """
 from __future__ import annotations
 
+import ctypes
 import http.client
 import json
 import logging
@@ -35,6 +36,7 @@ import threading
 import time
 import urllib.request
 from contextlib import contextmanager
+from ctypes import wintypes
 from enum import Enum
 from typing import Callable, Optional
 
@@ -119,6 +121,9 @@ CLOSE_ELEVATED_FLAG = "--close-elevated"   # see _close_elevated()
 # position) opens normally anyway. EDLS never minimizes a window afterwards.
 SW_SHOWNORMAL = 1
 SW_SHOWMINNOACTIVE = 7
+
+# Asking a tool to close: what its X button sends, posted to its windows.
+WM_CLOSE = 0x0010
 
 # The status watcher's scan interval. One scan is a single process-table pass
 # (~6-9 ms of CPU), so even the fast rate costs well under 1% of one core.
@@ -228,11 +233,60 @@ def _popen_detached(args: list[str], **kwargs) -> subprocess.Popen:
     return subprocess.Popen(args, creationflags=flags, **kwargs)
 
 
+# user32, to find a tool's windows. A private handle, so the argtypes set here
+# can't clash with anyone else's use of ctypes.windll.user32.
+if sys.platform == "win32":
+    _user32 = ctypes.WinDLL("user32")
+    _WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND,
+                                      wintypes.LPARAM)
+    _user32.EnumWindows.argtypes = (_WNDENUMPROC, wintypes.LPARAM)
+    _user32.GetWindowThreadProcessId.argtypes = (
+        wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+    _user32.IsWindowVisible.argtypes = (wintypes.HWND,)
+    _user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT,
+                                     wintypes.WPARAM, wintypes.LPARAM)
+else:
+    _user32 = None
+
+
+def _visible_windows(pids: set[int]) -> list[int]:
+    """The visible top-level windows these processes own (a minimized one
+    counts): the ones the CMDR could close with their X button."""
+    if _user32 is None:
+        return []
+    found = []
+
+    def each(hwnd, _lparam):
+        owner = wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value in pids and _user32.IsWindowVisible(hwnd):
+            found.append(hwnd)
+        return True
+
+    _user32.EnumWindows(_WNDENUMPROC(each), 0)
+    return found
+
+
 def _ask_to_close(pid: int) -> None:
-    """Ask a tool to close the way its own X button would: `taskkill` without
-    /F posts WM_CLOSE to its windows, so it can save and exit cleanly. One that
-    ignores it (hidden in the tray, a "save changes?" prompt, a console app) is
-    killed once its grace period runs out -- see ProcessManager.stop()."""
+    """Ask a tool to close the way its own X button would: WM_CLOSE to each of
+    its visible windows, so it can save and exit cleanly. Those can belong to
+    a same-name child -- Odyssey Materials Helper's does, and its parent has
+    none. One that ignores the ask (a "save changes?" prompt, a console app)
+    is killed once its grace period runs out -- see ProcessManager.stop()."""
+    try:
+        pids = {pid} | {p.pid for p in
+                        _same_name_descendants(psutil.Process(pid))}
+    except psutil.Error:
+        return   # already gone
+    windows = _visible_windows(pids)
+    for hwnd in windows:
+        _user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+    if windows:
+        return
+    # Nothing visible (hidden in the tray, say): `taskkill` without /F posts
+    # WM_CLOSE to all of its windows, which reaches a tray tool's hidden main
+    # one. Only the fallback, because an X click never sends that to a tool's
+    # hidden internal windows.
     try:
         subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True,
                        timeout=5,

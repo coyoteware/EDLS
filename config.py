@@ -220,6 +220,9 @@ def _find_voiceattack() -> Optional[str]:
 # =============================================================================
 # THE registry -- add or remove default apps here, nowhere else
 # =============================================================================
+# Only the three most used start ticked, and only if they're installed. The
+# rest start unticked (enabled=False) even when installed, so a first run
+# isn't a wall of cards for tools the CMDR may not use.
 REGISTRY: list[AppDescriptor] = [
     AppDescriptor("EDMarketConnector", "EDMarketConnector",
                   r"%ProgramFiles(x86)%\EDMarketConnector\EDMarketConnector.exe"),
@@ -228,27 +231,34 @@ REGISTRY: list[AppDescriptor] = [
     AppDescriptor("OdysseyMaterials", "Elite Dangerous Odyssey Materials Helper",
                   resolver=_find_odyssey_materials),
     AppDescriptor("EDCoPilot", "EDCoPilot",
-                  r"C:\EDCoPilot\EDCoPilot.exe"),
+                  r"C:\EDCoPilot\EDCoPilot.exe", enabled=False),
     AppDescriptor("EDHM_UI", "EDHM-UI-V3",
-                  r"%LOCALAPPDATA%\EDHM-UI-V3\EDHM-UI-V3.exe"),
+                  r"%LOCALAPPDATA%\EDHM-UI-V3\EDHM-UI-V3.exe", enabled=False),
     AppDescriptor("opentrack", "opentrack",
-                  r"%ProgramFiles(x86)%\opentrack\opentrack.exe"),
+                  r"%ProgramFiles(x86)%\opentrack\opentrack.exe", enabled=False),
     AppDescriptor("ICARUS Terminal", "ICARUS Terminal",
-                  r"%ProgramFiles(x86)%\ICARUS Terminal\ICARUS Terminal.exe"),
+                  r"%ProgramFiles(x86)%\ICARUS Terminal\ICARUS Terminal.exe",
+                  enabled=False),
     AppDescriptor("EDDiscovery", "EDDiscovery",
-                  r"%ProgramFiles%\EDDiscovery\EDDiscovery.exe"),
+                  r"%ProgramFiles%\EDDiscovery\EDDiscovery.exe", enabled=False),
     AppDescriptor("VoiceAttack", "VoiceAttack",
-                  resolver=_find_voiceattack),
+                  resolver=_find_voiceattack, enabled=False),
     AppDescriptor("EDCoPTER", "EDCoPTER",
-                  r"%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe"),
+                  r"%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe", enabled=False),
     AppDescriptor("Elite Observatory", "ObservatoryCore",
-                  r"%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe"),
+                  r"%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe",
+                  enabled=False),
     AppDescriptor("Elite Studio", "EliteStudio",
-                  r"%ProgramFiles%\Elite Studio\EliteStudio.exe"),
-    # Unticked even when installed: VoiceAttack's EDDI plugin usually runs it,
+                  r"%ProgramFiles%\Elite Studio\EliteStudio.exe", enabled=False),
+    # Ticking it has a catch too: VoiceAttack's EDDI plugin usually runs it,
     # and EDLS starting a second copy clashes with that one.
     AppDescriptor("EDDI", "EDDI",
                   resolver=_find_eddi, enabled=False),
+    # Portable (no installer): EDLS looks where a browser saves it. Kept
+    # somewhere else? The CMDR sets its path in Settings.
+    AppDescriptor("ED Galactic Memoir", "ED_GALACTIC_MEMOIR",
+                  r"%USERPROFILE%\Downloads\ED_GALACTIC_MEMOIR.exe",
+                  enabled=False),
 ]
 
 REGISTRY_BY_NAME = {a.name: a for a in REGISTRY}
@@ -325,9 +335,9 @@ def _fresh_default(reg: AppDescriptor) -> AppDescriptor:
     """A REGISTRY default as it joins the CMDR's list (first run, RESTORE
     DEFAULTS, or a default added in a later version): ticked only if its
     program is on this PC, so a tool they don't have doesn't greet every
-    LAUNCH with "not found" -- and never if its entry is enabled=False. A
-    copy, so user edits never mutate REGISTRY (resolvers are shared
-    callables, which is fine)."""
+    LAUNCH with "not found" -- and never if its entry is enabled=False (all
+    but the three most used). A copy, so user edits never mutate REGISTRY
+    (resolvers are shared callables, which is fine)."""
     path = reg.resolve_path()
     return replace(reg, origin=reg.name,
                    enabled=reg.enabled and bool(path and os.path.exists(path)))
@@ -470,8 +480,8 @@ def _from_dict(raw: dict) -> Settings:
 def _merge_new_defaults(s: Settings) -> bool:
     """Append any registry app missing from settings -- unless the user
     deliberately removed it (tracked in removed_defaults). Lets a new default
-    added in a later version appear for existing installs, ticked only if it's
-    installed (_fresh_default). Returns True if it changed anything."""
+    added in a later version appear for existing installs, ticked as on a
+    first run (_fresh_default). Returns True if it changed anything."""
     # By origin too: a renamed default is still that default.
     existing = {a.name for a in s.apps} | {a.origin for a in s.apps}
     changed = False
