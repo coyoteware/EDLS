@@ -1,8 +1,9 @@
 # EDLS — Elite: Dangerous Launch Suite
-**Website: [coyoteware.github.io/EDLS](https://coyoteware.github.io/EDLS/)**
+Website (WIP just a toy for now): [coyoteware.github.io/EDLS](https://coyoteware.github.io/EDLS/)
 
 <p align="center">
-  <img src="assets/screenshots/booting.png">
+  <img src="assets/screenshots/Screenshot 2026-11-01 234205.png">
+  <i>Light mode ui</i>
 </p>
 
 EDLS is a Windows desktop launcher for [Elite: Dangerous](https://www.elitedangerous.com/).
@@ -20,7 +21,7 @@ show a live HUD-style status board while you play, and shut itself and the rest 
 - **Automatic teardown** — when Elite exits, EDLS closes the companion tools for you, then itself. (adjustable)
 - **Per-app start/stop** — bring a single tool up or down from its status card
 - **Configurable** — add/remove/enable/disable apps and edit their paths in a
-  built-in settings table. Add a commander name if you please. There's also a (WIP) light mode ui
+  built-in settings table. Add a commander name if you please. There's also a light mode ui!
 - **Auto-start** — Off by default for easier setup. You should turn this on once you have EDLS configured to your liking, otherwise it's 2 clicks instead of 1
 
 ---
@@ -59,9 +60,10 @@ full Epic Games launcher installed.
 
 ## Installation
 
-Download EDLS-Setup-1.3.0.exe from the [Releases page](https://github.com/coyoteware/EDLS/releases/latest)
-
+Download EDLS-Setup-1.3.0.exe from the 
+[Releases page](https://github.com/coyoteware/EDLS/releases/latest)
 VirusTotal analysis: [https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection](https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection)
+**OUTDATED**: Release 1.3.0 is being flagged by 1/69 of the security vendors on virustotal. Updated link to come once i fix this
 
 ### Updates
 
@@ -70,8 +72,7 @@ an **update** badge appears next to your CMDR name. Click it for the steps and a
 button to the release page: download the new installer there and run it. It installs
 over your current version and keeps your settings. Turn the check off in Settings.
 
-What's new: [release-notes.md](release-notes.md).
-
+What's new: see the rest on [the releases page](https://github.com/coyoteware/EDLS/releases/latest)
 ---
 
 ## Configuration
@@ -112,7 +113,7 @@ Settings and the activity log are stored under:
 
 ---
 
-## Credits
+## 
 
 - CMDR Coyote Bongwater
 - Python 3.11, VScode, Claude Opus 5.5, InnoSetup
