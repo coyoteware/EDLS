@@ -4,7 +4,7 @@
 </p>
 
 EDLS is a Windows desktop launcher for [Elite: Dangerous](https://www.elitedangerous.com/).
-It will find and boot Steam, then Elite via legendary and min-ed-launcher (see below), then up to a dozen companion apps of your choosing,
+It will find and boot Steam, then Elite via legendary and min-ed-launcher (see below), then any number of companion apps of your choosing,
 show a live HUD-style status board while you play, and shut itself and the rest of your companion apps down when Elite closes. Note that this does require a small amount of configuration on your end; if you skip setup for min-ed-launcher and legendary, EDLS will not actually save you much of any time or effort.
 
 ---
