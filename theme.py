@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontInfo, QIcon, QPainter, QPen, QPixmap
 
 # Avoid a hard import cycle: Theme is an enum in config.py. We only compare by
@@ -73,6 +73,7 @@ LOG_TIME   = C_TMID     # [HH:MM:SS]
 LOG_COLORS = {
     "success": C_SUCCESS, "default": C_AMBER, "info": C_AMBER,
     "warning": C_ORANGE, "error": C_RED, "dim": C_LOGDIM,
+    "update": C_GREEN,   # a newer EDLS is out: the online cards' green
 }
 
 # State-tinted card borders (the "glow" stand-in). Match StatusCard.update_state.
@@ -128,6 +129,7 @@ _LIGHT_PALETTE = {
         "success": QColor("#FFE08A"), "default": QColor("#F4F6F8"),
         "info": QColor("#F4F6F8"), "warning": QColor("#FFC489"),
         "error": QColor("#FFB8B0"), "dim": QColor("#C3C8CE"),
+        "update": QColor("#9FF2B8"),
     },
     "TOGGLE": {
         "off_bd": QColor("#9AA2AC"), "off_bg": QColor("#DDE1E6"),
@@ -217,7 +219,3 @@ def power_icon(color: QColor, px: int = 18) -> QIcon:
 
     pm.setDevicePixelRatio(2.0)
     return QIcon(pm)
-
-
-# Drop-in icon size constant (matches ui.py BTN_ICON).
-ICON_SIZE = QSize(18, 18)

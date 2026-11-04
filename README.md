@@ -1,4 +1,6 @@
 # EDLS — Elite: Dangerous Launch Suite
+**Website: [coyoteware.github.io/EDLS](https://coyoteware.github.io/EDLS/)**
+
 <p align="center">
   <img src="assets/screenshots/booting.png">
 </p>
@@ -57,25 +59,41 @@ full Epic Games launcher installed.
 
 ## Installation
 
-Download EDLS-Setup-1.2.1.exe from the [Releases page](https://github.com/coyoteware/EDLS/releases/tag/1.2)
+Download EDLS-Setup-1.3.0.exe from the [Releases page](https://github.com/coyoteware/EDLS/releases/latest)
 
 VirusTotal analysis: [https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection](https://www.virustotal.com/gui/file/a8224787b93396338ca297ad050cbf125035a88e9a8d8566ce481e4236892e98/detection)
+
+### Updates
+
+Versions after 1.2.1 check GitHub for a new release at startup. If there is one,
+an **update** badge appears next to your CMDR name. Click it for the steps and a
+button to the release page: download the new installer there and run it. It installs
+over your current version and keeps your settings. Turn the check off in Settings.
+
+What's new: [release-notes.md](release-notes.md).
 
 ---
 
 ## Configuration
 
 EDLS ships with default registry entries for these tools (each can be enabled,
-disabled, or have its path edited):
+disabled, or have its path edited). EDMarketConnector, SrvSurvey and Odyssey Materials
+Helper start out enabled if EDLS finds them on your PC; tick any of the others you use in
+SETTINGS:
 
 |     |     |     |
 | --- | --- | --- |
 | EDMarketConnector | SrvSurvey | Odyssey Materials Helper |
 | EDCoPilot | EDHM-UI | opentrack |
-| ICARUS Terminal | EDDiscovery | VoiceAttack |
-| EDCoPTER | Elite Observatory | |
+| ICARUS Terminal | EDDiscovery | VoiceAttack (1 or 2) |
+| EDCoPTER | Elite Observatory | Elite Studio |
+| EDDI | ED Galactic Memoir | |
 
 >>*NOTE* on filepaths: The filepath for SrvSurvey is a diabolical beast. You are unlikely to be successful in entering it manually. If for whatever reason EDLS is unable to find its install automatically, please report it at the issues page.
+
+>>*NOTE* on admin rights: some tools (EDHM-UI, on most accounts) ask Windows for administrator rights. EDLS itself never runs as administrator, so when it starts one of these, Windows shows its usual UAC prompt. If EDLS has to close one later, Windows asks once more (one prompt covers every such tool). Don't want the prompts? Turn off **Ask for admin rights when a tool needs them** in SETTINGS: EDLS then leaves those tools to you.
+
+>>*NOTE* on EDDI: if you use EDDI through VoiceAttack (its EDDI plugin), leave EDDI unticked in SETTINGS and VoiceAttack ticked. The plugin starts EDDI for you and closes it with VoiceAttack. With both ticked, EDLS and the plugin can both try to start EDDI at once. That's why EDLS adds EDDI unticked, even when it's installed: tick it only if you run EDDI on its own.
 
 
 

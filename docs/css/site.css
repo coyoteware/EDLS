@@ -1,0 +1,589 @@
+/* ============================================================================
+   EDLS site — components and layout.
+   Tokens come from ds/styles.css (the EDLS Design System, copied verbatim).
+   The .ed-* classes are plain-CSS ports of the DS React components
+   (components/core, components/status, components/forms); values match them.
+   ============================================================================ */
+
+:root {
+  color-scheme: dark;
+  --wrap: 1120px;
+  --gutter: 16px;
+  --topbar-h: 60px;
+  --topbar-bg: rgba(9, 9, 5, 0.84);
+  --page-bg: url("../img/window-bg.svg");
+  --heading-glow: var(--glow-text);
+  --hud-pane: rgba(13, 11, 7, 0.45);
+}
+
+/* Day mode, page chrome: the DS "Full Daylight" keys and banner
+   (ui_kits/edls-launcher/Light Mode.html, .daylight) — what the app ships. */
+[data-theme="light"] {
+  color-scheme: light;
+  --topbar-bg: rgba(215, 219, 224, 0.88);
+  --page-bg: url("../img/window-bg-light.svg");
+  --heading-glow: none;
+
+  --banner-bg: linear-gradient(180deg, #E6E9ED 0%, #C8CDD4 100%);
+  --banner-edge: #C25E0A;
+  --banner-title: #A84F08;
+  --banner-glow: none;
+  --banner-border: #A6AEB9;
+
+  --btn-launch-bg: #C25E0A; --btn-launch-bg-hover: #D46A12; --btn-launch-bd: #9E4A06;
+  --btn-launch-bd-hover: #7E3A04; --btn-launch-fg: #FFFFFF; --btn-launch-fg-hover: #FFFFFF;
+  --btn-glow: none;
+  --btn-secondary-bg: #EEF0F3; --btn-secondary-bg-hover: #FFFFFF; --btn-secondary-bd: #A6AEB9;
+  --btn-secondary-bd-hover: #C25E0A; --btn-secondary-fg: #3A4450; --btn-secondary-fg-hover: #A84F08;
+  --btn-on-bg: #FBE9D8; --btn-on-bg-hover: #FFF1E3; --btn-on-bd: #C25E0A;
+  --btn-on-bd-hover: #9E4A06; --btn-on-fg: #A84F08; --btn-on-fg-hover: #7E3A04;
+}
+
+/* Day mode, panes: the status/log panes and cards stay the dark HUD in both
+   themes (the app's "Full Daylight" rule, theme.PANE). .hud re-declares the
+   dark palette, and the semantic aliases with it, because custom properties
+   inherit already-resolved values. The pane fill is denser than the app's
+   .45 so prose stays readable over the light window. */
+[data-theme="light"] .hud {
+  --ed-gold: #FFB700; --ed-dark: #090905; --ed-panel: #0D0B07; --ed-border: #1C1208;
+  --ed-amber: #C8760A; --ed-orange: #FF8C1A; --ed-dim: #4A3A20; --ed-text-mid: #A07A3A;
+  --ed-text-dim: #6A5030; --ed-green: #3DCC6A; --ed-red: #CC3D3D; --ed-inactive: #454545;
+  --ed-name: #C8860A; --ed-cmdr: #FF8C1A; --ed-success: #FFB700; --ed-log-dim: #5A4A2A;
+  --ed-card-bg: rgba(10, 8, 4, 0.74); --ed-card-border: #1A1208; --ed-card-border-off: #181818;
+  --hud-pane: rgba(13, 11, 7, 0.86);
+
+  --surface-base: var(--ed-dark);
+  --surface-panel: var(--hud-pane);
+  --surface-panel-solid: var(--ed-panel);
+  --surface-card: var(--ed-card-bg);
+  --border-default: var(--ed-border);
+  --border-card: var(--ed-card-border);
+  --text-primary: var(--ed-amber);
+  --text-secondary: var(--ed-text-mid);
+  --text-tertiary: var(--ed-text-dim);
+  --text-accent: var(--ed-gold);
+  --text-active: var(--ed-orange);
+  --status-online: var(--ed-green);
+  --status-active: var(--ed-orange);
+  --status-offline: var(--ed-inactive);
+  --status-failed: var(--ed-red);
+  --accent: var(--ed-gold);
+  --accent-amber: var(--ed-amber);
+  --heading-glow: var(--glow-text);
+  color-scheme: dark;
+}
+.hud { --surface-panel: var(--hud-pane); }
+
+/* ---- Base ------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: calc(var(--topbar-h) + 16px); }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--ed-dark) var(--page-bg) center / cover no-repeat fixed;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+img { max-width: 100%; height: auto; display: block; }
+a { color: var(--text-active); text-underline-offset: 3px; }
+a:hover { color: var(--text-accent); }
+code, kbd { font-family: var(--font-mono); color: var(--text-accent); }
+p { margin: 0 0 12px; }
+p:last-child { margin-bottom: 0; }
+:focus-visible { outline: 1px dashed var(--text-active); outline-offset: 3px; }
+::selection { background: var(--ed-orange); color: #120C00; }
+
+.wrap { width: min(var(--wrap), 100% - 2 * var(--gutter)); margin-inline: auto; }
+.skip-link {
+  position: absolute; left: 12px; top: -60px; z-index: 100;
+  padding: 8px 12px; background: var(--ed-gold); color: #120C00;
+  font-family: var(--font-display); letter-spacing: 0.08em; text-decoration: none;
+}
+.skip-link:focus { top: 12px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+.i { width: 0.8em; height: 0.8em; flex: 0 0 auto; }
+
+/* Day/night art swaps: both copies sit in the markup, CSS shows one. */
+.only-light { display: none !important; }
+[data-theme="light"] .only-dark { display: none !important; }
+[data-theme="light"] .only-light { display: block !important; }
+
+/* ---- Chamfer hairline (DS: clipped inset layer + mask) ----------------- */
+.ed-btn, .ed-panel, .ed-card, .ed-header, .ed-faq {
+  --ch: 10px;
+  --clip: polygon(0 0, calc(100% - var(--ch)) 0, 100% var(--ch), 100% 100%,
+                  var(--ch) 100%, 0 calc(100% - var(--ch)));
+  position: relative;
+  clip-path: var(--clip);
+}
+.ed-btn::before, .ed-panel::before, .ed-card::before, .ed-header::before, .ed-faq::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  clip-path: var(--clip);
+  padding: 1px;
+  background: var(--hairline, var(--border-default));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+  transition: background var(--dur-fast) var(--ease-hud);
+}
+/* The ring above is rectangular, so the two cut edges get their own 1px
+   diagonals (the app's polygon strokes them too). Each sits just inside the
+   clip line: the gradient runs outward across the corner square. */
+.ed-btn::after, .ed-panel::after, .ed-card::after, .ed-header::after, .ed-faq::after {
+  --diag: transparent calc(50% - 1.4px), var(--hairline, var(--border-default)) calc(50% - 0.9px),
+          var(--hairline, var(--border-default)) 50%, transparent 50%;
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to top right, var(--diag)) top right / var(--ch) var(--ch) no-repeat,
+    linear-gradient(to bottom left, var(--diag)) bottom left / var(--ch) var(--ch) no-repeat;
+  pointer-events: none;
+}
+.ed-header::after { top: -2px; }   /* the gold top edge sits outside the padding box */
+
+/* ---- Button (components/core/Button.jsx) ------------------------------- */
+.ed-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 18px;
+  border: 0;
+  background: var(--b-bg);
+  color: var(--b-fg);
+  --hairline: var(--b-bd);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-hud), color var(--dur-fast) var(--ease-hud);
+}
+.ed-btn:hover { background: var(--b-bg-h); color: var(--b-fg-h); --hairline: var(--b-bd-h); }
+.ed-btn:active { filter: brightness(0.85); }
+.ed-btn:focus-visible { outline: 1px dashed var(--b-fg-h); outline-offset: -5px; }
+.ed-btn--launch {
+  --b-bg: var(--btn-launch-bg, #120C00);   --b-bg-h: var(--btn-launch-bg-hover, #1A1000);
+  --b-bd: var(--btn-launch-bd, var(--ed-amber)); --b-bd-h: var(--btn-launch-bd-hover, var(--ed-gold));
+  --b-fg: var(--btn-launch-fg, var(--ed-gold));  --b-fg-h: var(--btn-launch-fg-hover, #FFD040);
+}
+.ed-btn--launch:hover { text-shadow: var(--btn-glow, var(--glow-text)); }
+.ed-btn--secondary {
+  --b-bg: var(--btn-secondary-bg, #111114); --b-bg-h: var(--btn-secondary-bg-hover, #120F09);
+  --b-bd: var(--btn-secondary-bd, #2A2A35); --b-bd-h: var(--btn-secondary-bd-hover, var(--ed-amber));
+  --b-fg: var(--btn-secondary-fg, #686868); --b-fg-h: var(--btn-secondary-fg-hover, var(--ed-orange));
+}
+.ed-btn--on {
+  --b-bg: var(--btn-on-bg, #120C00); --b-bg-h: var(--btn-on-bg-hover, #1A1000);
+  --b-bd: var(--btn-on-bd, var(--ed-amber)); --b-bd-h: var(--btn-on-bd-hover, var(--ed-gold));
+  --b-fg: var(--btn-on-fg, var(--ed-orange)); --b-fg-h: var(--btn-on-fg-hover, var(--ed-gold));
+}
+.ed-btn--sm { --ch: 8px; height: 28px; padding: 0 12px; font-size: 10px; gap: 6px; }
+.ed-btn--lg { --ch: 12px; height: 44px; padding: 0 24px; font-size: 15px; }
+.ed-btn .i { width: 0.75em; height: 0.75em; }
+
+/* ---- Panel (components/core/Panel.jsx) --------------------------------- */
+.ed-panel {
+  --ch: 14px;
+  background: var(--surface-panel);
+  padding: clamp(16px, 2.4vw, 24px) clamp(16px, 2.6vw, 28px);
+}
+.ed-panel--sm { --ch: 10px; }
+.ed-panel-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin-bottom: 14px;
+}
+.ed-panel-meta { font-family: var(--font-mono); font-size: var(--type-mono-xs); color: var(--text-tertiary); }
+
+/* ---- Eyebrow / Badge / StatusDot -------------------------------------- */
+.ed-eyebrow {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.ed-badge {
+  --v: var(--ed-amber);
+  display: inline-flex; align-items: center;
+  padding: 2px 8px;
+  font-family: var(--font-display);
+  font-size: var(--type-display-xs);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  line-height: 1.4;
+  color: var(--v);
+  border: 1px solid var(--v);
+  white-space: nowrap;
+}
+.ed-badge--gold   { --v: var(--accent); }
+.ed-badge--orange { --v: var(--ed-orange); }
+.ed-badge--green  { --v: var(--ed-green); }
+.ed-badge--dim    { --v: var(--ed-text-mid); border-color: var(--ed-border); }
+.ed-badge--filled { color: var(--ed-dark); background: var(--v); }
+[data-theme="light"] .ed-badge--filled { color: #FFFFFF; }
+
+.ed-dot {
+  display: inline-block; width: 10px; height: 10px; flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--status-offline);
+}
+.ed-dot--online {
+  background: var(--status-online);
+  box-shadow: var(--glow-green);
+  animation: ed-pulse var(--dur-pulse) var(--ease-hud) infinite;
+  animation-delay: var(--pulse-delay, 0ms);
+}
+.ed-dot--active { background: var(--status-active); box-shadow: var(--glow-amber); animation: ed-pulse var(--dur-pulse) var(--ease-hud) infinite; }
+
+/* ---- StatusCard (components/status/StatusCard.jsx) --------------------- */
+.ed-card {
+  --ch: 10px;
+  --hairline: var(--ed-card-border-off);
+  display: flex; flex-direction: column; gap: 4px;
+  min-height: 90px;
+  padding: 10px 12px;
+  background: var(--surface-card);
+}
+.ed-card--online { --hairline: var(--ed-border-online); }
+.ed-card-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ed-card-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-display);
+  font-size: var(--type-display-sm);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--ed-name);
+}
+.ed-card-state { font-family: var(--font-mono); font-size: var(--type-mono-md); color: var(--status-offline); }
+.ed-card--online .ed-card-state { color: var(--status-online); }
+.ed-card .ed-btn { margin-top: auto; width: 100%; }
+
+/* ---- LogView (components/status/LogView.jsx) --------------------------- */
+.ed-log {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-mono-sm);
+  line-height: 1.65;
+  list-style: none;
+  padding: 4px 0 0;
+  border-top: 1px solid var(--ed-amber);
+}
+.ed-log li { white-space: pre-wrap; word-break: break-word; color: var(--ed-amber); }
+.ed-log .ts { color: var(--text-secondary); }
+.ed-log .success { color: var(--ed-success); }
+.ed-log .warning { color: var(--ed-orange); }
+.ed-log .error   { color: var(--ed-red); }
+.ed-log .dim     { color: var(--ed-log-dim); }
+
+/* ---- Header / TitleBanner (components/status/TitleBanner.jsx, ui.HeaderPanel)
+   Gold top edge clipped at the chamfer, title mark at the left, tracked
+   title, CMDR row beneath. No chevrons, as in the shipped app. */
+.ed-header {
+  --ch: 14px;
+  --hairline: var(--banner-border, var(--ed-border));
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 4px clamp(12px, 2.5vw, 28px);
+  padding: clamp(14px, 2.2vw, 22px) clamp(14px, 3vw, 40px);
+  background: var(--banner-bg, linear-gradient(180deg, rgba(40, 28, 4, 0.9) 0%, rgba(14, 10, 4, 0.95) 100%));
+  border-top: 2px solid var(--banner-edge, var(--ed-gold));
+}
+.ed-header-mark { grid-row: span 2; width: clamp(64px, 11vw, 132px); }
+.ed-header h1 {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: clamp(17px, 3.1vw, 34px);
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--banner-title, var(--ed-gold));
+  text-shadow: var(--banner-glow, var(--glow-gold));
+}
+.ed-header h1 .seg { white-space: nowrap; }
+.ed-header h1 .sep { margin: 0 0.35em; }
+.ed-cmdr {
+  display: flex; justify-content: center; align-items: center; gap: 12px;
+  font-family: var(--font-display);
+  font-size: clamp(12px, 1.5vw, 15px);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ed-cmdr);
+}
+
+/* ---- ThemeToggle "Night Sky" (components/forms/ThemeToggle.jsx) -------- */
+.ed-theme-toggle {
+  --cut: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
+  --cut-s: polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 4px 100%, 0 calc(100% - 4px));
+  --ease: 200ms cubic-bezier(.3, 0, .2, 1);
+  position: relative; width: 84px; height: 32px; flex: 0 0 auto;
+  border: 0; padding: 0; margin: 0;
+  clip-path: var(--cut);
+  background: var(--tg-off-bd);
+  cursor: pointer;
+}
+.ed-theme-toggle[hidden] { display: none; }
+.ed-theme-toggle .tt-track {
+  position: absolute; inset: 1px; clip-path: var(--cut); background: #0B0A07;
+}
+.ed-theme-toggle[aria-checked="true"] .tt-track { background: linear-gradient(180deg, #E6E9ED, #C8CDD4); }
+.ed-theme-toggle .tt-icon { position: absolute; top: 8px; width: 16px; height: 16px; color: var(--tg-icon); opacity: 0.7; }
+.ed-theme-toggle .tt-moon-bg { left: 10px; }
+.ed-theme-toggle .tt-sun-bg { right: 10px; }
+.ed-theme-toggle .tt-knob {
+  position: absolute; top: 4px; left: 4px; width: 36px; height: 24px;
+  clip-path: var(--cut-s);
+  background: var(--tg-on-bd);
+  color: #120C00;
+  display: flex; align-items: center; justify-content: center;
+  transition: left var(--ease), color var(--ease);
+}
+.ed-theme-toggle[aria-checked="true"] .tt-knob { left: 44px; color: #FFFFFF; }
+.ed-theme-toggle .tt-knob svg {
+  position: absolute; width: 16px; height: 16px;
+  transition: opacity var(--ease), transform var(--ease);
+}
+.ed-theme-toggle .tt-knob .k-sun { opacity: 0; transform: rotate(-90deg); }
+.ed-theme-toggle[aria-checked="true"] .tt-knob .k-moon { opacity: 0; transform: rotate(90deg); }
+.ed-theme-toggle[aria-checked="true"] .tt-knob .k-sun { opacity: 1; transform: none; }
+.ed-theme-toggle:focus-visible { outline: none; }
+.ed-theme-toggle:focus-visible .tt-track { outline: 1px dashed var(--ed-orange); outline-offset: -4px; }
+
+/* ---- Top bar ----------------------------------------------------------- */
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  height: var(--topbar-h);
+  background: var(--topbar-bg);
+  border-top: 2px solid var(--accent);
+  border-bottom: 1px solid var(--ed-border);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.topbar .wrap { height: 100%; display: flex; align-items: center; gap: 20px; }
+.brand {
+  display: inline-flex; align-items: center; gap: 10px; margin-right: auto;
+  font-family: var(--font-display); font-size: 18px; letter-spacing: 0.24em;
+  color: var(--accent); text-decoration: none;
+}
+.brand img { width: 30px; height: 30px; }
+.brand:hover { color: var(--accent); }
+.nav { display: flex; align-items: center; gap: clamp(12px, 2vw, 24px); }
+.nav a {
+  font-family: var(--font-display); font-size: 12px; letter-spacing: 0.16em;
+  text-transform: uppercase; text-decoration: none; color: var(--text-secondary);
+  padding: 6px 0;
+}
+.nav a:hover { color: var(--text-active); }
+
+/* ---- Sections ---------------------------------------------------------- */
+main { display: block; }
+.section { padding: clamp(56px, 8vw, 96px) 0 0; }
+.section-head { max-width: 760px; margin-bottom: clamp(24px, 4vw, 40px); }
+.section-head--center { margin-inline: auto; text-align: center; }
+h2, h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-accent);
+  text-shadow: var(--heading-glow);
+}
+h2 { font-size: clamp(22px, 3.2vw, 32px); line-height: 1.2; letter-spacing: 0.12em; margin: 10px 0 14px; }
+h3 { font-size: clamp(17px, 2vw, 21px); line-height: 1.3; letter-spacing: 0.1em; margin: 10px 0 12px; }
+.lede { font-size: 16px; color: var(--text-secondary); max-width: 62ch; }
+.section-head--center .lede { margin-inline: auto; }
+
+/* ---- Hero -------------------------------------------------------------- */
+.hero { padding: clamp(20px, 4vw, 40px) 0 0; }
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: clamp(24px, 4vw, 48px);
+  align-items: center;
+  margin-top: clamp(24px, 4vw, 44px);
+}
+.hero-pitch { font-size: clamp(16px, 1.8vw, 19px); line-height: 1.55; color: var(--text-primary); margin: 14px 0 22px; }
+.keys { display: flex; flex-wrap: wrap; gap: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.chips .ed-badge[hidden] { display: none; }
+
+/* Screenshot frame: a panel around the image; border brightens on hover. */
+.shot { margin: 0; padding: 8px; }
+.shot a { display: block; }
+.shot:hover { --hairline: var(--ed-amber); }
+.shot figcaption {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 8px 4px 0;
+  font-family: var(--font-mono); font-size: var(--type-mono-xs); color: var(--text-tertiary);
+}
+
+/* ---- Features ---------------------------------------------------------- */
+.feature {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: clamp(24px, 4vw, 48px);
+  align-items: center;
+}
+.feature + .feature { margin-top: clamp(40px, 6vw, 72px); }
+.feature:nth-of-type(even) .shot, .feature:nth-of-type(even) .feature-visual { order: 2; }
+.feature-copy p { color: var(--text-primary); }
+.ticks { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 8px; }
+.ticks li { position: relative; padding-left: 20px; color: var(--text-secondary); }
+.ticks li::before {
+  content: ""; position: absolute; left: 2px; top: 0.62em;
+  width: 7px; height: 7px; background: var(--text-active);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+.feature-visual .ed-log { min-height: 260px; }
+
+.aboard {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
+  margin-top: clamp(48px, 7vw, 80px);
+}
+.aboard .ed-panel h3 { font-size: 15px; margin-top: 4px; }
+.aboard .ed-panel p { font-size: 14px; color: var(--text-secondary); }
+
+/* ---- Tools ------------------------------------------------------------- */
+.tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 8px; }
+.tool-note { margin-top: 14px; font-size: 13px; color: var(--text-secondary); }
+
+/* ---- Setup ------------------------------------------------------------- */
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; counter-reset: step; }
+.step { display: flex; flex-direction: column; }
+.step-num {
+  font-family: var(--font-mono); font-size: 34px; line-height: 1;
+  color: var(--accent); text-shadow: var(--heading-glow);
+}
+.step p { color: var(--text-primary); font-size: 14px; }
+.step .keys { margin-top: auto; padding-top: 14px; }
+
+.callout {
+  margin-top: 16px;
+  padding: 14px 18px;
+  border: 1px dashed var(--ed-orange);
+  background: var(--hud-pane);
+  color: var(--ed-orange);
+  font-size: 14px;
+}
+.callout strong { font-family: var(--font-display); letter-spacing: 0.12em; font-weight: 700; margin-right: 6px; }
+.callout a { color: var(--ed-gold); }
+
+/* ---- Download ---------------------------------------------------------- */
+.download { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: clamp(20px, 4vw, 48px); align-items: start; }
+.dl-file { font-family: var(--font-mono); font-size: clamp(18px, 2.4vw, 24px); color: var(--ed-gold); margin: 6px 0 12px; overflow-wrap: anywhere; }
+.specs { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
+.specs dt { font-family: var(--font-display); letter-spacing: 0.14em; color: var(--text-tertiary); text-transform: uppercase; font-size: 11px; padding-top: 3px; }
+.specs dd { margin: 0; color: var(--text-primary); }
+.download .keys { margin: 4px 0 18px; }
+
+/* ---- FAQ (details as chamfered panels) -------------------------------- */
+.faq { max-width: 880px; margin-inline: auto; display: grid; gap: 8px; }
+.ed-faq { --ch: 10px; background: var(--surface-panel); }
+.ed-faq[open] { --hairline: var(--ed-dim); }
+.ed-faq summary {
+  position: relative;
+  list-style: none;
+  cursor: pointer;
+  padding: 16px 52px 16px 20px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ed-name);
+}
+.ed-faq summary::-webkit-details-marker { display: none; }
+.ed-faq summary:hover { color: var(--ed-orange); }
+.ed-faq summary:focus-visible { outline: 1px dashed var(--ed-orange); outline-offset: -6px; }
+.ed-faq summary::before, .ed-faq summary::after {
+  content: ""; position: absolute; right: 22px; top: 50%;
+  width: 12px; height: 2px; margin-top: -1px; background: var(--ed-amber);
+  transition: transform var(--dur-fast) var(--ease-hud);
+}
+.ed-faq summary::after { transform: rotate(90deg); }
+.ed-faq[open] summary::after { transform: rotate(0deg); }
+.ed-faq .answer { padding: 0 20px 18px; font-size: 14px; color: var(--text-primary); }
+.ed-faq .answer code { color: var(--ed-gold); }
+
+/* ---- Footer ------------------------------------------------------------ */
+.site-footer {
+  margin-top: clamp(64px, 9vw, 112px);
+  padding: 36px 0 28px;
+  background: var(--topbar-bg);
+  border-top: 1px solid var(--ed-border);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.footer-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 28px; }
+.footer-grid h4 {
+  margin: 0 0 10px; font-family: var(--font-display); font-weight: 400;
+  font-size: 11px; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.footer-grid ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.footer-grid a { color: var(--text-primary); text-decoration: none; }
+.footer-grid a:hover { color: var(--text-active); text-decoration: underline; }
+.legal { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--ed-border); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; color: var(--text-tertiary); font-size: 12px; }
+.salute { font-family: var(--font-display); letter-spacing: 0.2em; color: var(--accent); }
+
+/* ---- Motion: panels boot in (ed-boot-in), staggered 60ms --------------- */
+.boot { animation: ed-boot-in var(--dur-med) var(--ease-hud) both; animation-delay: calc(var(--i, 0) * 60ms); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .boot, .ed-dot--online, .ed-dot--active { animation: none; }
+  *, *::before, *::after { transition-duration: 0s !important; }
+}
+
+/* ---- Responsive -------------------------------------------------------- */
+@media (max-width: 960px) {
+  .hero-grid, .feature, .download { grid-template-columns: minmax(0, 1fr); }
+  .feature:nth-of-type(even) .shot, .feature:nth-of-type(even) .feature-visual { order: 0; }
+  .aboard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .steps { grid-template-columns: minmax(0, 1fr); }
+  .footer-grid { grid-template-columns: 1fr 1fr; }
+  .footer-grid > :first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 860px) {
+  .nav .nav-extra { display: none; }
+}
+@media (max-width: 700px) {
+  .ed-header { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+  .ed-header-mark { grid-row: auto; width: 84px; }
+  .ed-header h1 .seg { display: block; }
+  .ed-header h1 .sep { display: none; }
+}
+@media (max-width: 600px) {
+  .nav { display: none; }
+  .aboard { grid-template-columns: minmax(0, 1fr); }
+  .footer-grid { grid-template-columns: minmax(0, 1fr); }
+  .keys .ed-btn { flex: 1 1 auto; }
+  /* Tool cards collapse to one row: dot, name, key. The dot carries the state. */
+  .tool-grid .ed-card { min-height: 0; flex-direction: row; align-items: center; gap: 10px; padding: 8px 10px; }
+  .tool-grid .ed-card-row { flex: 1; }
+  .tool-grid .ed-card-state { display: none; }
+  .tool-grid .ed-card .ed-btn { width: auto; margin: 0; }
+}
+
+/* The o7 salute stays lowercase: Euro Caps has no lowercase, so it's set mono. */
+.o7 { font-family: var(--font-mono); text-transform: none; letter-spacing: 0.06em; }

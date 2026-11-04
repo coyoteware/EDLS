@@ -1,0 +1,48 @@
+/* ============================================================================
+   EDLS — EFFECTS: chamfers, borders, glows, motion
+   The signature ED-HUD move is the CHAMFERED corner (a clip-path polygon with
+   the top-right + bottom-left corners cut). The source paints these as polygons
+   in Qt; on the web we reproduce them with clip-path.
+   ============================================================================ */
+
+:root {
+  /* Chamfer sizes — the corner cut depth */
+  --chamfer-sm: 10px;  /* cards, buttons */
+  --chamfer-md: 14px;  /* panels */
+
+  /* Canonical chamfer clip-path (top-right + bottom-left cut).
+     Use: clip-path: var(--clip-chamfer-sm); */
+  --clip-chamfer-sm:
+    polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%,
+            10px 100%, 0 calc(100% - 10px)); /* @kind other */
+  --clip-chamfer-md:
+    polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%,
+            14px 100%, 0 calc(100% - 14px)); /* @kind other */
+
+  /* Borders */
+  --border-hairline: 1px solid var(--border-default);
+
+  /* Glows (text-shadow / box-shadow approximations of the HUD emissive look) */
+  --glow-gold:   0 0 12px rgba(255, 183, 0, 0.45);
+  --glow-amber:  0 0 8px rgba(200, 118, 10, 0.40);
+  --glow-green:  0 0 8px rgba(61, 204, 106, 0.55);
+  --glow-text:   0 0 6px rgba(255, 183, 0, 0.35);
+
+  /* Motion — subdued, mechanical. No bounce. */
+  --ease-hud:     cubic-bezier(0.4, 0.0, 0.2, 1); /* @kind other */
+  --dur-fast:     150ms;   /* @kind other */
+  --dur-med:      320ms;   /* @kind other */ /* panel boot fade */
+  --dur-pulse:    1800ms;  /* @kind other */ /* status-dot pulse */
+}
+
+/* Reusable pulse for status dots (running/online/launching) */
+@keyframes ed-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+/* Panel boot-in: a few px rise + fade, staggered (mirrors the source's bootIn) */
+@keyframes ed-boot-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

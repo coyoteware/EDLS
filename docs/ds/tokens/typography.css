@@ -1,0 +1,40 @@
+/* ============================================================================
+   EDLS — TYPOGRAPHY TOKENS
+   Two faces only: Euro Caps (display, all-caps HUD labels) and Share Tech Mono
+   (terminal / numeric / log). Euro Caps carries positive letter-spacing and is
+   almost always uppercased — the source applies 104–122% letter-spacing.
+   ============================================================================ */
+
+:root {
+  /* Families */
+  --font-display: "Euro Caps", "Bank Gothic", "Eurostile", "Arial Narrow", sans-serif;
+  --font-mono:    "Share Tech Mono", "Consolas", "DejaVu Sans Mono", monospace;
+
+  /* Display type scale (HUD labels, titles, buttons) */
+  --type-display-xl:  34px;  /* suite title in the banner */
+  --type-display-lg:  22px;  /* dialog welcome / screen titles */
+  --type-display-md:  15px;  /* button labels */
+  --type-display-sm:  13px;  /* card names */
+  --type-display-xs:  11px;  /* section eyebrows (S Y S T E M  S T A T U S) */
+
+  /* Mono type scale (status values, log, PIDs, paths) */
+  --type-mono-lg:  20px;  /* featured status value (Elite card) */
+  --type-mono-md:  15px;  /* status value */
+  --type-mono-sm:  13px;  /* log lines */
+  --type-mono-xs:  11px;  /* timestamps / file labels / paths */
+
+  /* Letter-spacing — the HUD relies heavily on tracked-out caps */
+  --tracking-tight:  0.04em;   /* body display */
+  --tracking-wide:   0.08em;   /* display labels */
+  --tracking-wider:  0.14em;   /* card names, badges */
+  --tracking-eyebrow: 0.32em;  /* spaced section headers */
+
+  /* Line heights */
+  --leading-tight: 1.1;
+  --leading-body:  1.5;
+
+  /* Weights (Euro Caps is single-weight; these map to its synthetic range) */
+  --weight-regular: 400;
+  --weight-medium:  500;
+  --weight-bold:    700;
+}

@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repo.
 
 ## What this is
 EDLS — Elite: Dangerous Launch Suite. A Windows (10/11) desktop launcher that
-starts Steam → Elite: Dangerous → up to ~11 companion apps, monitors the game,
+starts Steam → Elite: Dangerous → up to ~12 companion apps, monitors the game,
 and tears the tools down on exit. This is a Python/PySide6 rewrite of an original
 PowerShell/WPF tool. See `README.md` for user-facing setup (it requires
 [min-ed-launcher] and [Legendary] configured first).
@@ -68,22 +68,81 @@ a visual outcome you haven't confirmed with him.
   PowerShell PascalCase (settings reset once on migration; that's fine).
 - **`ShutdownScope` is a user setting** (`LAUNCHED_ONLY` | `ALL_ENABLED`); both the
   SHUTDOWN button and the on-exit teardown honor it. Don't hardcode one behavior.
+  "Launched" includes what EDLS took over: a tool already running when LAUNCH or its
+  card's START reached it (`ProcessManager.adopt()` records it), which is what lets a
+  re-attach after reopening EDLS clean up.
 - **EDLS never closes Steam or the game** (force-closing Elite breaks Frontier's
   ToS). `ProcessManager.stop()` refuses `PROTECTED_PROCESSES`; never add a kill
   path around it, and the Elite card has no STOP. The Steam card's STOP is refused
   while the game runs, and LAUNCH attaches to an already-running game instead of
   sending Steam a second `steam://run`.
-- **Closing a tool is polite first.** `ProcessManager.stop()` asks (WM_CLOSE via
-  `taskkill` without /F) and kills only what's still running after `CLOSE_GRACE`
-  (3 s); `_teardown` asks every target up front so the waits overlap. Keep all of it
-  inside `ProcessManager`.
+- **Closing a tool is polite first.** `ProcessManager.stop()` asks and kills only
+  what's still running after `CLOSE_GRACE` (3 s); `_teardown` asks every target up
+  front so the waits overlap. Keep all of it inside `ProcessManager`. The ask
+  (`_ask_to_close`) posts WM_CLOSE to the *visible* windows of the process and its
+  same-name children, like an X click; `taskkill` without /F (which also hits hidden
+  internal windows) is only the fallback for a tool showing none (tray). A tool can
+  run as several same-name processes: `find_many` returns the root one (`_root`, whose
+  parent isn't one of them), and `stop()` then sees off its same-name helpers, nothing
+  else it started. The root isn't always the one with the window: EDHM-UI's
+  (Electron) is, Odyssey Materials Helper's (jpackage) is a windowless parent of the
+  JVM that owns it.
+- **Admin rights only on request.** EDLS never runs elevated (nor do Steam or the game).
+  A tool whose manifest asks for admin rights (EDHM-UI-V3: `highestAvailable`) makes
+  Popen fail with WinError 740. Only then, and only if `Settings.allow_elevation` is
+  on, does `ProcessManager` retry via `_run_as_admin` (the UAC prompt). A tool EDLS
+  can't close is closed by an elevated copy of EDLS (`--close-elevated` →
+  `_close_elevated`) that runs the same `ProcessManager.stop()`. Never add an
+  elevated `taskkill`/kill around it. UAC prompts block their thread, so companion
+  START runs on a worker.
+- **"Start tools minimized" is a hint, not enforcement.** `Settings.start_minimized`
+  (default off) makes `ProcessManager.launch(minimized=True)` pass
+  `SW_SHOWMINNOACTIVE`: through STARTUPINFO for Popen, through ShellExecute's show for
+  the UAC path. Tools may ignore it (launchers, splash screens, remembered window
+  positions). EDLS deliberately never minimizes a window after launch; Andrew chose
+  flag-only. A copy that's already running is never touched.
+- **A path whose exe isn't the watched process is a launcher.** `launch()` then waits
+  (`LAUNCHER_WAIT`) for the tool itself and tracks that by name. Odyssey Materials
+  Helper's resolver prefers its updating launcher over the helper exe; `_RETIRED_PATHS`
+  moves a saved old default path over on load.
+- **Only EDMarketConnector, SrvSurvey and Odyssey Materials Helper start ticked, and
+  only if installed** (`config._fresh_default`): first run, RESTORE DEFAULTS, and a
+  default that's new to an existing settings.json. Every other REGISTRY entry has
+  `enabled=False`, so it never starts ticked (Andrew: fewer cards for tools a new CMDR
+  may not use; EDDI also clashes with VoiceAttack's plugin). A new default gets
+  `enabled=False` too unless Andrew says otherwise. Ticks the CMDR set are never changed. Each saved app keeps its `origin` (the REGISTRY
+  name), so a renamed default keeps its resolver after a restart.
+- **The close countdown can be cancelled.** While `Engine._close_countdown` runs,
+  `on_countdown(True)` turns LAUNCH into STAY OPEN (`Engine.stay_open()`). If the
+  countdown runs out while a dialog is open, the view stays open rather than closing
+  behind it.
 - **Every card status goes out through `Engine._status()`.** The status watcher
   (which replaced REFRESH) compares each scan with what `_status()` recorded and only
-  emits differences — emitting any other way makes cards stale or flicker.
+  emits differences — emitting any other way makes cards stale or flicker. `_status()`
+  records and sends under one lock (`_watch_lock`, an RLock), and the watcher checks,
+  decides and sets inside it, so the view gets statuses in the order they're recorded.
+- **Threads.** Every worker starts through `Engine._spawn()` (never `threading.Thread`
+  directly): nothing starts after close, threads are named, and a crash reaches the
+  activity log. A companion app has one start/stop in flight at a time: card clicks
+  `_try_claim` (busy → a dim "X is busy" line), `_launch_tools` and `_teardown` wait
+  in `_claim`. Teardowns (`_teardown_lock`) and close countdowns (`_countdown_lock`)
+  never overlap. SHUTDOWN while LAUNCH is starting the tools sets `_tools_cancelled`:
+  the rest stay unstarted (one pressed earlier, while waiting for the game, doesn't
+  stop them: `_launch_tools` clears it). After `close()` nothing goes to the view
+  (`_emit`), and `main()`
+  waits up to `EXIT_WAIT` for a close under way (`_closing_work`) without a new UAC
+  prompt.
 - **Display names are a UI concern** (`_DISPLAY_NAMES` in `ui.py`); `descriptor.name`
   stays the key for status routing + settings.
 - **`config.APP_VERSION`** is the single source of truth for the version string
   (`build.ps1` reads it for the exe's version resource and the installer).
+- **Updates are a check and a badge, nothing more.** At startup
+  `Engine.check_for_updates` asks GitHub's `releases/latest` (which skips drafts and
+  pre-releases); a newer version puts a green "UPDATE x.y.z AVAILABLE" badge at the
+  right end of the CMDR row (`HeaderPanel.show_update`) and a green `"update"`-level log line, and the
+  badge's popover explains the steps and opens the release page. EDLS never
+  downloads or runs an installer. A release's tag must equal its `APP_VERSION`
+  (`1.3.0`, no `v`).
 - **The panes are the dark HUD in both themes** (the "Full Daylight" look): day mode
   lightens the window, header, bottom bar and card keys, not the status/log panes or
   cards. Pane surfaces and everything on a card read the fixed `theme.PANE.*`, never
@@ -94,6 +153,12 @@ a visual outcome you haven't confirmed with him.
   chamfered, centred on the parent); notices/confirms go through `hud_notice()` /
   `hud_confirm()`, never `QMessageBox`. Settings (a normal window) and the popovers
   take their colours from `_dialog_colors()` and buttons from `_key()`.
+- **`docs/` is the GitHub Pages site, not app code** (static HTML/CSS + one small JS
+  file, no build step; Pages deploys from `/docs`). `docs/ds/` is a verbatim copy of
+  the EDLS Design System's `styles.css` + `tokens/*.css`: change tokens in the DS, then
+  re-copy. `docs/css/site.css` ports the DS components to plain CSS classes. Its
+  fonts, SVGs and screenshots are copies of `assets/`, so re-copy them when those
+  change. Day mode keeps panes/cards dark HUD (`.hud`), same rule as the app.
 - Assets are loaded by relative path from `assets/` and must degrade gracefully if
   missing (the app should always run). Art is SVG, rendered directly with
   `QSvgRenderer` — there are no PNGs (`icon.ico` is the only raster asset).

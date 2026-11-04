@@ -8,7 +8,8 @@ Inno Setup installer.
 
 Needs Python 3.11+ on PATH and Inno Setup 6. The Python side runs in its own
 build\venv (requirements.txt + PyInstaller), never your global Python, so the
-bundle holds only what EDLS actually uses.
+bundle holds only what EDLS actually uses. selftest.py has to pass first: a
+build that fails it never gets packaged.
 
 Output (build\ and dist\ are git-ignored):
     dist\EDLS\EDLS.exe              the app
@@ -37,7 +38,12 @@ if (-not (Test-Path $py)) {
 & $py -m pip install --disable-pip-version-check --quiet -r (Join-Path $root "requirements.txt") pyinstaller
 if ($LASTEXITCODE -ne 0) { Fail "pip install failed" }
 
-# 2. The version. FileVersion is the four-number form Windows wants.
+# 2. The headless self-test (offscreen; it uses your %LOCALAPPDATA%\EDLS like
+#    a normal run).
+& $py (Join-Path $root "selftest.py")
+if ($LASTEXITCODE -ne 0) { Fail "selftest.py failed - see its output above" }
+
+# 3. The version. FileVersion is the four-number form Windows wants.
 Push-Location $root
 $version = & $py -c "import config; print(config.APP_VERSION)"
 $code = $LASTEXITCODE
@@ -49,7 +55,7 @@ while ($nums.Count -lt 4) { $nums += 0 }
 $fileVersion = $nums[0..3] -join "."
 Write-Host "Building EDLS $version"
 
-# 3. The exe's version resource (Properties > Details), in PyInstaller's format.
+# 4. The exe's version resource (Properties > Details), in PyInstaller's format.
 $copyright = (Select-String -Path (Join-Path $root "LICENSE") -Pattern "^Copyright" |
               Select-Object -First 1).Line.Trim()
 $tuple = $nums[0..3] -join ", "
@@ -76,7 +82,7 @@ $versionFile = Join-Path $build "version_info.txt"
 [System.IO.File]::WriteAllText($versionFile, $versionInfo,
                                (New-Object System.Text.UTF8Encoding $false))
 
-# 4. The app. One-folder, not one-file: nothing unpacks to %TEMP% on every
+# 5. The app. One-folder, not one-file: nothing unpacks to %TEMP% on every
 #    start, antivirus flags it less, and Qt's DLLs stay replaceable files.
 $assets = Join-Path $root "assets"
 & $py -m PyInstaller --noconfirm --clean --windowed --noupx `
@@ -90,7 +96,7 @@ $assets = Join-Path $root "assets"
     (Join-Path $root "main.py")
 if ($LASTEXITCODE -ne 0) { Fail "PyInstaller failed" }
 
-# 5. The installer.
+# 6. The installer.
 $iscc = @(
     (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
     (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),

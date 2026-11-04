@@ -1,13 +1,13 @@
 ; EDLS installer (Inno Setup 6). build.ps1 builds the app into dist\EDLS and
 ; then compiles this, passing the version from config.APP_VERSION:
-;     ISCC /DAppVersion=1.2.1 /DFileVersion=1.2.1.0 installer.iss
+;     ISCC /DAppVersion=1.3.0 /DFileVersion=1.3.0.0 installer.iss
 ;
 ; Per-user install: no admin prompt, and nothing EDLS launches ends up running
 ; elevated by accident. Uninstalling leaves %LOCALAPPDATA%\EDLS (settings and
 ; launcher.log) alone.
 
 #ifndef AppVersion
-  #define AppVersion "1.2.1"
+  #define AppVersion "1.3.0"
 #endif
 #ifndef FileVersion
   #define FileVersion AppVersion

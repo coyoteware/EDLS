@@ -9,7 +9,7 @@ The automated check (`python selftest.py`) only proves the window can be built w
 errors. It can't see the screen and it never starts real programs. Everything in this
 document needs a person.
 
-Written against version **1.2.1** (the badge in the bottom-left corner of the window).
+Written against version **1.3.0** (the badge in the bottom-left corner of the window).
 If your badge shows a different version, some details may have changed. Note the
 version in every report.
 
@@ -83,7 +83,7 @@ confused you, even if the test technically passed.
   already launch through **min-ed-launcher** (see the README's Prerequisites). Epic and
   Frontier-store licences are out of scope, because EDLS always launches through Steam.
   If that's all you have, do the harness tests and say so in your report.
-- Some of the 11 supported companion apps installed (optional, but needed for §8.15).
+- Some of the 14 supported companion apps installed (optional, but needed for §8.15).
 - Recommended: **Process Explorer** (free, from Microsoft Sysinternals). It shows which
   program started which, and is used in §8.14.
 
@@ -247,7 +247,9 @@ min-ed-launcher or real tools behave. Those tests are marked **R**.
 1. **Header.** One panel with cut corners. "ELITE : DANGEROUS · LAUNCH SUITE" on top,
    and the `CMDR` tag with your commander name in capitals underneath. The ringed-planet
    title mark spans both rows on the left. A gold line runs along the top edge (orange
-   in light mode) and stops at the cut corner. The panel is about 45% see-through.
+   in light mode) and stops at the cut corner. The panel is about 45% see-through. When a
+   newer EDLS is out, a green "UPDATE x.y.z AVAILABLE" badge sits at the right end of the
+   CMDR row (§8.20).
 2. *(The CMDR row is now part of the header, item 1.)*
 3. **SYSTEM STATUS.** One card per app, four per row. The order is Steam, Elite, then
    your companion apps in the order Settings lists them.
@@ -295,6 +297,7 @@ Card borders also tint green, orange or red to match the state.
 - **LAUNCH.** Runs the full sequence: Steam → game → enabled tools → watch the game →
   close the tools when the game exits → (if the setting is on) EDLS counts down 5 s and
   closes itself. While a session runs, the button reads "RUNNING..." and is disabled.
+  During the close countdown it reads **STAY OPEN**: click it and EDLS stays open.
   If the game hasn't appeared after **60 s**, the launch is cancelled and LAUNCH comes
   back. LAUNCH is also greyed out while the Elite card is starting the game on its own.
 - **SHUTDOWN.** Closes companion apps right now (which ones depends on the scope, §5.4),
@@ -313,7 +316,9 @@ The Settings toggle "Shutdown closes all enabled apps (not just those EDLS launc
 sets the scope:
 
 - **Off (default, "launched only").** SHUTDOWN and the end-of-session teardown close only
-  apps that this EDLS window started.
+  apps that this EDLS window started or took over. A tool that was already running when
+  you pressed LAUNCH (or its card's START) is taken over, so it's closed too. One you
+  open yourself mid-session is left alone.
 - **On ("all enabled").** They close every *enabled* companion app that's running,
   whoever started it.
 - Unticked (disabled) apps, Steam and the game are never closed, in either mode.
@@ -323,8 +328,24 @@ either way:
 
 | Toggle | Default | When on | When off |
 | --- | --- | --- | --- |
-| Close EDLS when the game exits | on | After the teardown: "EDLS will close in 5 seconds." → "Farewell, CMDR. o7" → the window closes. | "Session ended." EDLS stays open, LAUNCH comes back and the app list unlocks. |
-| Close EDLS after SHUTDOWN | off | After SHUTDOWN's teardown: the same 5 s countdown, then EDLS closes. The game keeps running. | EDLS stays open. During a session it logs "Waiting for Elite: Dangerous to close..." and handles the game exit as usual. |
+| Close EDLS when the game exits | on | After the teardown: "EDLS will close in 5 seconds." → "Farewell, CMDR. o7" → the window closes. STAY OPEN (the LAUNCH key) cancels it. | "Session ended." EDLS stays open, LAUNCH comes back and the app list unlocks. |
+| Close EDLS after SHUTDOWN | off | After SHUTDOWN's teardown: the same 5 s countdown (STAY OPEN cancels it), then EDLS closes. The game keeps running. | EDLS stays open. During a session it logs "Waiting for Elite: Dangerous to close..." and handles the game exit as usual. |
+
+If the countdown ends while a dialog is open (Settings, a popover, the file picker),
+EDLS doesn't close behind it. It logs "EDLS stayed open - a dialog was open." and
+carries on as if you'd clicked STAY OPEN.
+
+**Tools that need admin rights.** EDLS never runs as administrator. Some tools ask Windows
+for admin rights themselves; EDHM-UI-V3 does on any admin account with UAC on. The toggle
+"Ask for admin rights when a tool needs them" (default **on**) decides what happens:
+
+| | On (default) | Off |
+| --- | --- | --- |
+| Starting such a tool (LAUNCH or its card) | Windows shows its UAC prompt. Yes: the tool starts as administrator. No: the card shows Failed. | No prompt. The card shows Failed and the log says the tool needs administrator rights. |
+| Closing one EDLS can't close (teardown, SHUTDOWN, card STOP) | After the normal 3 s attempt, Windows asks once for all of them. Yes: an elevated copy of EDLS closes them the usual way (asked first, forced after 3 s). No: the cards show ERROR. | No prompt. The cards show ERROR (SC-16). |
+
+The prompt for closing names **EDLS.exe** (unknown publisher, because the build isn't
+signed). Steam and the game are never started or closed as administrator.
 
 ### 5.5 What a normal session logs
 
@@ -345,15 +366,22 @@ warnings, pink for errors.
 | Launching &lt;App&gt;... / &lt;App&gt; online. (PID …) | amber / gold | each enabled tool |
 | &lt;App&gt; already running - skipping. | dim | tool was already open |
 | Failed to launch &lt;App&gt;. | orange | tool couldn't start |
+| &lt;App&gt; needs administrator rights - Windows will ask. | amber | the tool asks for admin rights (EDHM-UI): the UAC prompt follows |
+| &lt;App&gt; not started - the administrator prompt was declined. | orange | you answered No to that prompt |
+| &lt;App&gt; needs administrator rights - not started. Turn on … | orange | same tool, with "Ask for admin rights when a tool needs them" off |
 | All systems nominal. | gold | |
 | Monitoring Elite: Dangerous... | dim | while you play |
 | Elite: Dangerous offline. | amber | game exited |
 | Closing third-party tools... / Stopping &lt;App&gt;... | amber | |
 | Third-party tools shut down. *or* No tools running. | gold / dim | everything closed / nothing to close |
-| Couldn't close &lt;App&gt; - it may be running as administrator. | red | a tool that wouldn't close (its card turns ERROR) |
+| Windows will ask for admin rights to close &lt;App&gt;. | amber | a tool that wouldn't close, with the admin toggle on: one UAC prompt for all of them |
+| The administrator prompt was declined. | orange | you answered No to that prompt |
+| Couldn't close &lt;App&gt; - it may be running as administrator. | red | a tool that still wouldn't close (its card turns ERROR); with the admin toggle off it adds a pointer to the setting |
 | Some tools could not be closed: &lt;App&gt;, &lt;App&gt;. | orange | replaces "Third-party tools shut down." when one failed |
 | EDLS will close in 5 seconds. | amber | "Close EDLS when the game exits" on |
 | Farewell, CMDR. o7 | gold | 4 s later; the window closes 1 s after that |
+| EDLS will stay open. | amber | you clicked STAY OPEN during the countdown |
+| EDLS stayed open - a dialog was open. | amber | the countdown ended while Settings or a popover was open |
 | Session ended. | gold | instead of the countdown, when that toggle is off |
 
 Other messages you'll meet:
@@ -402,11 +430,14 @@ Don't report these as bugs, unless they bother you as a player. That feedback is
 - Cards update within about 2 s while something is happening (a session, or just after
   a click) and within about 5 s when EDLS is idle.
 - When the game exits after a LAUNCH, EDLS closes the tools and then (by default)
-  **closes itself** after a 5 s countdown.
+  **closes itself** after a 5 s countdown (STAY OPEN cancels that).
 - Closing EDLS never closes Steam, the game or the tools.
 - The Elite card's START is "game only". It starts no tools and doesn't watch the game.
 - In "Status check: X of Y running", Y counts Steam + Elite + **every** app in
   Settings, whether it's enabled or not and whether its card is shown or not.
+- Under "launched only", a tool you opened before pressing LAUNCH is still closed at
+  the end: LAUNCH takes it over. That's also what lets a re-attach after reopening EDLS
+  (JR-04) clean up.
 - Only one EDLS runs at a time. Starting a second copy brings the first to the front (or
   flashes its taskbar button) and the second quits.
 - The window opens centred and sized to fit your screen. Its size and position aren't
@@ -439,7 +470,7 @@ About 30 minutes. Run it first on every new build, before anything else.
 
 These cover recent changes. Each one needs a person to look at it. RG-01 to RG-08 cover
 the first round (layout, background, the ToS fix). RG-09 onwards cover the fixes for the
-risks in [§12](#12-known-risk-areas) marked **Fixed — verify**.
+risks from [§12](#12-known-risk-areas).
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
@@ -461,6 +492,9 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify**.
 | RG-16 | P1 | A | Card logging: run CC-01 to CC-04. | Every card START/STOP leaves a log line, including the failures. |
 | RG-17 | P1 | A | Small screens, keyboard, startup lock, one copy: run UI-03, UI-04, UI-12, UI-24, AX-01, AX-02, ST-15. | Fits 1024×768. Tab focus visible. No resizing during the fade-in. Never two copies. |
 | RG-18 | P1 | H/R | This round (1.2.1): PR-10 (also works with the fake game open), LS-14, SE-20, SE-29, SE-35, SC-20, SC-16, and §3.5 | Steam is never asked to exit while the game runs. LAUNCH attaches to a running game without a second launch request. Quoted paths work. Steam and Elite can't be used as app names. An emptied app list stays empty. Tools are asked to close before they're forced. The installer installs, upgrades and uninstalls cleanly. |
+| RG-19 | P1 | H/A | This round (1.3.0): FR-01, FR-08, SE-10, SE-38, SE-46, LG-04, LS-35, SC-22, SQ-37 | Only EDMarketConnector, SrvSurvey and Odyssey Materials Helper start ticked, and only if installed. An upgrade adds new defaults unticked. Names show as typed. A renamed SrvSurvey is still found after a restart. EDLS never closes behind an open dialog. The log keeps your place. STAY OPEN cancels the close countdown. |
+| RG-20 | P1 | H/A | Late 1.3.0 additions: SE-04, SE-55, SE-51, UP-02, UP-03, CA-19, CA-21 and check g of §8.15 for your tools | Settings is landscape and fits 1024×768. Dragging a row sets the card and launch order, and can't be done mid-session. The update shows as a green badge on the CMDR name's row, at the right. With "Start tools minimized" on, tools that allow it start minimized. ED Galactic Memoir is found in Downloads. |
+| RG-21 | P1 | R | Polite closing: CA-03, SC-17, then check e of §8.15 for each tool you have | Odyssey Materials Helper closes with no popups. No tool's helpers are left in Task Manager. Tools that closed when asked don't log "didn't close when asked". |
 
 ---
 
@@ -470,7 +504,7 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify**.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| ST-01 | P1 | A | Delete the whole `%LOCALAPPDATA%\EDLS` folder → start EDLS | Window opens centred (1000×880, or smaller to fit your screen). The four sections fade in within half a second. Then "EDLS — First-Time Setup" opens by itself. The log shows "Elite: Dangerous Launch Suite ready." and, a few seconds later, "Status check: N of 13 running.". The folder now contains `settings.json` and `launcher.log`. |
+| ST-01 | P1 | A | Delete the whole `%LOCALAPPDATA%\EDLS` folder → start EDLS | Window opens centred (1000×880, or smaller to fit your screen). The four sections fade in within half a second. Then "EDLS — First-Time Setup" opens by itself. The log shows "Elite: Dangerous Launch Suite ready." and, a few seconds later, "Status check: N of 15 running.". The folder now contains `settings.json` and `launcher.log`. |
 | ST-02 | P1 | A | Normal start (setup already done) | No setup window. Nothing flickers, and no extra window or taskbar button flashes in the first second. (EDLS quietly pre-builds the Settings window off-screen.) |
 | ST-03 | P1 | R | Open Steam, the game and some tools by hand → start EDLS | Within about 5 seconds the cards show Online/Running for what's open. The Elite card shows QUIT IN-GAME. |
 | ST-04 | P1 | A | Idle → close with X | Closes straight away. The terminal returns to the prompt with no traceback. |
@@ -493,13 +527,14 @@ risks in [§12](#12-known-risk-areas) marked **Fixed — verify**.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "WELCOME TO EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is empty, with the default name as grey ghost text and the caret in the field. Toggles: show cards **on**, shutdown-all **off**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, light mode **off**. All 11 default apps are listed and ticked. Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, CANCEL, BEGIN. |
+| FR-01 | P1 | A | Fresh start (ST-01). Inspect the setup window. | Title "EDLS — First-Time Setup". "WELCOME TO EDLS, CMDR" and an intro mentioning "report issue". CMDR NAME is empty, with the default name as grey ghost text and the caret in the field. Toggles: show cards **on**, shutdown-all **off**, ask for admin rights **on**, start tools minimized **off**, close EDLS when the game exits **on**, close EDLS after SHUTDOWN **off**, check for updates **on**, light mode **off**. The app list sits to the right of the toggles. All 14 default apps are listed, all visible without scrolling. Only EDMarketConnector, SrvSurvey and Odyssey Materials Helper can start ticked, and only the ones installed on this PC are (R-26 fix). Every other default is unticked, even if it's installed. Buttons: + ADD, EDIT, — REMOVE, RESTORE DEFAULTS, OPEN LOG FOLDER, CANCEL, BEGIN. |
 | FR-02 | P1 | A | Enter a name → untick tools you don't have → Save → restart EDLS | The CMDR row shows the name in capitals. Unticked apps appear as dimmed DISABLED cards. After restart there's no setup window and everything is kept. |
 | FR-03 | P1 | A | Fresh start → close the setup window with Cancel, then repeat with Esc, then with X | The window closes and the main window works with defaults. SETTINGS opens the first-run version again. On the next start the setup window reappears. |
 | FR-04 | P2 | A | Turn AUTO START on → close EDLS → set `"setup_complete": false` in settings.json → start EDLS | The setup window opens and **no launch starts**. The log says "Auto-start skipped - finish first-time setup first." and never "Auto-start enabled — launching..." (R-34 fix). |
 | FR-05 | P2 | A | In the setup window, type a name, clear it again → BEGIN | The default name is used. A blank name is never saved. |
 | FR-06 | P2 | A | In the setup window, turn Light mode on → Save | The whole window switches to light. |
-| FR-07 | P3 | R | Leave all 11 ticked on a PC with only a few installed → LAUNCH | Each missing app logs "… not found - will be skipped." and shows "Not found". Record whether this pile of warnings is OK for a new user (R-26). |
+| FR-07 | P3 | R | Fresh start on a PC with only a few of the tools installed → BEGIN without changing the ticks → LAUNCH | Only the installed ones of EDMarketConnector, SrvSurvey and Odyssey Materials Helper were ticked, so there's no pile of "… not found - will be skipped." lines (R-26 fix). The other tools start unticked even when installed: tick them in Settings. One installed somewhere other than its default path: tick it and set its path. |
+| FR-08 | P1 | A | **Upgrade:** start 1.3.0 on a 1.2.1 `settings.json` (or delete the Elite Studio, EDDI and ED Galactic Memoir entries from `settings.json` first) | Elite Studio, EDDI and ED Galactic Memoir join the end of the app list, all three unticked, even if they're installed. Every other tick is as you left it. An app you'd already added yourself as "EDDI" isn't added a second time. A VoiceAttack still on the old default path now finds VoiceAttack 2 as well (CA-09). |
 
 ### 8.3 Layout and visuals (UI)
 
@@ -516,8 +551,8 @@ Do this section in **both** themes.
 | UI-07 | P2 | A | Ultrawide (e.g. 3440×1440), maximized | The banner stops growing taller (about 88 px). The background covers the window, cropped but not stretched. Cards are wide but readable. |
 | UI-08 | P2 | A | Two monitors with different scaling: drag the window between them | It re-renders at the right size on each, with no blurry text and no broken layout. |
 | UI-09 | P1 | A | Header at minimum width and maximized | The title and CMDR name are centred and never overlap the title mark, which spans both rows on the left. Gold top line (orange in light mode). |
-| UI-10 | P2 | A | Set a 60-character CMDR name | Record: is it cut off? Does it widen the window or push things off-screen? |
-| UI-11 | P1 | A | Card grid | Four per row. Order: Steam, Elite, then Settings order. All cards the same height. With few cards they sit at the top with empty space below. |
+| UI-10 | P2 | A | Paste a 60-character CMDR name into Settings → Save. Then put a 60-character `"cmdr_name"` straight into `settings.json` → start EDLS. | Settings stops taking characters at 36. From `settings.json`: the log says "settings.json: 'cmdr_name' is longer than 36 characters - shortened." and the CMDR row shows the first 36. With ordinary names the window doesn't get wider. |
+| UI-11 | P1 | A | Card grid | Four per row. Order: Steam, Elite, then the enabled apps in Settings order, then the disabled ones in Settings order. All cards the same height. With few cards they sit at the top with empty space below. |
 | UI-12 | P1 | H | Add 20+ dummy apps (copies with different names) | The window doesn't grow. The cards scroll inside SYSTEM STATUS with a thin scrollbar, and the background still shows behind them (no dark box). The mouse wheel scrolls the cards (R-18 fix). |
 | UI-13 | P2 | H | Add an app with a 40-character name | The card name is cut short with "…". The state text stays readable. Settings shows the full name. |
 | UI-14 | P2 | A | Find the OdysseyMaterials card | It reads "ODYSSEY MATS HELPER". Settings still lists it as "OdysseyMaterials". |
@@ -529,7 +564,7 @@ Do this section in **both** themes.
 | UI-20 | P2 | A | Hover and press each bottom button. Start a session to see LAUNCH disabled. | Hover brightens the border and text. Pressing darkens it. LAUNCH greys out and reads "RUNNING...". In light mode the buttons are pale and LAUNCH is solid orange; disabled LAUNCH is pale grey. |
 | UI-21 | P2 | A | Toggle AUTO START | Off: grey like SETTINGS. On: orange border and text. The state survives a restart. |
 | UI-22 | P2 | A | Click "report issue" | Your browser opens `https://github.com/coyoteware/EDLS/issues`. |
-| UI-23 | P3 | A | Look at the version badge | Shows the version you were told you're testing (1.2.1 at the time of writing). |
+| UI-23 | P3 | A | Look at the version badge | Shows the version you were told you're testing (1.3.0 at the time of writing). |
 | UI-24 | P2 | A | Start EDLS and try to maximize or resize it immediately (double-click the title bar or drag an edge during the half-second fade-in), then again right after | During the fade-in the window doesn't resize. Right after, it resizes normally and every panel sits in the right place (R-21 fix). |
 | UI-25 | P3 | A | Switch Windows between dark and light mode | Record: the window title bar follows Windows, while the content follows EDLS's theme. Note any ugly clash. |
 | UI-26 | P3 | A | Windows high-contrast mode | Record whether EDLS is still usable. |
@@ -542,20 +577,25 @@ Do this section in **both** themes.
 | LS-01 | P1 | R | Steam open, tools installed → LAUNCH | Log matches [§5.5](#55-what-a-normal-session-logs). Elite card goes Waiting... (orange) then Running. Each tool goes Launching... then Online and opens once. LAUNCH reads "RUNNING..." and is disabled. No black console windows flash. |
 | LS-02 | P1 | R | Steam **closed** → LAUNCH | Steam card goes Launching... then Online within about 20 s. The game starts through min-ed-launcher. The rest is as LS-01. |
 | LS-03 | P2 | R | Make Steam slow to start (cold boot, pending Steam update, or the Steam login screen) → LAUNCH | After 20 s the orange warning "Steam not up after 20s - continuing anyway." appears and the Steam card shows Waiting.... Once the game appears, the Steam card corrects itself to Online. |
-| LS-04 | P1 | R | Mid-session → in-game menu → **Exit to desktop** ("Close EDLS when the game exits" on, the default) | Within about 2 s: "Elite: Dangerous offline." → "Closing third-party tools..." → "Stopping …" for each tool → "Third-party tools shut down." → "EDLS will close in 5 seconds." → about 4 s later "Farewell, CMDR. o7" → the window closes about 1 s after that. LAUNCH stays greyed during the countdown. Tools close according to scope (§8.5). **Steam stays open.** No traceback. |
+| LS-04 | P1 | R | Mid-session → in-game menu → **Exit to desktop** ("Close EDLS when the game exits" on, the default) | Within about 2 s: "Elite: Dangerous offline." → "Closing third-party tools..." → "Stopping …" for each tool → "Third-party tools shut down." → "EDLS will close in 5 seconds." → about 4 s later "Farewell, CMDR. o7" → the window closes about 1 s after that. During the countdown LAUNCH reads STAY OPEN (LS-35). Tools close according to scope (§8.5). **Steam stays open.** No traceback. |
 | LS-05 | P1 | R | Mid-session → exit to the **main menu** only | Nothing happens. Tools stay open and EDLS keeps watching. |
 | LS-06 | P1 | H | LS-04 with the harness: close the fake game | Same sequence as LS-04. |
 | LS-07 | P1 | A | Give one enabled tool a wrong path → LAUNCH | "… not found - will be skipped." The card shows Not found. Everything else launches. |
 | LS-08 | P1 | A | Open a tool yourself → LAUNCH | "… already running - skipping." The card shows Online. No second copy opens. |
 | LS-09 | P2 | A | Mid-session, close one tool yourself | Its card turns Offline within about 2 s. Nothing else happens and the session continues. |
 | LS-10 | P2 | H | Point a dummy app at a `.txt` file → LAUNCH | "Failed to launch …" (orange). The card shows Failed (red). The rest of the sequence continues. |
-| LS-11 | P2 | H | Right-click `DummyC.exe` → Properties → Compatibility → tick "Run this program as an administrator" → tick Dummy C in Settings → LAUNCH (EDLS not elevated) | No crash. The card shows Failed with a warning in the log. Record whether a UAC prompt appears. Untick the compatibility box afterwards. |
+| LS-11 | P1 | H | Right-click `DummyC.exe` → Properties → Compatibility → tick "Run this program as an administrator" → tick Dummy C in Settings → LAUNCH (EDLS not elevated, admin toggle on) → answer **Yes** to the UAC prompt | "Dummy C needs administrator rights - Windows will ask." → UAC prompt → "Dummy C online. (PID …)". The card shows Online, and Task Manager → Details shows Dummy C Elevated: Yes and EDLS Elevated: No. The tools after Dummy C in the list wait until you answer. Keep the compatibility box ticked for LS-32, LS-33, SC-21 and CC-20, and untick it afterwards. |
+| LS-32 | P1 | H | LS-11, but answer **No** to the UAC prompt | Orange "Dummy C not started - the administrator prompt was declined." The card shows Failed, and the rest of the sequence carries on. |
+| LS-33 | P1 | H | LS-11 with "Ask for admin rights when a tool needs them" **off** | No UAC prompt. Orange "Dummy C needs administrator rights - not started. Turn on 'Ask for admin rights' in Settings, or start it yourself." The card shows Failed. |
+| LS-34 | P1 | R | Real EDHM-UI-V3 on an admin account, game in fullscreen → LAUNCH | The UAC prompt appears just after the game process starts. Record whether it takes the game out of fullscreen or focus, and whether EDHM-UI works normally as administrator. |
+| LS-35 | P1 | H | Default settings → LAUNCH → close the fake game → during "EDLS will close in 5 seconds." click **STAY OPEN** (the LAUNCH key). Repeat, clicking it just after "Farewell, CMDR. o7". | "EDLS will stay open." EDLS stays open, the key goes back to LAUNCH and the app list unlocks. LAUNCH then starts a new session normally. Check the STAY OPEN key in both themes (R-36 fix). |
+| LS-36 | P2 | R | Odyssey Materials Helper ticked and first in the app list, other tools after it → LAUNCH → as soon as its card shows Launching..., press SHUTDOWN | "SHUTDOWN pressed - no more tools will be started this session." SHUTDOWN waits for the helper to come up, then closes it. None of the tools after it start. The game keeps running and the session goes on as after any SHUTDOWN (R-44 fix). |
 | LS-12 | P1 | A | Double-click LAUNCH fast | Only one sequence runs: one set of log lines and one game launch request. |
 | LS-13 | P1 | R | Make the game launch fail (e.g. cancel the min-ed-launcher or Steam login, or go offline so authentication fails) → LAUNCH | After 60 s: red "Elite: Dangerous didn't start within 60s - launch cancelled. Press LAUNCH to try again.". The Elite card shows Failed, no tools start, and LAUNCH comes back (R-10 fix). Fix the cause → LAUNCH works. |
 | LS-31 | P1 | R | **Cold start:** reboot, Steam closed → LAUNCH | The game appears within the 60 s. Record how long it took. If it was cancelled on a normal cold start, report it: the limit is too short for your PC (R-35). |
 | LS-14 | P2 | R | Start the game from Steam directly (not EDLS) → in EDLS press LAUNCH | EDLS sends Steam no second launch request: the log says "Elite: Dangerous is already running - attaching.", and no error popup, second launcher or second game window appears (R-02 fix). It picks up the running game straight away, starts the tools, watches the game, and tears down when it exits. |
 | LS-15 | P2 | R | LAUNCH → in game → close EDLS (X) → reopen EDLS | The game and tools keep running. The reopened EDLS shows them Online/Running. Then press SHUTDOWN: with "launched only" you get "No tools running." (this new window launched nothing, by design); with "all enabled" the enabled tools close. |
-| LS-16 | P2 | R | Continue from LS-15: press LAUNCH to re-attach → play → exit the game | Teardown runs and EDLS closes. Note which tools closed (with "launched only", tools that were already open are closed too; see R-03). |
+| LS-16 | P2 | R | Continue from LS-15: press LAUNCH to re-attach → play → exit the game | Teardown runs and EDLS closes. Note which tools closed (with "launched only", tools that were already open are closed too: LAUNCH took them over). |
 | LS-17 | P2 | R | Play a session of 2+ hours → exit | Teardown still works at the end. Note EDLS memory (§8.16). |
 | LS-18 | P2 | R | Mid-session → put the PC to sleep (or hibernate) → wake → keep playing → exit | EDLS is still watching, and teardown happens at exit. |
 | LS-19 | P3 | R | Mid-session → unplug the network for a minute | No effect on EDLS. |
@@ -566,9 +606,9 @@ Do this section in **both** themes.
 | LS-24 | P2 | A | On a Windows account that has never run Steam (or a VM without Steam) → LAUNCH | The Steam card shows Not found. Red "Steam does not appear to be installed.". LAUNCH becomes clickable again. Nothing else starts. |
 | LS-25 | P3 | A | Uninstall Steam but leave its registry entries (VM only) → LAUNCH | Record. Look for endless waiting or Windows "pick an app to open this link" prompts. |
 | LS-26 | P2 | H | LAUNCH → open the fake game → close it the moment the tools appear | Teardown runs, the tools close, EDLS closes. No errors. |
-| LS-27 | P2 | A | Enable all 11 defaults plus several dummies → LAUNCH | Everything starts. Note the total time and any app that fails to start when many start at once. |
+| LS-27 | P2 | A | Enable all 14 defaults plus several dummies → LAUNCH | Everything starts. Note the total time and any app that fails to start when many start at once. |
 | LS-28 | P1 | H | Settings → "Close EDLS when the game exits" **off** → LAUNCH → open the fake game → close it | Teardown runs, then "Session ended.". **No countdown**: EDLS stays open, LAUNCH comes back, and the app list in Settings is editable again. LAUNCH again works. |
-| LS-29 | P2 | H | Default settings → LAUNCH → close the fake game → during "EDLS will close in 5 seconds." close the window yourself | It closes cleanly with no traceback, and nothing else happens afterwards. Also check that during the countdown LAUNCH is greyed and clicking SETTINGS still works. |
+| LS-29 | P2 | H | Default settings → LAUNCH → close the fake game → during "EDLS will close in 5 seconds." close the window yourself | It closes cleanly with no traceback, and nothing else happens afterwards. Also check that during the countdown LAUNCH reads STAY OPEN and clicking SETTINGS still works. |
 | LS-30 | P1 | H | LAUNCH and don't open the fake game for 60 s → then open it | At 60 s the launch is cancelled exactly as in LS-13 and LAUNCH comes back. When you open the fake game, the Elite card flips to Running within about 5 s, with no tools started. LAUNCH then re-attaches. |
 
 ### 8.5 Shutdown scope (SC)
@@ -582,7 +622,7 @@ running.
 | --- | --- | --- | --- | --- |
 | SC-01 | P1 | App started by LAUNCH | Closes | Closes |
 | SC-02 | P1 | App started from its card's START button | Closes | Closes |
-| SC-03 | P1 | App **you** opened before pressing LAUNCH (log: "already running - skipping") | Stays open per the README (**R-03**: suspected to close) | Closes |
+| SC-03 | P1 | App **you** opened before pressing LAUNCH (log: "already running - skipping") | Closes: LAUNCH took it over | Closes |
 | SC-04 | P1 | App you opened yourself during the session | Stays open | Closes |
 | SC-05 | P1 | App you opened yourself, no LAUNCH at all → SHUTDOWN | Stays open. Log: "No tools running." | Closes |
 | SC-06 | P1 | Unticked (disabled) app that's running | Stays open | Stays open |
@@ -600,11 +640,15 @@ More scope tests:
 | SC-18 | P1 | H | "Close EDLS after SHUTDOWN" **on**. Mid-session → SHUTDOWN | Tools close → the "quit in-game" line → "EDLS will close in 5 seconds." → Farewell → EDLS closes. **The fake game keeps running.** Reopen EDLS: the Elite card shows Running. |
 | SC-19 | P2 | A | "Close EDLS after SHUTDOWN" on, idle with no game → SHUTDOWN | Tools close (or "No tools running."), no "quit in-game" line, then the countdown and EDLS closes. |
 | SC-20 | P1 | H | Tick Dummy A and Dummy Stubborn. Idle: Dummy Stubborn's START, then its STOP. Then LAUNCH → open the fake game → close the fake game. | STOP: "Stopping Dummy Stubborn..." → about 3 s → "Dummy Stubborn stopped.". Teardown: Dummy A closes at once (it accepted being asked); Dummy Stubborn stays up about 3 s, then is force-closed. Both cards go Offline and the log says "Third-party tools shut down.". `launcher.log` has "Dummy Stubborn didn't close when asked - killing it." each time. The teardown takes at most about 3 s longer than before, however many tools refuse (R-17 change). |
-| SC-13 | P2 | H | Double-click SHUTDOWN | One round of "Stopping …" lines. |
+| SC-13 | P2 | H | Double-click SHUTDOWN | One round of "Stopping …" lines. The second click logs a dim "Already closing the tools." (R-42 fix). |
 | SC-14 | P2 | A | Idle with nothing running → SHUTDOWN | "No tools running." |
 | SC-15 | P2 | H | LAUNCH → while it's waiting for the game, press SHUTDOWN → then open the fake game | SHUTDOWN closes per scope ("launched only" usually has nothing to close yet). LAUNCH keeps waiting. Once the fake game opens, tools start normally. |
-| SC-16 | P1 | H | EDLS not elevated. Right-click `DummyA.exe` → Run as administrator → wait for its card to show Online → press its card STOP. Then switch scope to "all enabled" → SHUTDOWN. | EDLS can't close it. After STOP (about 3 s: EDLS first waits for it to close by itself): red "Couldn't close Dummy A - it may be running as administrator.", and the card shows **Error** with a red **ERROR** button. After SHUTDOWN, the summary says "Some tools could not be closed: Dummy A." instead of "Third-party tools shut down." (R-11 fix). Close the dummy yourself: the card goes to Offline within about 5 s. |
-| SC-17 | P2 | R | Tools that run several processes (see §8.15) → teardown | Task Manager shows no leftover processes from those tools. |
+| SC-21 | P1 | H | Admin toggle **on**. Start Dummy C as administrator (LS-11) and run Dummy A as administrator too → press Dummy C's STOP → answer Yes. Then start Dummy C again → switch scope to "all enabled" → SHUTDOWN → answer Yes. Repeat SHUTDOWN, answering No. | STOP: "Stopping Dummy C..." → about 3 s → "Windows will ask for admin rights to close Dummy C." → prompt (EDLS.exe) → "Dummy C stopped." SHUTDOWN: the other tools close first, then **one** prompt naming both dummies; both cards go Offline and "Third-party tools shut down." Answering No: "The administrator prompt was declined.", both cards show ERROR, and "Some tools could not be closed: …". No console window flashes. |
+| SC-22 | P2 | H | "Close EDLS after SHUTDOWN" **on**. Mid-session → SHUTDOWN → click STAY OPEN during the countdown → later close the fake game | "EDLS will stay open.", then "Waiting for Elite: Dangerous to close...". The key goes back to "RUNNING..." (the session is still on). At game exit the session ends as usual: teardown, then the countdown if "Close EDLS when the game exits" is on. |
+| SC-16 | P1 | H | Admin toggle **off**. EDLS not elevated. Right-click `DummyA.exe` → Run as administrator → wait for its card to show Online → press its card STOP. Then switch scope to "all enabled" → SHUTDOWN. | EDLS can't close it. After STOP (about 3 s: EDLS first waits for it to close by itself): red "Couldn't close Dummy A - it may be running as administrator. Turn on 'Ask for admin rights' in Settings to let EDLS close it.", and the card shows **Error** with a red **ERROR** button. After SHUTDOWN, the summary says "Some tools could not be closed: Dummy A." instead of "Third-party tools shut down." (R-11 fix). Close the dummy yourself: the card goes to Offline within about 5 s. |
+| SC-17 | P2 | R | Tools that run several processes (see §8.15) → teardown | Task Manager shows no leftover processes from those tools, and their cards stay Offline. EDLS asks the main process to close and lets its same-name helpers follow (R-41). |
+| SC-23 | P1 | H | Dummy Stubborn running (started by EDLS) → SHUTDOWN → close EDLS's window within a second. Then start EDLS again straight away. | The window disappears at once, and about 3 s later Dummy Stubborn is force-closed anyway. `launcher.log` ends with "Dummy Stubborn didn't close when asked - killing it." and "Third-party tools shut down.". The new EDLS opens a window normally (R-43 fix). Repeat with the card's STOP instead of SHUTDOWN: the same, with `launcher.log` ending "Dummy Stubborn stopped." |
+| SC-24 | P2 | H | Admin toggle **on**. Dummy C running as administrator (LS-11) → SHUTDOWN → close EDLS's window within a second | No UAC prompt appears after the window has gone. Dummy C keeps running, and `launcher.log` says EDLS couldn't close it (R-43 fix). |
 
 ### 8.6 Steam and the game are never closed (PR)
 
@@ -632,8 +676,8 @@ Every test here is P1. **Any failure is a Blocker.**
 | CC-02 | P1 | A | Companion app STOP | "Stopping X..." → "X stopped.". The app closes and the card shows Stopped. The window stays responsive while it closes. |
 | CC-03 | P2 | A | START on an app whose path is wrong | The card shows **Not found** and the log says "X not found - check its path in Settings." (R-12 fix). Point it at a `.txt` file instead: the card shows **Failed** with "Couldn't start X (see launcher.log).". |
 | CC-04 | P2 | A | Close an app yourself, then immediately (before its card catches up) press STOP | "X wasn't running." The card shows Stopped. Nothing else closes. |
-| CC-05 | P2 | A | Open an app yourself, then immediately press START on its card | No second copy. "X is already running." The card shows Online. (EDLS now counts it as one it launched, R-03.) |
-| CC-06 | P2 | A | Click START/STOP on one card 10 times fast | No crash and no extra copies. Within a few seconds the card shows the true state. |
+| CC-05 | P2 | A | Open an app yourself, then immediately press START on its card | No second copy. "X is already running." The card shows Online. (EDLS takes it over: SHUTDOWN treats it as one it launched.) |
+| CC-06 | P2 | A | Click START/STOP on one card 10 times fast | No crash and no extra copies. A click while the app is still starting or closing gets a dim "X is busy - wait for it to finish." and does nothing (R-42 fix). Within a few seconds the card shows the true state. |
 | CC-07 | P1 | R | Steam closed → Steam card START | "Launching Steam..." → "Steam online. (PID …)". The card shows Online and Steam opens. |
 | CC-08 | P3 | R | Steam START when Steam takes more than 20 s (e.g. a big update) | "Steam did not start within 20s." (red), card shows Failed. When Steam does open, the card flips to Online by itself. |
 | CC-09 | P1 | R | Game closed → Elite card START | Dim "Starting the game only …" line → Waiting... (button greyed "STARTING") → Running. **No tools start.** EDLS doesn't run a session. |
@@ -645,7 +689,10 @@ Every test here is P1. **Any failure is a Blocker.**
 | CC-15 | P1 | H | Elite card START → while it's waiting, look at LAUNCH and click it | LAUNCH is greyed. Clicking it logs "The game is already being started from its card - wait for it to finish." and nothing launches. One launch request only (R-09 fix). LAUNCH returns once the card is done. |
 | CC-16 | P2 | H | Mid-session: STOP a dummy → START it again → later close it yourself → end the session | Stop and start work. After you close it yourself, its card goes to Offline within about 2 s (R-16 fix). At the end of the session nothing complains. |
 | CC-17 | P3 | A | Look at an unticked app's card | It has no button, so it can't be started from the card. |
-| CC-18 | P1 | H | Produce an ERROR card (SC-16) → click **ERROR** while the dummy still runs as admin → then close EDLS, start it again as administrator and press STOP on that card | ERROR click: "Stopping …" and the same "Couldn't close …" line; the card stays Error. As administrator, STOP closes it and the card shows Stopped. |
+| CC-20 | P1 | H | Admin toggle on, Dummy C set to run as administrator (LS-11) → click its card START twice quickly → answer Yes | One UAC prompt, one copy. The window stays responsive while the prompt is up, and the card shows Launching... then Online. |
+| CC-21 | P1 | H | Admin toggle on, Dummy C running as administrator (LS-11) → click its card STOP twice quickly → answer Yes | One "Stopping Dummy C...", a dim "Dummy C is busy - wait for it to finish." for the second click, and **one** UAC prompt. "Dummy C stopped." (R-42 fix). |
+| CC-22 | P2 | H | Dummy Stubborn and Dummy A running, scope "all enabled" → Dummy Stubborn's STOP → straight away SHUTDOWN | SHUTDOWN waits for the card's STOP to finish (about 3 s), then closes Dummy A. Dummy Stubborn is stopped once: one "Stopping Dummy Stubborn..." line (R-42 fix). |
+| CC-18 | P1 | H | Admin toggle off. Produce an ERROR card (SC-16) → click **ERROR** while the dummy still runs as admin → then close EDLS, start it again as administrator and press STOP on that card | ERROR click: "Stopping …" and the same "Couldn't close …" line; the card stays Error. As administrator, STOP closes it and the card shows Stopped. |
 | CC-19 | P1 | H | LAUNCH (fake game not open yet) → click the Elite card's greyed STARTING. Open the fake game → click its greyed QUIT IN-GAME. Close the fake game → click START straight away, and again after 3 s. | STARTING: "The game is already starting.". QUIT IN-GAME: "EDLS doesn't close Elite: Dangerous - quit from the in-game menu.". Straight after closing: "Give the game a moment before starting it again." and nothing starts. After 3 s, START works (R-09 fix). |
 
 ### 8.8 Live status (RF)
@@ -677,7 +724,7 @@ about every 5 s otherwise.
 | SE-01 | P1 | A | SETTINGS | Opens quickly (under half a second). Title "EDLS — Settings", heading "S E T T I N G S". It shows the current values. It's styled like the main window: mono text, square tick boxes, and chamfered buttons with an orange or gold SAVE. Only the Windows title bar looks standard. |
 | SE-02 | P1 | A | Change several things → Cancel. Repeat with Esc and with X. | Nothing is saved. Check by reopening, and again after a restart. |
 | SE-03 | P1 | A | Change several things → Save | Applied straight away, and still there after a restart. |
-| SE-04 | P2 | A | Resize the Settings window | It can't go below about 640×560. The table grows and the buttons stay visible. On a 768-pixel-high screen it opens fully on screen. |
+| SE-04 | P2 | A | Resize the Settings window | It's landscape: CMDR name and toggles on the left, the app list on the right. It can't go below about 940×570 (940×640 for first-time setup). The app list grows with the window, the toggles keep their width, and the buttons stay visible. Only "Shutdown closes all enabled apps…" wraps onto a second line. On a 1024×768 screen it opens fully on screen. |
 | SE-05 | P2 | A | Press Enter while typing in CMDR NAME | Record. It probably saves and closes immediately; say whether that surprised you. |
 
 **CMDR name**
@@ -689,23 +736,26 @@ about every 5 s otherwise.
 | SE-54 | P1 | A | With the default name, open Settings and look at CMDR NAME. Type a letter, then delete it. | The field is empty with the default name in grey and the caret blinking at the start. Typing replaces the grey text; emptying the field brings it back. A custom name shows as normal text. |
 | SE-08 | P2 | A | "  Jameson  " with spaces at the ends → Save | Saved as "Jameson". |
 | SE-09 | P2 | A | Accented letters, Cyrillic, Chinese/Japanese, an emoji | Shown correctly in the CMDR row. Record any boxes or missing characters. |
-| SE-10 | P3 | A | `<b>Bold</b>` and `A & B <C>` | Record (R-19): shown literally, or turned into formatting or swallowed? |
+| SE-10 | P3 | A | `<b>Bold</b>` and `A & B <C>` | Shown literally in the CMDR row (in capitals: `<B>BOLD</B>`), never as formatting. Same as an app name, on its card (R-19 fix). |
 | SE-11 | P2 | A | A 60+ character name | See UI-10. |
 
 **Toggles**
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| SE-12 | P1 | A | Click each of the five toggles | The four on/off settings are chamfered switches: the knob slides across, the OFF/ON label swaps, and the knob turns gold (orange in light mode). Light mode is a wider moon/sun switch: the orange knob slides over and its icon turns from moon to sun. Save keeps it. Cancel undoes it. A mouse click doesn't leave a focus ring behind. |
+| SE-12 | P1 | A | Click each of the eight toggles | The seven on/off settings are chamfered switches: the knob slides across, the OFF/ON label swaps, and the knob turns gold (orange in light mode). Light mode is a wider moon/sun switch: the orange knob slides over and its icon turns from moon to sun. Save keeps it. Cancel undoes it. A mouse click doesn't leave a focus ring behind. |
 | SE-13 | P2 | A | Keyboard only: Tab through the window and change each toggle | Tab reaches every toggle and a dashed orange outline shows which one has focus. Space or Enter flips it; ← turns it off, → on (R-20 fix). |
 | SE-14 | P1 | A | "Show cards for apps that aren't enabled" on and off → Save | Cards for unticked apps appear and disappear (UI-15, UI-16). |
 | SE-52 | P1 | A | Look at the toggles "Close EDLS when the game exits" and "Close EDLS after SHUTDOWN" | Defaults: on and off. They survive Save, restart and RESTORE DEFAULTS (back to on/off). What they do: LS-04, LS-28, SC-12, SC-18. |
+| SE-57 | P1 | A | Look at "Start tools minimized" and hover its "i" | Default off. It survives Save and restart; RESTORE DEFAULTS turns it off again. The hover help says some tools ignore it (launchers like Odyssey Materials Helper, splash screens, tools that reopen where you left them) and that running tools aren't touched. What it does: [§8.15](#815-companion-app-compatibility-ca) check g, CA-19. |
 
 **Companion apps list**
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| SE-15 | P1 | A | Look at the list | Columns: ON tick box, NAME, PATH (no process column). Default paths show placeholders like `%ProgramFiles(x86)%\…`. SrvSurvey's path is blank because EDLS finds it by itself. |
+| SE-15 | P1 | A | Look at the list | "DRAG TO REORDER" in grey at the top right of the list. Columns: ON tick box, NAME, PATH (no process column). Default paths show placeholders like `%ProgramFiles(x86)%\…`. The paths of SrvSurvey, OdysseyMaterials, VoiceAttack and EDDI are blank because EDLS finds them by itself. |
+| SE-55 | P1 | A | Drag a row (by its name or path) up the list, then down, then to above the first row and below the last. Start one more drag and drop it back where it was. Do it in both themes. | While you drag, an orange line shows where the row will land, and there's no line when it would land where it already is. The row moves there, keeps its tick and path, and stays selected. The list doesn't jump. Save: the cards and LAUNCH follow the new order (UI-11), and it's kept after a restart. Cancel: the old order. Record whether the drag feels obvious. |
+| SE-56 | P2 | A | Select a row → Ctrl+Down, Ctrl+Up, including at the top and bottom of the list | The row moves one place and stays selected. At the ends nothing happens. Save keeps the order. |
 | SE-16 | P1 | A | Untick an app → Save → LAUNCH | It stays unticked after a restart and LAUNCH doesn't start it. |
 | SE-17 | P1 | H | + ADD → Browse… → pick `DummyA.exe` | The file picker shows `.exe` files (with an "All files" option). The path fills in. Save adds the row, ticked. After saving Settings the card appears and LAUNCH starts it. |
 | SE-18 | P1 | H | + ADD → type the path by hand | Same as SE-17. |
@@ -725,20 +775,20 @@ about every 5 s otherwise.
 | SE-32 | P2 | A | EDIT and — REMOVE with no row selected | Nothing happens and there's no error. |
 | SE-33 | P1 | A | Remove a custom app → Save | Gone from the list and from the cards. |
 | SE-34 | P1 | A | Remove a default app (e.g. EDCoPilot) → Save → restart EDLS | It stays removed and doesn't come back. |
-| SE-35 | P2 | A | Remove **every** app → Save → restart EDLS | The list stays empty: only the Steam and Elite cards are left. RESTORE DEFAULTS → Save brings the 11 back (R-06 fix). |
+| SE-35 | P2 | A | Remove **every** app → Save → restart EDLS | The list stays empty: only the Steam and Elite cards are left. RESTORE DEFAULTS → Save brings the 14 back, with only EDMarketConnector, SrvSurvey and Odyssey Materials Helper ticked, and only if installed (R-06 fix). |
 | SE-36 | P2 | A | After SE-34, add an app with the removed default's exact name and path | Works and launches. |
 | SE-37 | P2 | A | Rename EDMarketConnector to "EDMC" → Save → restart → LAUNCH | Still launches. The original "EDMarketConnector" row doesn't reappear. |
-| SE-38 | P2 | A | Rename SrvSurvey (path blank) → Save → LAUNCH → restart EDLS → LAUNCH | Expected: found both times. Record (R-07: suspected "Not found" after the restart). |
+| SE-38 | P2 | A | Rename SrvSurvey (path blank) → Save → LAUNCH → restart EDLS → LAUNCH | Found both times: the renamed app keeps its auto-find after the restart (R-07 fix). |
 | SE-39 | P2 | A | Clear the path of a default app that has one (e.g. EDMarketConnector) → Save → reopen | The default path comes back. Record whether that's confusing. |
 | SE-40 | P3 | A | EDIT a default app whose path has a `%…%` placeholder → Browse… | Record which folder the file picker opens in. |
-| SE-41 | P1 | A | RESTORE DEFAULTS → **CANCEL**. Then RESTORE DEFAULTS → **RESET** → Cancel. Then RESTORE DEFAULTS → RESET → Save. | The confirmation is a chamfered popover over Settings, and Enter picks CANCEL. CANCEL: nothing changes. RESET: every field resets in the window (the name field empties to the grey default, default toggles, the 11 defaults ticked, custom apps gone). Cancel: nothing saved. Save: the defaults are kept after a restart. AUTO START is unchanged. |
-| SE-42 | P2 | A | Remove some defaults → Save → RESTORE DEFAULTS → Yes → Save → restart | All 11 are back and stay back. |
+| SE-41 | P1 | A | RESTORE DEFAULTS → **CANCEL**. Then RESTORE DEFAULTS → **RESET** → Cancel. Then RESTORE DEFAULTS → RESET → Save. | The confirmation is a chamfered popover over Settings, and Enter picks CANCEL. CANCEL: nothing changes. RESET: every field resets in the window (the name field empties to the grey default, default toggles, the 14 defaults with only EDMarketConnector, SrvSurvey and Odyssey Materials Helper ticked (if installed), custom apps gone). Cancel: nothing saved. Save: the defaults are kept after a restart. AUTO START is unchanged. |
+| SE-42 | P2 | A | Remove some defaults → Save → RESTORE DEFAULTS → Yes → Save → restart | All 13 are back and stay back. |
 | SE-43 | P2 | A | OPEN LOG FOLDER | Explorer opens `%LOCALAPPDATA%\EDLS`. |
-| SE-44 | P2 | H | 25+ apps in the list | The list scrolls. Save works. (Cards: UI-12.) |
+| SE-44 | P2 | H | 25+ apps in the list. Drag a row from the top to the bottom. | The list scrolls, and scrolls by itself while you hold a dragged row near its top or bottom edge. Save works. (Cards: UI-12.) |
 | SE-45 | P2 | H | Open Settings mid-session and change things other than the app list (name, theme, toggles, scope) | Allowed. Changes take effect straight away for the rest of the session. See §9. |
-| SE-51 | P1 | H | LAUNCH → open Settings → try every way of changing the app list: + ADD, EDIT, double-click a row, — REMOVE, RESTORE DEFAULTS, Space/Enter/Delete on a row, the ON boxes | The list header says "LOCKED WHILE A SESSION IS RUNNING" and the ON boxes are greyed. Every attempt shows the popup "The companion app list is locked while a session is running…" and changes nothing. The activity log gets **one** warning per Settings opening, not one per attempt. After the game closes (with "Close EDLS when the game exits" off), reopen Settings: it's unlocked (R-15 fix). |
+| SE-51 | P1 | H | LAUNCH → open Settings → try every way of changing the app list: + ADD, EDIT, double-click a row, — REMOVE, RESTORE DEFAULTS, Space/Enter/Delete on a row, Ctrl+Up/Down, dragging a row, the ON boxes | The list header says "LOCKED WHILE A SESSION IS RUNNING" instead of "DRAG TO REORDER", and the ON boxes are greyed. A row can't be dragged. Every other attempt shows the popup "The companion app list is locked while a session is running…" and changes nothing. The activity log gets **one** warning per Settings opening, not one per attempt. After the game closes (with "Close EDLS when the game exits" off), reopen Settings: it's unlocked (R-15 fix). |
 | SE-53 | P2 | A | In the app list, select a row with the arrow keys → Space → Enter → Delete | Space ticks or unticks ON; Enter opens the edit window; Delete removes the row (R-20 fix). |
-| SE-46 | P2 | H | Leave Settings open while the fake game closes (session ends, countdown runs) | Record (R-22): does EDLS close after the countdown, leave the window orphaned, or print a traceback? |
+| SE-46 | P2 | H | Leave Settings open while the fake game closes (session ends, countdown runs) | When the countdown ends, EDLS stays open behind Settings, logs "EDLS stayed open - a dialog was open." and LAUNCH comes back. Save and Cancel still work. No traceback (R-22 fix). |
 | SE-47 | P2 | A | Settings, the add/edit popover (with an error showing), and the "Restore defaults" and "App list locked" popovers, in both themes | Everything is readable. Nothing is light-on-light or dark-on-dark. The popovers have no Windows title bar: chamfered panels with an orange or amber edge, centred over Settings. Esc closes them. |
 | SE-48 | P3 | A | Very long paths in the list | Record whether you can still tell which app is which. |
 | SE-49 | P2 | A | Add/edit window → change things → Cancel | The row is unchanged. |
@@ -754,7 +804,7 @@ Close EDLS before each edit. Keep a backup.
 | PS-02 | P1 | A | Replace the contents with `hello` → start. Repeat with `[1, 2]`. | No crash. Settings reset to defaults and the setup window appears. The activity log shows an orange "settings.json couldn't be read (…) - settings were reset to defaults. The old file was kept as settings.json.bad.", and `settings.json.bad` holds what you wrote. |
 | PS-03 | P1 | A | Open `settings.json` in Notepad → Save As → Encoding: **UTF-8 with BOM** (change nothing else) → start | Settings kept exactly; no warnings (R-05 fix). |
 | PS-04 | P1 | A | `"elite_app_id": "abc"` → start | No crash. The activity log shows "settings.json: 'elite_app_id' has an invalid value - using 359320."; everything else is kept (R-04 fix). |
-| PS-05 | P2 | A | `"apps": null` → start | No crash. The 11 default apps are restored. |
+| PS-05 | P2 | A | `"apps": null` → start | No crash. The 14 default apps are restored, with only EDMarketConnector, SrvSurvey and Odyssey Materials Helper ticked (if installed). |
 | PS-06 | P2 | A | Make one entry in `apps` a plain string, e.g. `"EDMC"` → start | No crash. That entry is skipped with a warning ("skipped an app entry with no valid name"); the other apps load. |
 | PS-07 | P2 | A | `"removed_defaults": null` → start | No crash. |
 | PS-08 | P2 | A | `"cmdr_name": 123` (a number, no quotes) → start | No crash. Warning, and the default name is used. |
@@ -763,6 +813,7 @@ Close EDLS before each edit. Keep a backup.
 | PS-11 | P3 | A | Add an unknown key, e.g. `"foo": 1` → start | Ignored. It disappears the next time EDLS saves. |
 | PS-12 | P1 | A | Make `settings.json` read-only (Properties → Read-only) → start → change settings → Save → toggle AUTO START → restart | Each save shows a red "Couldn't save settings.json - changes will be lost when EDLS closes (see launcher.log)." After the restart the changes are gone, as warned (R-24 fix). No crash. |
 | PS-18 | P2 | A | `"close_on_game_exit": false`, `"close_on_shutdown": "yes"` → start → open Settings | The two toggles show off and on. |
+| PS-19 | P2 | A | `"allow_elevation": "no"` → start → open Settings. Then delete the line → start. | The first time, "Ask for admin rights when a tool needs them" shows off. Without the line it's on (the default), with no warning. |
 | PS-13 | P2 | A | While EDLS runs, try to delete the EDLS folder | Windows may refuse because `launcher.log` is in use, which is fine. If it does get deleted, changing a setting recreates it with no crash. |
 | PS-14 | P2 | A | Remove the `"version"` line → start | Loads fine. The file is rewritten with `"version": 1`. |
 | PS-15 | P3 | A | Copy `settings.json` to another PC or Windows user → start there | Loads. `%…%` paths adapt to that machine. |
@@ -799,10 +850,10 @@ Close EDLS before each edit. Keep a backup.
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
-| LG-01 | P1 | A | Read a full session's log in both themes | Every line starts with `[HH:MM:SS]`. Success, normal, warning, error and dim lines are each recognisable. Check light mode especially (R-33: success and warning are very similar oranges). |
+| LG-01 | P1 | A | Read a full session's log in both themes | Every line starts with `[HH:MM:SS]`. Success, normal, warning, error and dim lines are each recognisable. Check light mode especially (R-33 fix: pale gold for success, pale orange for warnings). |
 | LG-02 | P1 | A | Compare with `launcher.log` | Same messages, plus full dates and levels. The file also has lines the panel doesn't, e.g. "=== Session started ===" and "&lt;App&gt; didn't close when asked - killing it.". |
 | LG-03 | P2 | A | Select log text → Ctrl+C → paste somewhere | The copied text is correct. |
-| LG-04 | P2 | A | Scroll up in the log while new lines arrive (open and close a dummy app repeatedly) | Record (R-25): does the view jump back to the bottom on every line? |
+| LG-04 | P2 | A | Scroll up in the log while new lines arrive (open and close a dummy app repeatedly) | The view stays where you scrolled to. Scroll back to the bottom and it follows new lines again (R-25 fix). |
 | LG-05 | P2 | H | Name a dummy app `A&B <test>` → LAUNCH | The log shows the name exactly, with nothing swallowed. |
 | LG-06 | P3 | A | Grow `launcher.log` past 500 KB (long use, or opening and closing tools many times) | `launcher.log.1` appears and logging carries on. |
 | LG-07 | P3 | A | Thousands of lines in the panel | Still responsive. |
@@ -826,9 +877,10 @@ including Steam and the game. That's fixed. These tests guard it.
 
 ### 8.15 Companion app compatibility (CA)
 
-For every default app you have installed, run checks **a–f** and note the app's version.
+For every default app you have installed, run checks **a–g** and note the app's version.
 Treat these as **P1** for EDMarketConnector and any tool you use daily, **P2** for the
-rest.
+rest. Only EDMarketConnector, SrvSurvey and Odyssey Materials Helper start ticked: tick
+the others you're testing in Settings first.
 
 - **a. Found:** at the default location, the card isn't "Not found". If it's installed
   somewhere else, fixing the path in Settings works.
@@ -845,31 +897,40 @@ rest.
   data (logs, databases, profiles) is intact. **Any data loss is Critical** (R-17).
 - **f. No surprises:** no extra console windows, updater prompts or errors when EDLS
   starts it.
+- **g. Starts minimized:** with "Start tools minimized" on in Settings, LAUNCH starts it
+  minimized on the taskbar and the game keeps focus. It's only a request to Windows, so
+  record which tools open normally anyway. Expect Odyssey Materials Helper to (it starts
+  through its launcher), and maybe tools with a splash screen or that reopen where you
+  left them.
 
 | ID | App (card name) | Where EDLS looks by default | Program name EDLS watches | Extra things to check |
 | --- | --- | --- | --- | --- |
 | CA-01 | EDMarketConnector | `%ProgramFiles(x86)%\EDMarketConnector\EDMarketConnector.exe` | EDMarketConnector.exe | Plugins that start their own helper programs (e.g. overlay plugins). Make sure those don't keep running after EDMC is closed. |
 | CA-02 | SrvSurvey | Searched for under `%LOCALAPPDATA%\Apps\2.0` (ClickOnce install) | SrvSurvey.exe | Is it found? How long does LAUNCH take to get past it? Does starting it this way skip its auto-updates? |
-| CA-03 | OdysseyMaterials ("ODYSSEY MATS HELPER") | `%LOCALAPPDATA%\Elite Dangerous Odyssey Materials Helper Launcher\program\Elite Dangerous Odyssey Materials Helper.exe` | Elite Dangerous Odyssey Materials Helper.exe | EDLS starts the program directly, not its launcher. Check it still updates when started its normal way. |
+| CA-03 | OdysseyMaterials ("ODYSSEY MATS HELPER") | Its launcher, `%LOCALAPPDATA%\Elite Dangerous Odyssey Materials Helper Launcher\Elite Dangerous Odyssey Materials Helper Launcher.exe`; if that's missing, `...\program\Elite Dangerous Odyssey Materials Helper.exe` | Elite Dangerous Odyssey Materials Helper.exe | The launcher checks for updates, starts the helper and exits. The card shows Launching until the helper appears (up to 30 s while it updates), then Online with the helper's PID (matches Task Manager). No "stopped running" / "is now running" lines in between. An install that had the old default path saved moves to the launcher by itself; a path you set yourself is kept. It runs as two `Elite Dangerous Odyssey Materials Helper.exe` processes (its window belongs to the second). Its card's STOP and teardown close it within a second or two, with **no** error popups, and `launcher.log` does **not** say "didn't close when asked". Both processes are gone. |
 | CA-04 | EDCoPilot | `C:\EDCoPilot\EDCoPilot.exe` | EDCoPilot.exe | Uses more than one process? Check they all close. Check its own "close with the game" option doesn't conflict. |
-| CA-05 | EDHM_UI | `%LOCALAPPDATA%\EDHM-UI-V3\EDHM-UI-V3.exe` | EDHM-UI-V3.exe | Closing it mid-game doesn't mess up the in-game HUD colours. |
+| CA-05 | EDHM_UI | `%LOCALAPPDATA%\EDHM-UI-V3\EDHM-UI-V3.exe` | EDHM-UI-V3.exe | Its manifest asks for admin rights (`highestAvailable`), so on an admin account it gets a UAC prompt to start and another to close (§5.4, LS-34). On a standard account it should start with no prompt. It's Electron, so it runs several `EDHM-UI-V3.exe` processes (one main window process plus helpers): after teardown and after STOP, Task Manager → Details shows **no** `EDHM-UI-V3.exe` left, and the card stays Offline/Stopped (it doesn't flip back to Online a few seconds later). If `launcher.log` says "EDHM_UI didn't close when asked", check whether EDHM-UI hides to the tray when you close its window. Closing it mid-game doesn't mess up the in-game HUD colours. |
 | CA-06 | opentrack | `%ProgramFiles(x86)%\opentrack\opentrack.exe` | opentrack.exe | After a forced close, the camera/tracker works again on the next start. |
 | CA-07 | ICARUS Terminal | `%ProgramFiles(x86)%\ICARUS Terminal\ICARUS Terminal.exe` | ICARUS Terminal.exe | Probably runs several processes. Check they all close. |
 | CA-08 | EDDiscovery | `%ProgramFiles%\EDDiscovery\EDDiscovery.exe` | EDDiscovery.exe | It has a local database. After a forced close it must open normally, with no repair or "database locked" messages and with recent data present. |
-| CA-09 | VoiceAttack | `%ProgramFiles%\VoiceAttack\VoiceAttack.exe` | VoiceAttack.exe | Often run as administrator: see SC-16. Profiles and settings intact. |
-| CA-10 | EDCoPTER | `%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe` | EDCoPTER.exe | General checks a–f. |
-| CA-11 | Elite Observatory | `%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe` | ObservatoryCore.exe | General checks a–f. |
+| CA-09 | VoiceAttack | The first one that's there: v2 `%ProgramFiles%\VoiceAttack2\VoiceAttack.exe`, v2 in Steam `%ProgramFiles(x86)%\Steam\steamapps\common\VoiceAttack2\VoiceAttack.exe`, v1 64-bit `%ProgramFiles%\VoiceAttack\VoiceAttack.exe`, v1 32-bit `%ProgramFiles(x86)%\VoiceAttack\VoiceAttack.exe`, v1 in Steam `...\steamapps\common\VoiceAttack\VoiceAttack.exe` | VoiceAttack.exe | Record which version you have (1.x or 2.x) and where it's installed. With both installed, v2 is the one that starts. A `settings.json` still holding the old default path (`%ProgramFiles%\VoiceAttack\VoiceAttack.exe`) moves to the search by itself; a path you set yourself is kept. Often run as administrator: see SC-16 and SC-21. Profiles and settings intact. |
+| CA-10 | EDCoPTER | `%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe` | EDCoPTER.exe | General checks a–g. |
+| CA-11 | Elite Observatory | `%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe` | ObservatoryCore.exe | General checks a–g. |
+| CA-18 | Elite Studio | `%ProgramFiles%\Elite Studio\EliteStudio.exe` | EliteStudio.exe | It uses WebView2, so it runs several `msedgewebview2.exe` processes under it. After teardown and after STOP, none of those are left (other apps such as Edge run their own, so count `msedgewebview2.exe` in Task Manager → Details before starting it and after closing it). If `launcher.log` says "Elite Studio didn't close when asked", check whether it hides to the tray when you close its window. |
+| CA-20 | EDDI | `%LOCALAPPDATA%\EDDI\Application\EDDI.exe` (installed for you only, the installer's default); if that's missing, `%ProgramFiles%\EDDI\EDDI.exe` (installed for all users) | EDDI.exe | Settings shows its path blank: EDLS finds it by itself. It's added unticked even when installed: tick it to test. It shows a splash screen first, so check g may not hold. **With VoiceAttack 2** (EDDI's plugin starts EDDI itself, with its window hidden): 1) VoiceAttack ticked, EDDI unticked → LAUNCH → exit the game: EDDI starts with VoiceAttack and is gone after teardown. 2) Both ticked → LAUNCH a few times: record any "EDDI is already running" message, and whether VoiceAttack's EDDI commands work. 3) Both ticked, but start VoiceAttack yourself and wait for EDDI to appear before LAUNCH: EDDI's hidden window ignores a close request, so `launcher.log` may say "EDDI didn't close when asked - killing it.": do check e. |
+| CA-21 | ED Galactic Memoir (formerly ED Journal Analyzer) | `%USERPROFILE%\Downloads\ED_GALACTIC_MEMOIR.exe` (it has no installer, so EDLS looks where a browser saves it) | ED_GALACTIC_MEMOIR.exe | It starts unticked: tick it to test. In Downloads it's found. Move it elsewhere (or move your Downloads folder off `C:\Users\<you>`): the card says "Not found", and an EDIT of its path fixes it. It runs as two `ED_GALACTIC_MEMOIR.exe` processes (its window belongs to the second) plus several `msedgewebview2.exe` under them. STOP and teardown close it within a few seconds, with **no** "didn't close when asked" in `launcher.log`, and none of those processes is left. It keeps its database and its own log in a `data` folder next to the exe: `data\run.log` ends with "[Shutdown] Complete. Exiting process." (a clean close), and your bookmarks and notes are still there. |
 
 More:
 
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
 | CA-12 | P2 | A | A tool installed somewhere non-default → EDIT its path → LAUNCH | Found, launched and closed normally. |
-| CA-13 | P2 | A | Any tool whose program starts a *different* program and then exits ("launcher stub") | Record which tools do this. Their cards will show Offline about 2 s after starting while the real program keeps running, and EDLS can't close the real program. |
+| CA-13 | P2 | A | Any tool whose program starts a *different* program and then exits ("launcher stub") | Record which tools do this. Odyssey Materials Helper's launcher is handled (CA-03). Any other stub added through Settings: its card will show Offline about 2 s after starting while the real program keeps running, and EDLS can't close the real program. |
 | CA-14 | P2 | A | A tool that's already open but minimised to the tray → LAUNCH | Detected as running. No second copy. |
 | CA-15 | P2 | A | A tool that shows an update prompt on start | Record whether the prompt blocks anything or confuses EDLS. |
 | CA-16 | P2 | R | If your min-ed-launcher config also starts companion apps (its own process list) → LAUNCH → exit | Record duplicates or conflicts. Test with that option on and off. |
 | CA-17 | P2 | R | A tool with its own "close when the game exits" feature | No errors when EDLS finds it already gone at teardown. |
+| CA-19 | P2 | A | "Start tools minimized" on → a card's START (EDHM-UI too, if you have it: it goes through the UAC prompt). Then turn it off → SAVE → LAUNCH. | START starts the tool minimized as well (where the tool allows it, see check g). A tool that was already running isn't minimized or moved. With the toggle off, tools open normally, as before. |
 
 ### 8.16 Performance (PF)
 
@@ -917,8 +978,26 @@ Use Task Manager → Details → the `python.exe` whose command line ends in `ma
 | ID | Pri | Env | Steps | Expected |
 | --- | --- | --- | --- | --- |
 | DC-01 | P2 | A | Follow the README install and run steps exactly, on a clean PC | They work as written. |
-| DC-02 | P2 | A | Compare the README's feature list with the app | Report every mismatch (it was updated for live status, the close-EDLS toggles, the app-list lock and one-copy-only). |
+| DC-02 | P2 | A | Compare the README's feature list with the app | Report every mismatch (it was updated for live status, the close-EDLS toggles, the app-list lock, one-copy-only and the update check). |
 | DC-03 | P3 | A | Proofread the welcome text, Settings labels and log messages | Report typos and anything unclear. |
+
+### 8.20 Update check (UP)
+
+EDLS asks GitHub for the latest release about a second after it starts. It never downloads
+or installs anything: if a newer version is out, the update badge explains the steps and
+opens the release page. To see the badge, run an older EDLS: from source (§3.2) with
+`APP_VERSION` near the top of `config.py` set lower, e.g. `"1.0.0"`. Put it back
+afterwards.
+
+| ID | Pri | Env | Steps | Expected |
+| --- | --- | --- | --- | --- |
+| UP-01 | P1 | A | Run the latest version → start EDLS | No update badge and nothing about updates in the activity log. `launcher.log` has "Update check: EDLS &lt;version&gt; is the latest." |
+| UP-02 | P1 | A | Run an older version → start EDLS. Repeat in light mode. | About a second after the panels appear, a green "UPDATE x.y.z AVAILABLE" badge shows at the right end of the CMDR name's row (green in both themes). The CMDR name stays centred under the title and the header grows only a few pixels. Repeat with a 36-character CMDR name (the most Settings takes): the name moves left rather than run into the badge, and stays clear of the ringed-planet mark. Only a name made mostly of wide letters (MMMM…, WWWW…) may reach it. The log says "EDLS x.y.z is available - click the UPDATE badge next to your CMDR name." in green (pale green in light mode). |
+| UP-03 | P1 | A | Click the update badge. Repeat in light mode, and reach the badge with Tab → Enter. | A popover: "U P D A T E   A V A I L A B L E", "EDLS x.y.z is out - you have …", then how to update (download `EDLS-Setup-x.y.z.exe` from the release page and run it). Two buttons: LATER and RELEASE PAGE. Enter and Esc both mean LATER: nothing happens and the badge stays. Record anything in the text that's unclear. |
+| UP-04 | P1 | A | Update popover → RELEASE PAGE | Your browser opens the latest release's GitHub page, showing that version with its installer under Assets. The badge stays. |
+| UP-05 | P1 | A | With EDLS open, follow the popover's steps: download the installer and run it. Needs a published release newer than the installed EDLS. | Same as IN-02: setup closes EDLS, and Steam, the game and the tools stay open. Let setup start EDLS at the end: the version chip shows the new version, there's no update badge, and your settings and app list are unchanged. |
+| UP-06 | P1 | A | Settings → "Check for EDLS updates at startup" off → Save → restart an older version | No badge. `launcher.log` has no "Update check" line at all. Turn it back on → restart: the badge is back. |
+| UP-07 | P2 | A | Disconnect from the internet → start EDLS | No popup and nothing in the activity log. `launcher.log` has "Update check failed: …". Everything else works. |
 
 ---
 
@@ -957,10 +1036,10 @@ each state:
 | SQ-15 | P1 | In session | SHUTDOWN | See SC-12 (toggle off) and SC-18 (toggle on). |
 | SQ-16 | P2 | In session | Switch theme | The session continues; cards keep their states. Closing the fake game still tears down and counts down. |
 | SQ-17 | P1 | In session | Close EDLS → reopen it → close the fake game | Everything stays open after the close. The reopened EDLS shows the right states. Closing the fake game then only turns its card Offline: no teardown (no session), and EDLS stays open. |
-| SQ-18 | P2 | In session | Open Settings → close the fake game while Settings is open | Record (R-22): the countdown runs behind the open Settings window. What happens when it ends? |
-| SQ-19 | P2 | In session | Open + ADD (or Settings → it's locked, so use OPEN LOG FOLDER instead) and leave a window open → close the fake game | Record (R-22). |
+| SQ-18 | P2 | In session | Open Settings → close the fake game while Settings is open | The countdown runs behind Settings. When it ends, EDLS stays open ("EDLS stayed open - a dialog was open.") and LAUNCH comes back (R-22 fix). |
+| SQ-19 | P2 | In session | Open + ADD (or Settings → it's locked, so use OPEN LOG FOLDER instead) and leave a window open → close the fake game | Same as SQ-18: EDLS stays open behind the open window (R-22 fix). |
 | SQ-20 | P2 | In session | Close the fake game and reopen it within a second | Record (R-30). The teardown still runs and the countdown starts; the new "game" has no tools. |
-| SQ-21 | P2 | In session | Press SHUTDOWN and close the fake game at the same moment | No errors. Each tool is closed once, and EDLS closes once. |
+| SQ-21 | P2 | In session | Press SHUTDOWN and close the fake game at the same moment | No errors. Each tool is closed once (one round of "Stopping …" lines), one countdown runs, and EDLS closes once (R-42 fix). |
 | SQ-22 | P1 | Game-only start | Click LAUNCH | Greyed; logs "The game is already being started from its card - wait for it to finish."; nothing launches (R-09 fix). |
 | SQ-23 | P2 | Game-only start | Save Settings / switch theme | The Elite card keeps "Waiting..." (R-14 fix). |
 | SQ-24 | P3 | Game-only start | Steam card START | Ignored silently. Record whether you'd expect a message. |
@@ -976,8 +1055,8 @@ each state:
 | SQ-34 | P1 | Waiting after SHUTDOWN | Open Settings | The app list is still locked (the session lasts until the game closes). Other settings can change. |
 | SQ-35 | P2 | Waiting after SHUTDOWN | Close the fake game | "No tools running." → countdown (or "Session ended." with the toggle off). |
 | SQ-36 | P2 | Waiting after SHUTDOWN | Press SHUTDOWN again | "No tools running." and the "quit in-game" line again. Nothing breaks. |
-| SQ-37 | P2 | Countdown | Click LAUNCH | Nothing launches (it's disabled until EDLS closes). |
-| SQ-38 | P2 | Countdown | Open Settings | It opens. Record what happens when the countdown ends with it open (R-22). |
+| SQ-37 | P2 | Countdown | Click STAY OPEN (the LAUNCH key) | "EDLS will stay open." Nothing launches; the key goes back to LAUNCH and EDLS stays open (R-36 fix). |
+| SQ-38 | P2 | Countdown | Open Settings | It opens. When the countdown ends, EDLS stays open behind it ("EDLS stayed open - a dialog was open.") (R-22 fix). |
 | SQ-39 | P2 | Countdown | Close the window yourself | See LS-29. |
 | SQ-40 | P3 | Countdown | Open a dummy's card START | It starts; EDLS still closes on time, and the dummy keeps running. |
 
@@ -991,7 +1070,7 @@ Play these as a real user would. Note anything awkward, not just failures.
 | --- | --- | --- | --- | --- |
 | JR-01 | P1 | R | **New CMDR.** Fresh install → setup window → pick your tools → LAUNCH → play 15 min → exit to desktop → next day open EDLS again | Setup is understandable. Everything closes properly. Settings are remembered. |
 | JR-02 | P1 | R | **Daily driver.** AUTO START on → each day just open EDLS → play → exit. Repeat on 3 days. | It's hands-off every time, and EDLS closes itself at the end. |
-| JR-03 | P1 | R | **Pre-opened tools.** Open EDMC yourself → open EDLS → LAUNCH → play → exit | Is EDMC closed at the end? Under "launched only" the README says it shouldn't be (R-03). |
+| JR-03 | P1 | R | **Pre-opened tools.** Open EDMC yourself → open EDLS → LAUNCH → play → exit | EDMC is closed at the end, under "launched only" too: LAUNCH took it over. |
 | JR-04 | P2 | R | **Oops.** LAUNCH → close EDLS by accident mid-game → reopen → LAUNCH to re-attach → exit | No harm to the game. Re-attaching works without a second launch request (R-02 fix). Teardown happens. |
 | JR-05 | P2 | R | **Tinkerer.** Mid-session: try to add a tool (locked: note how the popup reads), switch theme, change scope and the close-EDLS toggles → keep playing → exit | The lock is understandable. The teardown and close behaviour match your final settings. |
 | JR-06 | P2 | R | **Game only.** Elite card START → later START two tools from their cards → exit the game → SHUTDOWN | Nothing closes when the game exits (the Elite card just goes Offline). SHUTDOWN closes the card-started tools. |
@@ -1032,39 +1111,29 @@ These come from reading the code. Each row has a **Status**:
 - **Open**: a suspicion, not a confirmed bug. Report **Confirmed**, **Not reproduced**
   or **Not tested**, with the test ID you used.
 
+A risk leaves this table once its fix is verified. The "(R-xx fix)" notes in the tests
+mark where each one was checked.
+
 | ID | What may be wrong | Status | Check with | Severity if confirmed |
 | --- | --- | --- | --- | --- |
-| R-04 | Some bad values in `settings.json` crash EDLS at startup instead of falling back to defaults. Also `"enabled": "false"` (as text) counts as enabled. | Fixed — verify | PS-04 to PS-09 | Major |
-| R-05 | A `settings.json` saved as "UTF-8 with BOM" is treated as corrupt, and all settings are silently reset. | Fixed — verify | PS-03 | Major |
-| R-07 | A renamed SrvSurvey works until restart, then shows "Not found". | Open | SE-38 | Minor |
-| R-09 | LAUNCH is allowed while the Elite card's game-only START is still waiting, so two launch flows run at once. | Fixed — verify | CC-15, CC-19, SQ-22 | Major |
-| R-10 | LAUNCH waits for the game forever. If the game never starts, LAUNCH stays "RUNNING..." and the only way out is closing EDLS. | Fixed — verify (now 60 s) | LS-13, LS-30, JR-07 | Major |
-| R-11 | When EDLS can't close an app (e.g. it runs as administrator), the card still says "Stopped", or teardown still says "Third-party tools shut down.". The failure only appears in `launcher.log`. | Fixed — verify (ERROR state) | SC-16, CC-18, PR-09 | Major |
-| R-12 | Card START/STOP write nothing to the activity log, so a "Failed" card has no explanation. | Fixed — verify | CC-01 to CC-04 | Minor |
-| R-13 | Outside a LAUNCH session, cards never update on their own. For example, Elite stays "Running" after a game-only session ends. | Fixed — verify (live status) | RF-01, CC-10, SQ-25 | Minor |
-| R-15 | Removing or renaming an app mid-session after EDLS launched it means it may not be closed at the end. | Fixed — verify (list locked) | SC-08, SC-09, SE-51 | Minor |
-| R-16 | An app restarted from its card mid-session isn't watched again. If it then closes, its card may stay "Online". | Fixed — verify | CC-16, SQ-13 | Minor |
-| R-17 | Companion apps are always force-closed, never asked to close nicely, so tools may lose data or settings. | Changed — verify: each tool is asked to close first; only what's still running 3 s later is forced | §8.15 check e, SC-20, SC-16 | **Critical** if data is lost |
-| R-18 | The window can't be smaller than 900×800, and grows further with many apps or a very long CMDR name. It may not fit 1366×768 or 150%-scaled laptop screens. | Fixed — verify (900×640, cards scroll). A very long CMDR name can still widen it (UI-10). | UI-03, UI-04, UI-10, UI-12, JR-08 | Major |
-| R-19 | CMDR names and app names that look like HTML (`<b>…</b>`) may be shown as formatting instead of text. | Open | SE-10 | Cosmetic |
+| R-07 | A renamed SrvSurvey works until restart, then shows "Not found". | Fixed — verify (the default it came from is saved) | SE-38 | Minor |
+| R-19 | CMDR names and app names that look like HTML (`<b>…</b>`) may be shown as formatting instead of text. | Fixed — verify (shown as plain text) | SE-10 | Cosmetic |
 | R-20 | Settings toggles may not work from the keyboard, and keyboard focus may be invisible on the main buttons. | Fixed — verify | AX-01, AX-02, SE-13, SE-53 | Minor |
-| R-21 | Resizing or maximising during the startup animation may leave panels misaligned. | Fixed — verify (window locked meanwhile) | UI-24 | Minor |
-| R-22 | If the game exits while Settings or a file picker is open, EDLS tries to close itself behind the open window (now after the 5 s countdown). | Open | SE-46, SQ-18, SQ-19, SQ-38 | Minor to Major |
-| R-23 | Nothing stops two EDLS windows running at once, and both can act. | Fixed — verify | ST-15, SM-12 | Minor |
-| R-24 | If `settings.json` can't be written, changes look saved but are gone after a restart, with no message. | Fixed — verify | PS-12 | Minor |
-| R-25 | The activity log may jump to the bottom on every new line, even while you're scrolled up reading. | Open | LG-04 | Cosmetic |
-| R-26 | First-run ticks all 11 default apps, so new users with few tools get a pile of "not found" warnings. | Open | FR-07 | Minor |
-| R-27 | Paths pasted with quotes (Explorer's "Copy as path") keep the quotes, so the app is "Not found". | Fixed — verify | SE-20 | Minor |
-| R-28 | Elite card START gives up after 5 minutes and stays "Failed" even if the game appears later. | Fixed — verify (60 s; card follows the game) | CC-11 | Cosmetic |
-| R-29 | After SHUTDOWN mid-session, cards show "Closed" and then switch to "Offline" about 2 s later. | Fixed — verify ("Closed" removed) | SC-12 | Cosmetic |
+| R-22 | If the game exits while Settings or a file picker is open, EDLS tries to close itself behind the open window (now after the 5 s countdown). | Fixed — verify (EDLS stays open) | SE-46, SQ-18, SQ-19, SQ-38 | Minor to Major |
+| R-25 | The activity log may jump to the bottom on every new line, even while you're scrolled up reading. | Fixed — verify | LG-04 | Cosmetic |
+| R-26 | First-run ticks all 12 default apps, so new users with few tools get a pile of "not found" warnings. | Fixed — verify (only EDMarketConnector, SrvSurvey and Odyssey Materials Helper start ticked, and only if installed) | FR-01, FR-07, FR-08 | Minor |
 | R-30 | Any exit of the game ends the session. If the game is restarted (relog or min-ed-launcher restart), the tools are already closed. | Open (design question; the "Close EDLS when the game exits" toggle softens it) | LS-20, SQ-20, JR-11 | Design question |
 | R-31 | EDLS can see other Windows users' programs, so cards may show someone else's game or tools as running. | Open | RF-07 | Minor |
-| R-32 | Unticking an app mid-session: "launched only" still closes it at the end, "all enabled" doesn't. | Fixed — verify (can't untick mid-session) | SC-10 | Design question |
-| R-33 | Light theme: success and warning log lines are nearly the same orange. | Changed — re-check: the light log now uses pale gold (success) vs pale orange (warning). | LG-01 | Cosmetic |
 | R-34 | With AUTO START on but setup unfinished, the log may say "Auto-start enabled — launching..." although nothing launches. | Fixed — verify | FR-04, AS-04 | Cosmetic |
 | R-35 | The 60 s limit on the game appearing may be too short on a slow PC's cold start (Steam starting, updates, min-ed-launcher login). | Open (new) | LS-31, LS-02, AS-03 | Minor (press LAUNCH again) |
-| R-36 | The 5 s close countdown can't be cancelled, except by closing EDLS yourself. If you change your mind, you have to reopen EDLS. | Open (new, design question) | LS-04, SQ-37 to SQ-40 | Design question |
+| R-36 | The 5 s close countdown can't be cancelled, except by closing EDLS yourself. If you change your mind, you have to reopen EDLS. | Fixed — verify (STAY OPEN) | LS-35, SC-22, SQ-37 | Design question |
 | R-37 | The "X is now running." / "X stopped running." lines may get noisy for tools that restart themselves (updaters, launcher stubs). | Open (new) | RF-01, CA-13, CA-15 | Cosmetic |
+| R-39 | The UAC prompt for an admin tool appears just as the game starts, and may take a fullscreen game out of focus. | Open (new) | LS-34 | Minor |
+| R-40 | After you answer Yes, an admin tool may take longer than 3 s to appear. If it does, its card shows Failed until the status check finds it (within about 5 s). | Open (new) | LS-11, CC-20 | Cosmetic |
+| R-42 | Two closes of one tool could run at once (STOP double-clicked, STOP during SHUTDOWN, SHUTDOWN as the game exits): duplicate log lines, two close countdowns, and for an admin tool two UAC prompts. | Fixed — verify (one start or stop per tool at a time; teardowns and countdowns never overlap) | CC-06, CC-21, CC-22, SC-13, SQ-21 | Minor |
+| R-43 | Closing EDLS while it was still closing tools ended that mid-way: a tool that ignored being asked was never force-closed. | Fixed — verify (EDLS finishes out of sight, at most 10 s, with no new UAC prompt) | SC-23, SC-24 | Major |
+| R-44 | SHUTDOWN while LAUNCH was still starting tools closed what was up, then LAUNCH started the rest. | Fixed — verify (the rest stay unstarted) | LS-36 | Minor |
+| R-45 | Odyssey Materials Helper was never really asked to close: the process EDLS asked has no window (its child owns it). So every close was a force-close, with two error popups (one said "error 1400"). | Fixed — verify (closes in a second or two, no popups, no "didn't close when asked") | CA-03 | Major |
 
 ---
 
@@ -1084,7 +1153,7 @@ These come from reading the code. Each row has a **Status**:
 
 ```
 Title:        [Test ID] one-line summary
-Build:        commit abc1234 or installer EDLS-Setup-1.2.1, version badge 1.2.1
+Build:        commit abc1234 or installer EDLS-Setup-1.3.0, version badge 1.3.0
 Environment:  Windows 11 23H2, 1920x1080 @ 100%, Python 3.11.x,
               theme Dark, scope "launched only", real game / harness
 Steps:        1.
@@ -1115,7 +1184,7 @@ edit those out if you prefer.
 - [ ] §8.6 (Steam and the game are never closed) passes 100% with the real game
 - [ ] §8.14 (closing EDLS safely) passes
 - [ ] No open Blocker or Critical bugs
-- [ ] §7 regression checks RG-09 to RG-18 pass
+- [ ] §7 regression checks RG-09 to RG-19 pass
 - [ ] §3.5 installed-build checks (IN-01 to IN-05) pass on the release installer
 - [ ] Every "Fixed — verify" R-nn is reported Fixed or Still broken
 - [ ] Every "Open" R-nn is marked Confirmed, Not reproduced, or Not tested

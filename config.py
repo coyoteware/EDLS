@@ -4,12 +4,13 @@ config.py - the pure-data layer.
 
 Everything here is toolkit-blind and engine-blind: it imports only the standard
 library and is imported by both main.py and ui.py without creating a cycle. It
-owns four things:
+owns five things:
 
   1. AppState / ShutdownScope   -- the shared vocabulary
   2. AppDescriptor              -- one app's definition, with path resolution
   3. REGISTRY                   -- THE list of default apps (single source of truth)
   4. Settings + load/save       -- persistence, with merge-on-load and migration
+  5. parse_version / is_newer   -- version order for the update check
 
 Adding a companion app is a one-line entry in REGISTRY below. Both config dialogs
 and the launch engine read from it, so there's no longer a four-places-to-edit
@@ -43,7 +44,14 @@ SETTINGS_VERSION = 1
 
 # Display version, shown in the UI and used for the build's file metadata.
 # Single source of truth (replaces the original $script:AppVersion).
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
+
+# Where updates come from: the repo's GitHub Releases. A release's tag must be
+# its version (e.g. "1.3.0", matching APP_VERSION when it was built). EDLS only
+# looks: the update popover sends the CMDR to the release page.
+LATEST_RELEASE_URL = "https://github.com/coyoteware/EDLS/releases/latest"
+LATEST_RELEASE_API = ("https://api.github.com/repos/coyoteware/EDLS/"
+                      "releases/latest")
 
 # All persistent state lives under %LOCALAPPDATA%\EDLS (with a ~ fallback so the
 # module is importable/testable on non-Windows dev machines).
@@ -91,7 +99,7 @@ class AppState(Enum):
 class ShutdownScope(Enum):
     """What SHUTDOWN (and the on-exit teardown) is allowed to close.
     This is a user setting -- see Settings.shutdown_scope."""
-    LAUNCHED_ONLY = "launched_only"   # only processes EDLS itself started
+    LAUNCHED_ONLY = "launched_only"   # only what EDLS started or took over
     ALL_ENABLED = "all_enabled"       # any enabled companion app that's running
 
 
@@ -121,6 +129,9 @@ class AppDescriptor:
     resolver: Optional[Callable[[], Optional[str]]] = field(
         default=None, compare=False, repr=False
     )
+    # The REGISTRY default this app came from ("" for one the CMDR added). It's
+    # saved, so a renamed default keeps its resolver after a restart.
+    origin: str = ""
 
     def resolve_path(self) -> Optional[str]:
         if self.path:
@@ -155,36 +166,110 @@ def _find_srvsurvey() -> Optional[str]:
     return None
 
 
+_ODYSSEY_LAUNCHER = (r"%LOCALAPPDATA%\Elite Dangerous Odyssey Materials Helper Launcher"
+                     r"\Elite Dangerous Odyssey Materials Helper Launcher.exe")
+_ODYSSEY_HELPER = (r"%LOCALAPPDATA%\Elite Dangerous Odyssey Materials Helper Launcher"
+                   r"\program\Elite Dangerous Odyssey Materials Helper.exe")
+
+
+def _find_odyssey_materials() -> Optional[str]:
+    """Odyssey Materials Helper's launcher checks for an update, starts the
+    helper and exits -- start that if it's there, else the helper itself."""
+    launcher = _expand_env(_ODYSSEY_LAUNCHER)
+    return launcher if os.path.exists(launcher) else _expand_env(_ODYSSEY_HELPER)
+
+
+def _first_found(templates: tuple[str, ...]) -> Optional[str]:
+    """The first of these %ENV% path templates that's on this PC, if any."""
+    for template in templates:
+        path = _expand_env(template)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+# Where EDDI's installer puts it: for this account only (its default), or for
+# all users.
+_EDDI_PATHS = (r"%LOCALAPPDATA%\EDDI\Application\EDDI.exe",
+               r"%ProgramFiles%\EDDI\EDDI.exe")
+
+
+def _find_eddi() -> Optional[str]:
+    """EDDI installs for this account only (the installer's default) or for
+    all users -- whichever is on this PC, this account's first."""
+    return _first_found(_EDDI_PATHS)
+
+
+# Where VoiceAttack 2, then VoiceAttack 1, install by default: each version's
+# own installer (v1 as 64-bit, then 32-bit), then its copy in Steam's default
+# library. Both versions run as VoiceAttack.exe, so one card serves either.
+_VOICEATTACK_PATHS = (
+    r"%ProgramFiles%\VoiceAttack2\VoiceAttack.exe",
+    r"%ProgramFiles(x86)%\Steam\steamapps\common\VoiceAttack2\VoiceAttack.exe",
+    r"%ProgramFiles%\VoiceAttack\VoiceAttack.exe",
+    r"%ProgramFiles(x86)%\VoiceAttack\VoiceAttack.exe",
+    r"%ProgramFiles(x86)%\Steam\steamapps\common\VoiceAttack\VoiceAttack.exe",
+)
+
+
+def _find_voiceattack() -> Optional[str]:
+    """VoiceAttack 2 if it's on this PC, else VoiceAttack 1."""
+    return _first_found(_VOICEATTACK_PATHS)
+
+
 # =============================================================================
 # THE registry -- add or remove default apps here, nowhere else
 # =============================================================================
+# Only the three most used start ticked, and only if they're installed. The
+# rest start unticked (enabled=False) even when installed, so a first run
+# isn't a wall of cards for tools the CMDR may not use.
 REGISTRY: list[AppDescriptor] = [
     AppDescriptor("EDMarketConnector", "EDMarketConnector",
                   r"%ProgramFiles(x86)%\EDMarketConnector\EDMarketConnector.exe"),
     AppDescriptor("SrvSurvey", "SrvSurvey",
                   resolver=_find_srvsurvey),
     AppDescriptor("OdysseyMaterials", "Elite Dangerous Odyssey Materials Helper",
-                  r"%LOCALAPPDATA%\Elite Dangerous Odyssey Materials Helper Launcher"
-                  r"\program\Elite Dangerous Odyssey Materials Helper.exe"),
+                  resolver=_find_odyssey_materials),
     AppDescriptor("EDCoPilot", "EDCoPilot",
-                  r"C:\EDCoPilot\EDCoPilot.exe"),
+                  r"C:\EDCoPilot\EDCoPilot.exe", enabled=False),
     AppDescriptor("EDHM_UI", "EDHM-UI-V3",
-                  r"%LOCALAPPDATA%\EDHM-UI-V3\EDHM-UI-V3.exe"),
+                  r"%LOCALAPPDATA%\EDHM-UI-V3\EDHM-UI-V3.exe", enabled=False),
     AppDescriptor("opentrack", "opentrack",
-                  r"%ProgramFiles(x86)%\opentrack\opentrack.exe"),
+                  r"%ProgramFiles(x86)%\opentrack\opentrack.exe", enabled=False),
     AppDescriptor("ICARUS Terminal", "ICARUS Terminal",
-                  r"%ProgramFiles(x86)%\ICARUS Terminal\ICARUS Terminal.exe"),
+                  r"%ProgramFiles(x86)%\ICARUS Terminal\ICARUS Terminal.exe",
+                  enabled=False),
     AppDescriptor("EDDiscovery", "EDDiscovery",
-                  r"%ProgramFiles%\EDDiscovery\EDDiscovery.exe"),
+                  r"%ProgramFiles%\EDDiscovery\EDDiscovery.exe", enabled=False),
     AppDescriptor("VoiceAttack", "VoiceAttack",
-                  r"%ProgramFiles%\VoiceAttack\VoiceAttack.exe"),
+                  resolver=_find_voiceattack, enabled=False),
     AppDescriptor("EDCoPTER", "EDCoPTER",
-                  r"%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe"),
+                  r"%LOCALAPPDATA%\Programs\EDCoPTER\EDCoPTER.exe", enabled=False),
     AppDescriptor("Elite Observatory", "ObservatoryCore",
-                  r"%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe"),
+                  r"%LOCALAPPDATA%\Programs\Elite Observatory\ObservatoryCore.exe",
+                  enabled=False),
+    AppDescriptor("Elite Studio", "EliteStudio",
+                  r"%ProgramFiles%\Elite Studio\EliteStudio.exe", enabled=False),
+    # Ticking it has a catch too: VoiceAttack's EDDI plugin usually runs it,
+    # and EDLS starting a second copy clashes with that one.
+    AppDescriptor("EDDI", "EDDI",
+                  resolver=_find_eddi, enabled=False),
+    # Portable (no installer): EDLS looks where a browser saves it. Kept
+    # somewhere else? The CMDR sets its path in Settings.
+    AppDescriptor("ED Galactic Memoir", "ED_GALACTIC_MEMOIR",
+                  r"%USERPROFILE%\Downloads\ED_GALACTIC_MEMOIR.exe",
+                  enabled=False),
 ]
 
 REGISTRY_BY_NAME = {a.name: a for a in REGISTRY}
+
+# Default paths a later version replaced. A saved path still equal to its old
+# default is dropped on load so the app moves to the new one; a path the CMDR
+# set themselves is kept.
+_RETIRED_PATHS = {
+    "OdysseyMaterials": _ODYSSEY_HELPER,
+    "VoiceAttack": r"%ProgramFiles%\VoiceAttack\VoiceAttack.exe",   # v1, 64-bit only
+}
 
 # The two non-companion rows: Steam and the game itself. They aren't in REGISTRY
 # (they're not user-configurable, and they launch via steam:// URIs rather than a
@@ -200,6 +285,11 @@ SYSTEM_APPS: dict[str, AppDescriptor] = {
 # =============================================================================
 # Settings
 # =============================================================================
+# Keeps an ordinary name clear of the title mark, and the window from widening,
+# when the update badge shows beside it on the CMDR row.
+CMDR_NAME_MAX = 36
+
+
 @dataclass
 class Settings:
     cmdr_name: str = "Epstein Didn't Kill Himself"
@@ -212,19 +302,49 @@ class Settings:
     # Tools are torn down either way; these only decide if the window goes too.
     close_on_game_exit: bool = True
     close_on_shutdown: bool = False
+    # A tool that needs admin rights (EDHM-UI asks for them) gets the UAC prompt
+    # to start, and again if EDLS has to close it. Off: EDLS never prompts.
+    allow_elevation: bool = True
     theme: Theme = Theme.DARK
     apps: list[AppDescriptor] = field(default_factory=list)
     removed_defaults: list[str] = field(default_factory=list)
+    check_for_updates: bool = True
+    # Ask Windows to start each tool minimized (a hint: some tools ignore it).
+    start_minimized: bool = False
 
 
-def _clone_registry() -> list[AppDescriptor]:
-    """Fresh copies so user edits never mutate REGISTRY (resolvers are shared
-    callables, which is fine)."""
-    return [replace(a) for a in REGISTRY]
+# =============================================================================
+# Updates
+# =============================================================================
+def parse_version(text: str) -> Optional[tuple[int, int, int]]:
+    """'1.2.1', 'v1.3' or '1.2.1-beta' -> (major, minor, patch), missing parts
+    as 0 (so a "1.2" tag reads older than 1.2.1). None if it isn't a version
+    at all."""
+    m = re.match(r"\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", text or "")
+    if not m:
+        return None
+    return tuple(int(g or 0) for g in m.groups())
+
+
+def is_newer(candidate: str, current: str = APP_VERSION) -> bool:
+    new, cur = parse_version(candidate), parse_version(current)
+    return new is not None and cur is not None and new > cur
+
+
+def _fresh_default(reg: AppDescriptor) -> AppDescriptor:
+    """A REGISTRY default as it joins the CMDR's list (first run, RESTORE
+    DEFAULTS, or a default added in a later version): ticked only if its
+    program is on this PC, so a tool they don't have doesn't greet every
+    LAUNCH with "not found" -- and never if its entry is enabled=False (all
+    but the three most used). A copy, so user edits never mutate REGISTRY
+    (resolvers are shared callables, which is fine)."""
+    path = reg.resolve_path()
+    return replace(reg, origin=reg.name,
+                   enabled=reg.enabled and bool(path and os.path.exists(path)))
 
 
 def default_settings() -> Settings:
-    return Settings(apps=_clone_registry())
+    return Settings(apps=[_fresh_default(a) for a in REGISTRY])
 
 
 # Hand-edited settings.json can hold anything. Each reader below returns the
@@ -301,20 +421,31 @@ def _app_from_dict(d) -> Optional[AppDescriptor]:
         _warn(f"settings.json: skipped an app entry with no valid name: {d!r}")
         return None
     name = name.strip()
-    reg = REGISTRY_BY_NAME.get(name)
+    # The default it came from: its saved origin, so a renamed default keeps
+    # its resolver -- else its name (files from before 1.3.0 have no origin).
+    origin = _as_str(d.get("origin"), "", f"{name}.origin").strip()
+    reg = REGISTRY_BY_NAME.get(origin) or REGISTRY_BY_NAME.get(name)
+    path = _as_str(d.get("path"), "", f"{name}.path")
+    if reg and path == _RETIRED_PATHS.get(reg.name):
+        path = reg.path
     return AppDescriptor(
         name=name,
         process_name=_as_str(d.get("process"), name, f"{name}.process") or name,
-        path=_as_str(d.get("path"), "", f"{name}.path"),
+        path=path,
         enabled=_as_bool(d.get("enabled"), True, f"{name}.enabled"),
         # Re-attach the resolver for known defaults; custom apps have none.
         resolver=reg.resolver if reg else None,
+        origin=reg.name if reg else "",
     )
 
 
 def _from_dict(raw: dict) -> Settings:
     d = Settings()   # field defaults
     cmdr = _as_str(raw.get("cmdr_name"), d.cmdr_name, "cmdr_name").strip()
+    if len(cmdr) > CMDR_NAME_MAX:
+        _warn(f"settings.json: 'cmdr_name' is longer than {CMDR_NAME_MAX} "
+              "characters - shortened.")
+        cmdr = cmdr[:CMDR_NAME_MAX].rstrip()
     apps = [_app_from_dict(e) for e in _as_list(raw.get("apps"), "apps")]
     return Settings(
         cmdr_name=cmdr or d.cmdr_name,
@@ -332,24 +463,31 @@ def _from_dict(raw: dict) -> Settings:
                                     d.close_on_game_exit, "close_on_game_exit"),
         close_on_shutdown=_as_bool(raw.get("close_on_shutdown"),
                                    d.close_on_shutdown, "close_on_shutdown"),
+        allow_elevation=_as_bool(raw.get("allow_elevation"),
+                                 d.allow_elevation, "allow_elevation"),
         theme=_as_enum(Theme, raw.get("theme"), d.theme, "theme"),
         apps=[a for a in apps if a is not None],
         removed_defaults=[n for n in _as_list(raw.get("removed_defaults"),
                                               "removed_defaults")
                           if isinstance(n, str)],
+        check_for_updates=_as_bool(raw.get("check_for_updates"),
+                                   d.check_for_updates, "check_for_updates"),
+        start_minimized=_as_bool(raw.get("start_minimized"),
+                                 d.start_minimized, "start_minimized"),
     )
 
 
 def _merge_new_defaults(s: Settings) -> bool:
     """Append any registry app missing from settings -- unless the user
     deliberately removed it (tracked in removed_defaults). Lets a new default
-    added in a later version appear for existing installs. Returns True if it
-    changed anything."""
-    existing = {a.name for a in s.apps}
+    added in a later version appear for existing installs, ticked as on a
+    first run (_fresh_default). Returns True if it changed anything."""
+    # By origin too: a renamed default is still that default.
+    existing = {a.name for a in s.apps} | {a.origin for a in s.apps}
     changed = False
     for reg in REGISTRY:
         if reg.name not in existing and reg.name not in s.removed_defaults:
-            s.apps.append(replace(reg))
+            s.apps.append(_fresh_default(reg))
             changed = True
     return changed
 
@@ -415,11 +553,14 @@ def save_settings(s: Settings) -> bool:
         "shutdown_scope": s.shutdown_scope.value,
         "close_on_game_exit": s.close_on_game_exit,
         "close_on_shutdown": s.close_on_shutdown,
+        "allow_elevation": s.allow_elevation,
         "theme": s.theme.value,
         "removed_defaults": s.removed_defaults,
+        "check_for_updates": s.check_for_updates,
+        "start_minimized": s.start_minimized,
         "apps": [
             {"name": a.name, "process": a.process_name,
-             "path": a.path, "enabled": a.enabled}
+             "path": a.path, "enabled": a.enabled, "origin": a.origin}
             for a in s.apps
         ],
     }
